@@ -5979,6 +5979,360 @@ body {
   text-align: left;
 }
 
+.topbar {
+  border-color: rgba(28, 31, 32, 0.18);
+  background:
+    linear-gradient(135deg, #22272a 0%, #30312e 58%, color-mix(in srgb, var(--team-color, #2f343a), #23272a 72%) 100%);
+  color: #f8f4ea;
+  box-shadow: 0 18px 34px rgba(35, 38, 38, 0.16);
+}
+
+.topbar .headline h1,
+.topbar .headline p,
+.topbar .team-picker,
+.topbar .manager-chip,
+.topbar .status-message,
+.topbar .topbar-action-context {
+  color: rgba(248, 244, 234, 0.92);
+}
+
+.topbar .mini-label {
+  color: color-mix(in srgb, var(--team-color, #c6a268), #ffffff 56%);
+}
+
+.topbar-logo-plate {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.topbar .manager-chip {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.topbar .team-picker select {
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.topbar .button-soft {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff8ec;
+}
+
+.topbar .button-primary {
+  border-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 18%);
+  background: color-mix(in srgb, var(--team-color, #b54764), #14191b 8%);
+}
+
+.clubhouse-dashboard {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(330px, 0.72fr);
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+
+.clubhouse-main-rail,
+.clubhouse-side-rail {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.clubhouse-dashboard > .decision-mail-panel {
+  grid-column: 1 / -1;
+}
+
+.clubhouse-dashboard .manager-briefing-panel {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 0.72fr);
+  gap: 18px;
+  min-height: 214px;
+  padding: 22px;
+  overflow: hidden;
+  border: 1px solid rgba(28, 31, 32, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(32, 37, 39, 0.98), rgba(50, 50, 45, 0.96) 62%, color-mix(in srgb, var(--team-color, #2f343a), #22272a 74%)),
+    #252a2c;
+  color: #f8f4ea;
+  box-shadow: 0 18px 38px rgba(35, 38, 38, 0.16);
+}
+
+.clubhouse-dashboard .manager-briefing-panel::before {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.clubhouse-dashboard .manager-briefing-panel::after {
+  content: "";
+  position: absolute;
+  right: 22px;
+  bottom: 20px;
+  width: 38%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28));
+  pointer-events: none;
+}
+
+.clubhouse-dashboard .manager-briefing-main,
+.clubhouse-dashboard .manager-briefing-quotes,
+.clubhouse-dashboard .manager-briefing-panel > small {
+  position: relative;
+  z-index: 1;
+}
+
+.clubhouse-dashboard .manager-briefing-main {
+  align-self: center;
+}
+
+.clubhouse-dashboard .manager-briefing-main .mini-label {
+  color: color-mix(in srgb, var(--team-color, #c6a268), #ffffff 54%);
+}
+
+.clubhouse-dashboard .manager-briefing-main h2 {
+  max-width: 12ch;
+  margin-top: 4px;
+  color: #fff8ec;
+  font-size: clamp(1.65rem, 2.8vw, 2.6rem);
+  line-height: 1.03;
+  word-break: keep-all;
+}
+
+.clubhouse-dashboard .manager-briefing-main p,
+.clubhouse-dashboard .manager-briefing-panel > small {
+  color: rgba(248, 244, 234, 0.72);
+  font-weight: 780;
+  line-height: 1.35;
+}
+
+.clubhouse-dashboard .manager-briefing-quotes {
+  display: grid;
+  gap: 8px;
+  align-self: center;
+}
+
+.clubhouse-dashboard .manager-briefing-quotes span {
+  padding: 10px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 3px solid color-mix(in srgb, var(--team-color, #b54764), #ffffff 12%);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff8ec;
+  font-size: 0.88rem;
+  font-weight: 870;
+  line-height: 1.24;
+}
+
+.clubhouse-dashboard .manager-briefing-panel > small {
+  grid-column: 1 / -1;
+}
+
+.clubhouse-dashboard .metric-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.clubhouse-dashboard .metric-card {
+  min-height: 88px;
+  padding: 12px 13px 12px 15px;
+  border-color: #ded8ce;
+  background: #fffefa;
+  box-shadow: 0 10px 22px rgba(35, 38, 38, 0.08);
+}
+
+.clubhouse-dashboard .metric-card::before {
+  inset: 10px auto 10px 0;
+  width: 3px;
+  height: auto;
+  background: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 8%);
+}
+
+.clubhouse-dashboard .metric-card span {
+  color: #70685f;
+  font-size: 0.72rem;
+}
+
+.clubhouse-dashboard .metric-card strong {
+  font-size: 1.18rem;
+}
+
+.clubhouse-dashboard .metric-card small {
+  font-size: 0.77rem;
+}
+
+.clubhouse-dashboard .news-inbox-panel,
+.clubhouse-dashboard .narrative-memory-panel,
+.clubhouse-dashboard .next-game-panel {
+  border-color: #ded8ce;
+  background: #fffefa;
+  box-shadow: 0 12px 26px rgba(35, 38, 38, 0.08);
+}
+
+.clubhouse-main-rail .news-inbox-panel {
+  padding: 18px;
+}
+
+.clubhouse-main-rail .news-inbox-grid {
+  grid-template-columns: minmax(250px, 0.85fr) minmax(0, 1fr);
+}
+
+.clubhouse-main-rail .news-inbox-feature {
+  grid-column: 1 / -1;
+  border-top: 0;
+  border-left: 4px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 12%);
+}
+
+.clubhouse-main-rail .inbox-assistant-card {
+  background:
+    linear-gradient(180deg, rgba(248, 249, 246, 0.98), rgba(255, 254, 250, 0.98));
+}
+
+.clubhouse-side-rail .next-game-panel {
+  grid-template-columns: 1fr;
+  gap: 12px;
+  padding: 14px;
+}
+
+.clubhouse-side-rail .next-game-matchup {
+  justify-content: stretch;
+}
+
+.clubhouse-side-rail .next-game-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.clubhouse-side-rail .next-game-actions small {
+  grid-column: 1 / -1;
+}
+
+.clubhouse-side-rail .narrative-memory-panel {
+  padding: 14px;
+}
+
+.clubhouse-side-rail .narrative-memory-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.clubhouse-side-rail .narrative-arc-list {
+  grid-template-columns: 1fr;
+}
+
+.clubhouse-side-rail .narrative-arc-card {
+  padding: 11px;
+}
+
+.clubhouse-side-rail .narrative-arc-card:nth-child(n + 4) {
+  display: none;
+}
+
+.simulation-progress-panel {
+  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 10px 16px;
+  padding: 14px 16px;
+  border-left-width: 0;
+  background: #fffefa;
+  box-shadow: 0 12px 26px rgba(35, 38, 38, 0.08);
+}
+
+.simulation-progress-head {
+  display: grid;
+  gap: 4px;
+}
+
+.simulation-progress-head strong {
+  justify-self: start;
+  color: color-mix(in srgb, var(--team-color, #2f343a), #2f343a 44%);
+  font-size: 1.22rem;
+}
+
+.simulation-progress-track {
+  grid-column: 1 / -1;
+  height: 5px;
+}
+
+.simulation-progress-steps {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  align-self: center;
+}
+
+.simulation-progress-steps li {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 0;
+  border-left: 1px solid #e5ded5;
+  border-radius: 0;
+  background: transparent;
+}
+
+.simulation-progress-steps li:first-child {
+  border-left: 0;
+}
+
+.simulation-progress-steps span {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  background: #eee9df;
+}
+
+.simulation-progress-steps li.is-active,
+.simulation-progress-steps li.is-done {
+  background: transparent;
+}
+
+.simulation-progress-steps li.is-done span {
+  background: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 16%);
+  color: #fff;
+}
+
+.simulation-progress-steps b {
+  color: #565c58;
+  font-size: 0.76rem;
+  line-height: 1.22;
+}
+
+.simulation-change-list {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.simulation-change-list li {
+  padding: 8px 9px;
+  border-color: #e5ded5;
+  background: #f8f9f6;
+  font-size: 0.76rem;
+}
+
+@media (max-width: 1180px) {
+  .clubhouse-dashboard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .clubhouse-side-rail {
+    grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.8fr);
+    align-items: start;
+  }
+
+  .clubhouse-side-rail .narrative-memory-panel {
+    grid-column: 1 / -1;
+  }
+}
+
 .start-hero.is-manager-step,
 .start-hero.is-appointment-step {
   grid-template-columns: minmax(240px, 0.54fr) minmax(560px, 1fr);
@@ -6633,6 +6987,26 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .clubhouse-dashboard .manager-briefing-panel,
+  .clubhouse-side-rail,
+  .simulation-progress-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .clubhouse-dashboard .manager-briefing-main h2 {
+    max-width: 100%;
+  }
+
+  .simulation-progress-steps {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .simulation-progress-steps li {
+    border-left: 0;
+    padding: 2px 0;
+  }
+
   .operation-group .button {
     flex: 1 1 132px;
   }
@@ -6708,6 +7082,14 @@ body {
 
   .narrative-memory-head {
     flex-direction: column;
+  }
+
+  .clubhouse-dashboard .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .clubhouse-side-rail .next-game-actions {
+    grid-template-columns: 1fr;
   }
 
   .news-inbox-item {

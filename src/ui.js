@@ -373,12 +373,18 @@ function renderActiveTabContent(activeTab, context) {
   }
 
   return renderTabSurface("clubhouse", "클럽하우스", `
-    ${renderMetricGrid(state, selectedTeam, selectedRank, injuries)}
-    ${renderManagerBriefingPanel(state, selectedTeam, manager)}
-    ${renderNarrativeMemoryPanel(state, selectedTeam)}
-    ${renderNewsInboxPanel(state, selectedTeam, manager)}
-    ${renderPendingMailDecisionPanel(state)}
-    ${renderNextGamePanel(state, selectedTeam, nextGame)}
+    <section class="clubhouse-dashboard" aria-label="클럽하우스 메인 브리핑">
+      <div class="clubhouse-main-rail">
+        ${renderManagerBriefingPanel(state, selectedTeam, manager)}
+        ${renderNewsInboxPanel(state, selectedTeam, manager)}
+      </div>
+      <aside class="clubhouse-side-rail" aria-label="오늘의 운영 요약">
+        ${renderMetricGrid(state, selectedTeam, selectedRank, injuries)}
+        ${renderNextGamePanel(state, selectedTeam, nextGame)}
+        ${renderNarrativeMemoryPanel(state, selectedTeam)}
+      </aside>
+      ${renderPendingMailDecisionPanel(state)}
+    </section>
   `);
 }
 
