@@ -1,17 +1,17 @@
 # 브라우저/패키징 QA 보고서
 
-- 실행 시각: 2026-07-01T02:11:06.746Z
+- 실행 시각: 2026-07-01T02:20:20.043Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Users\godho\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe (v24.14.0)
-- 대상 URL: http://127.0.0.1:57242/index.html
+- 대상 URL: http://127.0.0.1:64332/index.html
 - 브라우저: chrome.exe
-- 종합 결과: 통과 (7/7 통과, 경고 2건)
+- 종합 결과: 통과 (7/7 통과, 경고 1건)
 
 ## 체크 결과
 
 | 항목 | 결과 | 상세 | 위치 |
 | --- | --- | --- | --- |
-| 정적 로컬 서버 시작 | PASS | http://127.0.0.1:57242/index.html | - |
+| 정적 로컬 서버 시작 | PASS | http://127.0.0.1:64332/index.html | - |
 | Chromium 브라우저 연결 | PASS | chrome.exe CDP 연결 완료 | - |
 | Electron 패키징 구성 | PASS | main=electron-main.cjs, product=KBO GM Manager | - |
 | 선수 총원 기준 | PASS | 총 531명 | - |
@@ -21,7 +21,6 @@
 
 ## 경고
 
-- node_modules/electron이 아직 없습니다. 실제 EXE 빌드 전 `npm install`이 필요합니다.
 - 선수 총원은 531명입니다. 현재 정책은 검증된 등록/퓨처스 중심 500명대 로스터입니다.
 
 ## 실행 명령
