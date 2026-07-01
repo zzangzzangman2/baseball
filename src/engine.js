@@ -6,6 +6,10 @@ const KBO_TEAM_COUNT = 10;
 const DAILY_GAME_COUNT = 5;
 const RECENT_LIMIT = 14;
 const LOG_LIMIT = 80;
+const NARRATIVE_ARC_LIMIT = 24;
+const NARRATIVE_BEAT_LIMIT = 80;
+const NARRATIVE_EVIDENCE_LIMIT = 5;
+const NARRATIVE_DAILY_DECAY = 0.94;
 const EVENT_LOG_LIMIT = 1000;
 const KEY_EVENT_LIMIT = 5;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -576,6 +580,16 @@ export function resolveMailDecision(state, action = "acknowledge") {
     ...((state.mailDecisions ?? []).filter((entry) => entry.id !== decision.id))
   ].slice(0, MAIL_DECISION_LIMIT);
   state.pendingMailDecision = null;
+  rememberManagerAction(state, {
+    type: `mail-${decision.type ?? "decision"}`,
+    teamId: decision.teamId ?? state.selectedTeamId,
+    subjectId: decision.id ?? decision.headline ?? action,
+    subject: decision.headline ?? "긴급 보고",
+    headline: `결재 기록: ${decision.headline ?? "긴급 보고"}`,
+    summary: result.message,
+    heat: decision.blocking ? 16 : 10,
+    tags: [decision.type ?? "mail", action, "decision"]
+  });
   addLog(state, {
     date: state.currentDate,
     type: "assistant",
@@ -1018,6 +1032,17 @@ export function commitFreeAgentSigning(state, offer = null) {
     summary: `${signingTeam.name} FA ${player.name} ${selectedOffer.years}년 계약`
   });
   addLog(state, `${state.currentDate} FA 계약: ${signingTeam.name} ${player.name} ${selectedOffer.years}년 ${formatMoneyForLog(selectedOffer.totalGuaranteeKRW)}.`);
+  rememberManagerAction(state, {
+    type: "fa-signing",
+    teamId: signingTeam.id,
+    subjectId: player.id,
+    subject: player.name,
+    headline: `${signingTeam.shortName ?? signingTeam.name} FA 투자 방향`,
+    summary: `${player.name} ${selectedOffer.years}년 ${formatMoneyForLog(selectedOffer.totalGuaranteeKRW)} 계약으로 즉시 전력 보강 프레임이 생겼습니다.`,
+    heat: 18,
+    confidence: 78,
+    tags: ["fa", "contract", "front-office"]
+  });
   syncStateFoundation(state);
 
   return { ok: true, code: "signed", message: `${player.name} FA 계약을 완료했어요.`, signing, compensation };
@@ -1090,6 +1115,17 @@ export function commitForeignPlayerSigning(state, offer = null) {
     summary: `${team.name} 외국인 후보 ${candidate.displayCode} 권리 확보`
   });
   addLog(state, `${state.currentDate} 외국인 권리 계약: ${team.name} ${candidate.displayCode} ${formatMoneyForLog(selectedOffer.contractKRW)}.`);
+  rememberManagerAction(state, {
+    type: "foreign-signing",
+    teamId: team.id,
+    subjectId: candidate.id,
+    subject: candidate.displayCode,
+    headline: `${team.shortName ?? team.name} 외국인 슬롯 전략`,
+    summary: `${candidate.displayCode} 권리 계약으로 ${candidate.role} 보강 기대와 KBO 적응 리스크가 함께 남았습니다.`,
+    heat: 15,
+    confidence: 66,
+    tags: ["foreign", "contract", "front-office"]
+  });
   syncStateFoundation(state);
 
   return { ok: true, code: "signed", message: `${candidate.displayCode} 외국인 권리 계약을 완료했어요.`, signing };
@@ -2734,6 +2770,17 @@ export function commitTradeProposal(state, proposal) {
   commitSupplementalTradeAssets(state, completedTrade);
   appendEvent(state, buildTradeCompletedEvent(completedTrade));
   addLog(state, `${state.currentDate} 트레이드 완료: ${buyerTeam.name} ${incomingPlayer.name} ↔ ${sellerTeam.name} ${outgoingPlayer.name}.`);
+  rememberManagerAction(state, {
+    type: "trade-complete",
+    teamId: buyerTeam.id,
+    subjectId: completedTrade.id,
+    subject: incomingPlayer.name,
+    headline: `${buyerTeam.shortName ?? buyerTeam.name} 트레이드 방향성`,
+    summary: `${incomingPlayer.name} 영입과 ${outgoingPlayer.name} 이탈로 ${buyerTeam.shortName ?? buyerTeam.name}의 포지션 운용 서사가 바뀌었습니다.`,
+    heat: 17,
+    confidence: 76,
+    tags: ["trade", "front-office", "roster"]
+  });
   syncStateFoundation(state);
 
   return {
@@ -5652,6 +5699,7 @@ function normalizeState(state) {
   state.lastGames = Array.isArray(state.lastGames) ? state.lastGames : [];
   state.eventLog = Array.isArray(state.eventLog) ? state.eventLog : [];
   state.logs = Array.isArray(state.logs) ? state.logs : [];
+  normalizeNarratives(state);
   state.mailDecisions = Array.isArray(state.mailDecisions) ? state.mailDecisions : [];
   state.pendingMailDecision = state.pendingMailDecision && typeof state.pendingMailDecision === "object"
     ? state.pendingMailDecision
@@ -5683,6 +5731,536 @@ function normalizeState(state) {
   }
 
   syncStateFoundation(state);
+}
+
+function normalizeNarratives(state) {
+  const source = state.narratives && typeof state.narratives === "object" ? state.narratives : {};
+  state.narratives = {
+    version: 1,
+    arcs: Array.isArray(source.arcs) ? source.arcs.map(normalizeNarrativeArc).filter(Boolean) : [],
+    beats: Array.isArray(source.beats) ? source.beats.map(normalizeNarrativeBeat).filter(Boolean) : [],
+    counters: source.counters && typeof source.counters === "object" ? { ...source.counters } : {},
+    lastUpdated: source.lastUpdated || state.currentDate || "2026-03-01"
+  };
+  state.narratives.arcs = state.narratives.arcs
+    .sort((a, b) => safeNumber(b.heat) - safeNumber(a.heat) || compareText(b.updatedAt, a.updatedAt))
+    .slice(0, NARRATIVE_ARC_LIMIT);
+  state.narratives.beats = state.narratives.beats.slice(0, NARRATIVE_BEAT_LIMIT);
+}
+
+function normalizeNarrativeArc(arc) {
+  if (!arc || typeof arc !== "object") return null;
+  const id = String(arc.id ?? "").trim();
+  if (!id) return null;
+  return {
+    id,
+    type: String(arc.type ?? "story"),
+    teamId: String(arc.teamId ?? ""),
+    subjectId: String(arc.subjectId ?? ""),
+    subject: truncateNarrativeText(arc.subject ?? "구단 이슈", 48),
+    headline: truncateNarrativeText(arc.headline ?? arc.subject ?? "장기 서사", 80),
+    summary: truncateNarrativeText(arc.summary ?? "", 180),
+    heat: clamp(Math.round(safeNumber(arc.heat, 8)), 1, 100),
+    confidence: clamp(Math.round(safeNumber(arc.confidence, 55)), 1, 100),
+    streak: Math.max(1, Math.floor(safeNumber(arc.streak, 1))),
+    startedAt: String(arc.startedAt ?? arc.updatedAt ?? ""),
+    updatedAt: String(arc.updatedAt ?? arc.startedAt ?? ""),
+    lastDecayedAt: String(arc.lastDecayedAt ?? ""),
+    tags: uniqueNarrativeStrings(arc.tags, 8),
+    evidence: Array.isArray(arc.evidence)
+      ? arc.evidence.map(normalizeNarrativeEvidence).filter(Boolean).slice(0, NARRATIVE_EVIDENCE_LIMIT)
+      : []
+  };
+}
+
+function normalizeNarrativeBeat(beat) {
+  if (!beat || typeof beat !== "object") return null;
+  return {
+    id: String(beat.id ?? narrativeKey("beat", beat.date, beat.headline, beat.summary)),
+    date: String(beat.date ?? ""),
+    teamId: String(beat.teamId ?? ""),
+    type: String(beat.type ?? "beat"),
+    headline: truncateNarrativeText(beat.headline ?? "서사 기록", 80),
+    summary: truncateNarrativeText(beat.summary ?? "", 180),
+    impact: clamp(Math.round(safeNumber(beat.impact, 5)), -30, 30),
+    tags: uniqueNarrativeStrings(beat.tags, 8)
+  };
+}
+
+function normalizeNarrativeEvidence(evidence) {
+  if (!evidence) return null;
+  if (typeof evidence === "string") {
+    return { date: "", source: "", text: truncateNarrativeText(evidence, 150) };
+  }
+  const text = truncateNarrativeText(evidence.text ?? evidence.summary ?? "", 150);
+  if (!text) return null;
+  return {
+    date: String(evidence.date ?? ""),
+    source: truncateNarrativeText(evidence.source ?? "", 32),
+    text
+  };
+}
+
+export function rememberManagerAction(state, event = {}) {
+  if (!state) return null;
+  normalizeNarratives(state);
+  const date = String(event.date ?? state.currentDate ?? "");
+  const teamId = String(event.teamId ?? state.selectedTeamId ?? "");
+  const type = String(event.type ?? "manager-action");
+  const subject = event.subject ?? event.headline ?? "운영 결정";
+  const subjectId = event.subjectId ?? subject;
+  const headline = event.headline ?? subject;
+  const summary = event.summary ?? event.text ?? headline;
+  const arc = upsertNarrativeArc(state, {
+    id: event.id ?? narrativeKey("manager", teamId || "league", type, subjectId),
+    type,
+    teamId,
+    subjectId: String(subjectId ?? ""),
+    subject,
+    headline,
+    summary,
+    heat: event.heat ?? 8,
+    confidence: event.confidence ?? 62,
+    tags: event.tags ?? [type, "manager"],
+    date,
+    evidence: {
+      date,
+      source: event.source ?? "감독실",
+      text: summary
+    }
+  });
+  addNarrativeBeat(state, {
+    id: narrativeKey("beat", date, teamId || "league", type, subjectId),
+    date,
+    teamId,
+    type,
+    headline,
+    summary,
+    impact: event.impact ?? Math.round(safeNumber(event.heat, 8) / 2),
+    tags: event.tags ?? [type]
+  });
+  state.narratives.lastUpdated = date || state.narratives.lastUpdated;
+  return arc;
+}
+
+function upsertNarrativeArc(state, seed = {}) {
+  normalizeNarratives(state);
+  const date = String(seed.date ?? state.currentDate ?? "");
+  const id = String(seed.id ?? narrativeKey(seed.type, seed.teamId, seed.subjectId, seed.headline));
+  const heatDelta = clamp(Math.round(safeNumber(seed.heat, 8)), 1, 35);
+  const evidence = normalizeNarrativeEvidence(seed.evidence ?? {
+    date,
+    source: seed.source ?? "",
+    text: seed.summary ?? seed.headline ?? seed.subject ?? ""
+  });
+  const existing = state.narratives.arcs.find((arc) => arc.id === id);
+  if (existing) {
+    existing.type = String(seed.type ?? existing.type);
+    existing.teamId = String(seed.teamId ?? existing.teamId ?? "");
+    existing.subjectId = String(seed.subjectId ?? existing.subjectId ?? "");
+    existing.subject = truncateNarrativeText(seed.subject ?? existing.subject, 48);
+    existing.headline = truncateNarrativeText(seed.headline ?? existing.headline, 80);
+    existing.summary = truncateNarrativeText(seed.summary ?? existing.summary, 180);
+    existing.heat = clamp(Math.round(safeNumber(existing.heat, 1) + heatDelta), 1, 100);
+    existing.confidence = clamp(Math.round((safeNumber(existing.confidence, 55) * 0.72) + (safeNumber(seed.confidence, 55) * 0.28)), 1, 100);
+    existing.streak = Math.max(1, safeNumber(existing.streak, 1) + 1);
+    existing.updatedAt = date || existing.updatedAt;
+    existing.tags = uniqueNarrativeStrings([...(existing.tags ?? []), ...(Array.isArray(seed.tags) ? seed.tags : [seed.tags])], 8);
+    if (evidence) {
+      const evidenceKey = `${evidence.date}-${evidence.source}-${evidence.text}`;
+      existing.evidence = [evidence, ...(existing.evidence ?? []).filter((item) => `${item.date}-${item.source}-${item.text}` !== evidenceKey)]
+        .slice(0, NARRATIVE_EVIDENCE_LIMIT);
+    }
+    state.narratives.arcs = state.narratives.arcs
+      .sort((a, b) => safeNumber(b.heat) - safeNumber(a.heat) || compareText(b.updatedAt, a.updatedAt))
+      .slice(0, NARRATIVE_ARC_LIMIT);
+    return existing;
+  }
+
+  const arc = normalizeNarrativeArc({
+    id,
+    type: seed.type,
+    teamId: seed.teamId,
+    subjectId: seed.subjectId,
+    subject: seed.subject,
+    headline: seed.headline,
+    summary: seed.summary,
+    heat: heatDelta,
+    confidence: seed.confidence,
+    streak: 1,
+    startedAt: date,
+    updatedAt: date,
+    lastDecayedAt: "",
+    tags: seed.tags,
+    evidence: evidence ? [evidence] : []
+  });
+  if (!arc) return null;
+  state.narratives.arcs = [arc, ...state.narratives.arcs]
+    .sort((a, b) => safeNumber(b.heat) - safeNumber(a.heat) || compareText(b.updatedAt, a.updatedAt))
+    .slice(0, NARRATIVE_ARC_LIMIT);
+  return arc;
+}
+
+function addNarrativeBeat(state, beat = {}) {
+  normalizeNarratives(state);
+  const normalized = normalizeNarrativeBeat(beat);
+  if (!normalized) return;
+  state.narratives.beats = [
+    normalized,
+    ...state.narratives.beats.filter((item) => item.id !== normalized.id)
+  ].slice(0, NARRATIVE_BEAT_LIMIT);
+}
+
+function decayNarrativeArcs(state, dateKey) {
+  normalizeNarratives(state);
+  const date = String(dateKey ?? state.currentDate ?? "");
+  for (const arc of state.narratives.arcs) {
+    if (!date || arc.updatedAt === date || arc.lastDecayedAt === date) continue;
+    arc.heat = Math.max(1, Math.round(safeNumber(arc.heat, 1) * NARRATIVE_DAILY_DECAY));
+    arc.lastDecayedAt = date;
+  }
+  state.narratives.arcs = state.narratives.arcs
+    .filter((arc) => safeNumber(arc.heat) > 1 || safeNumber(arc.streak) > 1)
+    .sort((a, b) => safeNumber(b.heat) - safeNumber(a.heat) || compareText(b.updatedAt, a.updatedAt))
+    .slice(0, NARRATIVE_ARC_LIMIT);
+}
+
+function recordDailyNarratives(state, context = {}) {
+  const team = context.team ?? findTeamById(state, state.selectedTeamId);
+  const reportDate = String(context.reportDate ?? state.currentDate ?? "");
+  decayNarrativeArcs(state, reportDate);
+
+  if (team && context.focusGame) {
+    const diff = teamRunDiff(context.focusGame, team.id);
+    const gameText = context.gameText ?? `${context.focusGame.away} ${context.focusGame.awayScore}-${context.focusGame.homeScore} ${context.focusGame.home}`;
+    if (diff !== null) {
+      if (diff >= 4) {
+        upsertNarrativeArc(state, {
+          id: narrativeKey("team", team.id, "big-win"),
+          type: "performance",
+          teamId: team.id,
+          subject: "대승 흐름",
+          headline: `${team.shortName ?? team.name} 공격 플랜 신뢰 상승`,
+          summary: `${gameText} 이후 타선 조합과 경기 플랜에 대한 긍정 프레임이 커졌습니다.`,
+          heat: 12 + Math.min(10, diff),
+          confidence: 72,
+          tags: ["result", "offense", "media"],
+          date: reportDate,
+          evidence: { date: reportDate, source: "경기 결과", text: `${gameText}, 득실차 +${diff}` }
+        });
+      } else if (diff <= -4) {
+        upsertNarrativeArc(state, {
+          id: narrativeKey("team", team.id, "heavy-loss"),
+          type: "pressure",
+          teamId: team.id,
+          subject: "대패 후 압박",
+          headline: `${team.shortName ?? team.name} 벤치 운영 압박`,
+          summary: `${gameText} 이후 투수 교체와 타순 고정에 대한 언론 질문이 따라붙습니다.`,
+          heat: 13 + Math.min(10, Math.abs(diff)),
+          confidence: 75,
+          tags: ["result", "pressure", "media"],
+          date: reportDate,
+          evidence: { date: reportDate, source: "경기 결과", text: `${gameText}, 득실차 ${diff}` }
+        });
+      } else if (diff > 0) {
+        upsertNarrativeArc(state, {
+          id: narrativeKey("team", team.id, "close-win-trust"),
+          type: "trust",
+          teamId: team.id,
+          subject: "승부처 운영",
+          headline: "승부처 운영 신뢰 누적",
+          summary: `${team.shortName ?? team.name}가 접전에서 결과를 내며 감독 선택을 지지하는 근거가 쌓입니다.`,
+          heat: 8,
+          confidence: 64,
+          tags: ["result", "manager"],
+          date: reportDate,
+          evidence: { date: reportDate, source: "경기 결과", text: gameText }
+        });
+      } else if (diff < 0) {
+        upsertNarrativeArc(state, {
+          id: narrativeKey("team", team.id, "close-loss-question"),
+          type: "pressure",
+          teamId: team.id,
+          subject: "접전 패배",
+          headline: "후반 운영 논쟁",
+          summary: `${team.shortName ?? team.name}가 접전을 놓치며 대타·불펜 타이밍을 둘러싼 질문이 이어집니다.`,
+          heat: 9,
+          confidence: 66,
+          tags: ["result", "manager", "bullpen"],
+          date: reportDate,
+          evidence: { date: reportDate, source: "경기 결과", text: gameText }
+        });
+      }
+    }
+  }
+
+  const recent = team ? recentTeamResults(state, team.id, 5) : [];
+  const wins = recent.filter((item) => item.diff > 0).length;
+  const losses = recent.filter((item) => item.diff < 0).length;
+  if (team && recent.length >= 4 && wins >= 4) {
+    upsertNarrativeArc(state, {
+      id: narrativeKey("team", team.id, "win-streak"),
+      type: "momentum",
+      teamId: team.id,
+      subject: "연승 흐름",
+      headline: `${team.shortName ?? team.name} 상승세`,
+      summary: `최근 ${recent.length}경기 중 ${wins}승으로 선수단 신뢰와 팬 기대치가 함께 올라갑니다.`,
+      heat: 14,
+      confidence: 78,
+      tags: ["streak", "morale"],
+      date: reportDate,
+      evidence: { date: reportDate, source: "최근 흐름", text: `최근 ${recent.length}경기 ${wins}승` }
+    });
+  } else if (team && recent.length >= 4 && losses >= 4) {
+    upsertNarrativeArc(state, {
+      id: narrativeKey("team", team.id, "slump"),
+      type: "pressure",
+      teamId: team.id,
+      subject: "연패 압박",
+      headline: `${team.shortName ?? team.name} 분위기 관리 이슈`,
+      summary: `최근 ${recent.length}경기 중 ${losses}패로 선수단 메시지와 라인업 조정의 무게가 커졌습니다.`,
+      heat: 15,
+      confidence: 80,
+      tags: ["streak", "pressure"],
+      date: reportDate,
+      evidence: { date: reportDate, source: "최근 흐름", text: `최근 ${recent.length}경기 ${losses}패` }
+    });
+  }
+
+  const results = Array.isArray(context.results) ? context.results : [];
+  const totalRuns = safeNumber(context.totalRuns);
+  if (results.length >= 3) {
+    const runAverage = totalRuns / results.length;
+    if (runAverage >= 10.4) {
+      upsertNarrativeArc(state, {
+        id: narrativeKey("league", "run-environment-high"),
+        type: "league-environment",
+        teamId: "league",
+        subject: "타고투저 흐름",
+        headline: "리그 득점 환경 상승",
+        summary: `오늘 리그 평균 득점이 ${roundNumber(runAverage, 1)}점까지 올라 타선 운용과 불펜 소모가 동시에 이슈입니다.`,
+        heat: 8,
+        confidence: 58,
+        tags: ["league", "run-environment"],
+        date: reportDate,
+        evidence: { date: reportDate, source: "전력분석", text: `${results.length}경기 총 ${totalRuns}득점` }
+      });
+    } else if (runAverage <= 6.2) {
+      upsertNarrativeArc(state, {
+        id: narrativeKey("league", "run-environment-low"),
+        type: "league-environment",
+        teamId: "league",
+        subject: "투고타저 흐름",
+        headline: "리그 득점 환경 하락",
+        summary: `오늘 리그 평균 득점이 ${roundNumber(runAverage, 1)}점에 머물러 선발 매치업과 작전 야구 비중이 커졌습니다.`,
+        heat: 8,
+        confidence: 58,
+        tags: ["league", "run-environment"],
+        date: reportDate,
+        evidence: { date: reportDate, source: "전력분석", text: `${results.length}경기 총 ${totalRuns}득점` }
+      });
+    }
+  }
+
+  const selectedInjuries = (context.newInjuries ?? []).filter((entry) => String(entry.teamId) === String(team?.id));
+  for (const injury of selectedInjuries.slice(0, 2)) {
+    upsertNarrativeArc(state, {
+      id: narrativeKey("player", team?.id, "injury", injury.playerId ?? injury.name),
+      type: "medical",
+      teamId: team?.id ?? "",
+      subjectId: injury.playerId ?? injury.name,
+      subject: injury.name,
+      headline: `${injury.name} 공백 관리`,
+      summary: `${injuryLabel(injury.injuredDays)} 판정으로 엔트리와 포지션 뎁스 운용이 장기 이슈가 됐습니다.`,
+      heat: 12 + Math.min(12, safeNumber(injury.injuredDays)),
+      confidence: 86,
+      tags: ["injury", "roster"],
+      date: reportDate,
+      evidence: { date: reportDate, source: "트레이닝 파트", text: `${injury.name} ${injury.injuredDays}일 이탈` }
+    });
+  }
+
+  if (team && context.futuresReport?.player && (context.futuresReport.hot || String(context.futuresReport.note ?? "").includes("콜업"))) {
+    const player = context.futuresReport.player;
+    upsertNarrativeArc(state, {
+      id: narrativeKey("player", team.id, "futures-callup", player.id ?? player.name),
+      type: "development",
+      teamId: team.id,
+      subjectId: player.id ?? player.name,
+      subject: player.name,
+      headline: `${player.name} 1군 콜업 압박`,
+      summary: `퓨처스 보고가 반복될수록 ${player.name}의 1군 기회 여부가 감독실 질문으로 남습니다.`,
+      heat: 10,
+      confidence: 63,
+      tags: ["futures", "callup"],
+      date: reportDate,
+      evidence: { date: reportDate, source: "2군 감독", text: context.futuresReport.note }
+    });
+  }
+}
+
+function recordPreseasonNarratives(state, context = {}) {
+  const team = context.team;
+  const dateKey = String(context.dateKey ?? state.currentDate ?? "");
+  if (!team) return;
+  decayNarrativeArcs(state, dateKey);
+  upsertNarrativeArc(state, {
+    id: narrativeKey("preseason", team.id, context.focus),
+    type: "preseason",
+    teamId: team.id,
+    subject: context.focus,
+    headline: `${context.shortName} ${context.focus} 프레임`,
+    summary: `개막까지 ${context.daysToOpening}일, ${context.focus}가 캠프 일일 보고의 중심 안건입니다.`,
+    heat: 6,
+    confidence: 56,
+    tags: ["preseason", "camp"],
+    date: dateKey,
+    evidence: { date: dateKey, source: "개인비서", text: `${context.focus} 점검 필요` }
+  });
+  if (safeNumber(context.payrollRoom) < 0) {
+    upsertNarrativeArc(state, {
+      id: narrativeKey("team", team.id, "budget-pressure"),
+      type: "front-office",
+      teamId: team.id,
+      subject: "예산 압박",
+      headline: `${context.shortName} 예산 정리 압박`,
+      summary: `운영 여력이 ${Math.abs(safeNumber(context.payrollRoom))}억가량 부족해 FA와 외국인 시장 선택이 계속 주목됩니다.`,
+      heat: 10,
+      confidence: 70,
+      tags: ["budget", "front-office"],
+      date: dateKey,
+      evidence: { date: dateKey, source: "프런트 예산팀", text: `예산 여력 ${context.payrollRoom}억` }
+    });
+  }
+  if (safeNumber(context.injuredCount) > 0) {
+    upsertNarrativeArc(state, {
+      id: narrativeKey("team", team.id, "camp-injury-depth"),
+      type: "medical",
+      teamId: team.id,
+      subject: "캠프 부상 뎁스",
+      headline: `${context.shortName} 부상 뎁스 관리`,
+      summary: `프리시즌 부상자 ${context.injuredCount}명으로 개막 엔트리 압축 전에 대체 자원 검토가 필요합니다.`,
+      heat: 8 + Math.min(8, safeNumber(context.injuredCount) * 2),
+      confidence: 68,
+      tags: ["injury", "preseason"],
+      date: dateKey,
+      evidence: { date: dateKey, source: "트레이닝 파트", text: `부상자 ${context.injuredCount}명` }
+    });
+  }
+}
+
+function buildNarrativeContext(state, team, dateKey = state?.currentDate) {
+  normalizeNarratives(state);
+  const arcs = getNarrativeArcsForTeam(state, team, 3);
+  if (!arcs.length) {
+    return {
+      arcs,
+      reportLine: "아직 장기 이슈는 낮은 강도입니다.",
+      mediaLine: "언론 프레임은 아직 형성 전입니다.",
+      assistantLine: "누적 이슈는 아직 없습니다. 오늘 결정과 경기 결과부터 기억하겠습니다."
+    };
+  }
+  const lead = arcs[0];
+  const secondary = arcs[1];
+  const evidence = lead.evidence?.[0]?.text ? ` 최근 근거: ${lead.evidence[0].text}` : "";
+  return {
+    arcs,
+    reportLine: `${lead.headline}(${Math.round(safeNumber(lead.heat))}) - ${lead.summary}`,
+    mediaLine: secondary
+      ? `${lead.headline} 프레임에 ${secondary.headline} 이슈가 겹쳐 있습니다.`
+      : `${lead.headline} 프레임이 이어지고 있습니다.`,
+    assistantLine: `${lead.headline}: ${lead.summary}${evidence}`,
+    date: dateKey
+  };
+}
+
+function getNarrativeArcsForTeam(state, team, limit = 4) {
+  normalizeNarratives(state);
+  const teamId = String(team?.id ?? state.selectedTeamId ?? "");
+  return state.narratives.arcs
+    .filter((arc) => !arc.teamId || arc.teamId === "league" || String(arc.teamId) === teamId)
+    .sort((a, b) => safeNumber(b.heat) - safeNumber(a.heat) || compareText(b.updatedAt, a.updatedAt))
+    .slice(0, limit);
+}
+
+function rememberStructuredLogNarrative(state, message) {
+  if (!message || typeof message !== "object") return;
+  const rememberedTypes = new Set(["medical", "coaching", "interpreter", "trade-offer", "waiver", "operations", "front-office", "kbo-official", "compliance", "futures", "development"]);
+  if (!rememberedTypes.has(String(message.type ?? ""))) return;
+  const teamId = message.teamId ?? state.selectedTeamId ?? "";
+  const heatByType = {
+    medical: 16,
+    coaching: 11,
+    interpreter: 10,
+    "trade-offer": 15,
+    waiver: 12,
+    operations: 9,
+    "front-office": 10,
+    "kbo-official": 11,
+    compliance: 12,
+    futures: 10,
+    development: 8
+  };
+  rememberManagerAction(state, {
+    type: `log-${message.type}`,
+    teamId,
+    subjectId: message.id ?? message.playerId ?? message.headline ?? message.tag ?? message.type,
+    subject: message.tag ?? message.source ?? message.type,
+    headline: message.headline ?? message.text ?? "구단 보고",
+    summary: message.text ?? message.headline ?? "구단 보고가 장기 서사에 기록됐습니다.",
+    heat: heatByType[message.type] ?? 8,
+    confidence: 58,
+    date: message.date ?? state.currentDate,
+    source: message.source ?? message.tag ?? "뉴스함",
+    tags: [message.type, message.tag, "mail"].filter(Boolean)
+  });
+}
+
+function teamRunDiff(game, teamId) {
+  if (!game || !teamId) return null;
+  const key = String(teamId);
+  if (String(game.homeTeamId ?? "") === key) return safeNumber(game.homeScore ?? game.homeRuns) - safeNumber(game.awayScore ?? game.awayRuns);
+  if (String(game.awayTeamId ?? "") === key) return safeNumber(game.awayScore ?? game.awayRuns) - safeNumber(game.homeScore ?? game.homeRuns);
+  return null;
+}
+
+function recentTeamResults(state, teamId, limit = 5) {
+  const results = [];
+  for (const game of state?.lastGames ?? []) {
+    const diff = teamRunDiff(game, teamId);
+    if (diff === null) continue;
+    results.push({ game, diff });
+    if (results.length >= limit) break;
+  }
+  return results;
+}
+
+function uniqueNarrativeStrings(values, limit = 8) {
+  const list = Array.isArray(values) ? values : [values];
+  const seen = new Set();
+  const result = [];
+  for (const value of list) {
+    const text = String(value ?? "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    result.push(text);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
+function narrativeKey(...parts) {
+  const text = parts
+    .map((part) => String(part ?? "").trim().toLowerCase().replace(/[^\w가-힣]+/g, "-").replace(/^-+|-+$/g, ""))
+    .filter(Boolean)
+    .join("-");
+  return (text || "narrative").slice(0, 96);
+}
+
+function truncateNarrativeText(value, maxLength = 140) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function advanceDate(state, date) {
@@ -5751,6 +6329,18 @@ function addDailyMorningRoutine(state, context = {}) {
     : newInjuries.length
       ? `리그 신규 부상 ${newInjuries.length}건`
       : "신규 부상 보고 없음";
+  recordDailyNarratives(state, {
+    team,
+    focusGame,
+    results,
+    newInjuries,
+    futuresReport,
+    weeklyPower,
+    totalRuns,
+    reportDate,
+    gameText
+  });
+  const narrative = buildNarrativeContext(state, team, morningDate);
 
   addLog(state, {
     date: morningDate,
@@ -5758,7 +6348,7 @@ function addDailyMorningRoutine(state, context = {}) {
     tag: "전력분석",
     source: "전력분석팀",
     headline: `[전력분석] ${formatKoreanMonthDay(reportDate)} 경기 결과 및 주간 전력 분석 보고`,
-    text: `1군 포커스: ${gameText}. 리그 ${results.length}경기 총 ${totalRuns}득점, ${weeklyPower}. 퓨처스리그: ${futuresReport.scoreText}. 2군 감독 보고: ${futuresReport.note}`
+    text: `1군 포커스: ${gameText}. 리그 ${results.length}경기 총 ${totalRuns}득점, ${weeklyPower}. 퓨처스리그: ${futuresReport.scoreText}. 2군 감독 보고: ${futuresReport.note}. 장기 서사: ${narrative.reportLine}`
   });
 
   addLog(state, {
@@ -5767,7 +6357,7 @@ function addDailyMorningRoutine(state, context = {}) {
     tag: selectMediaOutlet(reportDate, team?.id ?? "kbo"),
     source: selectMediaOutlet(reportDate, team?.id ?? "kbo"),
     headline: `${team?.shortName ?? "KBO"} 벤치 선택에 시선 집중`,
-    text: `${gameText} 이후 ${PRESEASON_MEDIA_OUTLETS.join(", ")} 데스크가 라인업 피로도와 콜업 후보를 주요 이슈로 다뤘습니다.`
+    text: `${gameText} 이후 ${PRESEASON_MEDIA_OUTLETS.join(", ")} 데스크가 라인업 피로도와 콜업 후보를 주요 이슈로 다뤘습니다. ${narrative.mediaLine}`
   });
 
   addLog(state, {
@@ -5776,7 +6366,7 @@ function addDailyMorningRoutine(state, context = {}) {
     tag: "개인비서",
     source: "개인비서",
     headline: `${team?.shortName ?? "우리 팀"} 경기 후 아침 보고`,
-    text: `${gameText}. ${injuryText}. 오늘 확인할 항목은 엔트리 재등록 가능일, 외국인 출전 제한, 불펜 과부하, 시장 알림입니다.`
+    text: `${gameText}. ${injuryText}. 누적 이슈: ${narrative.assistantLine}. 오늘 확인할 항목은 엔트리 재등록 가능일, 외국인 출전 제한, 불펜 과부하, 시장 알림입니다.`
   });
 
   if (selectedInjuries.length) addMedicalReportLog(state, team, selectedInjuries[0], morningDate);
@@ -5931,7 +6521,9 @@ function buildFuturesDailyReport(state, team, dateKey) {
   if (!player) {
     return {
       scoreText,
-      note: "퓨처스 등록 선수 표본이 부족합니다. 육성군 원장을 보강해야 합니다."
+      note: "퓨처스 등록 선수 표본이 부족합니다. 육성군 원장을 보강해야 합니다.",
+      player: null,
+      hot: false
     };
   }
   const hot = deterministicRange(dateKey, player.id ?? player.name, "futures-hot", 0, 4) === 0;
@@ -5941,7 +6533,7 @@ function buildFuturesDailyReport(state, team, dateKey) {
   const note = hot
     ? `${player.name} 선수가 퓨처스에서 4경기 연속 장타 흐름을 보입니다. 1군 콜업을 강하게 추천합니다.`
     : `${player.name} 선수는 ${statLine}로 컨디션을 끌어올렸습니다. 다음 원정 전 한 번 더 확인하십시오.`;
-  return { scoreText, note, player };
+  return { scoreText, note, player, hot, statLine };
 }
 
 function summarizeWeeklyPower(results, focusGame, team) {
@@ -6460,6 +7052,8 @@ function addPreseasonActivityLog(state, dateKey, weather) {
   }
 
   const context = buildPreseasonContext(state, team, dateKey, weather);
+  recordPreseasonNarratives(state, context);
+  context.narrative = buildNarrativeContext(state, team, dateKey);
   addLog(state, buildPreseasonMediaLog(context));
   addLog(state, buildPreseasonMailboxLog(context));
   addLog(state, buildPreseasonAssistantLog(context));
@@ -6539,7 +7133,7 @@ function buildPreseasonMediaLog(context) {
     tag: outlet,
     source: outlet,
     headline: items[topic].headline,
-    text: items[topic].text
+    text: `${items[topic].text} ${context.narrative?.mediaLine ?? ""}`.trim()
   };
 }
 
@@ -6610,7 +7204,8 @@ function buildPreseasonMailboxLog(context) {
 
   return {
     date: context.dateKey,
-    ...items[topic]
+    ...items[topic],
+    text: `${items[topic].text} 누적 이슈: ${context.narrative?.reportLine ?? "아직 장기 이슈는 낮은 강도입니다."}`
   };
 }
 
@@ -6628,7 +7223,7 @@ function buildPreseasonAssistantLog(context) {
     tag: "개인비서",
     source: "개인비서",
     headline: `${context.managerName}님, 개막까지 ${context.daysToOpening}일 전 보고입니다`,
-    text: `${context.moodLabel}입니다. 오늘 결정 안건은 ${concern}. 예상 언론 질문은 "${prompt}"입니다.`
+    text: `${context.moodLabel}입니다. 오늘 결정 안건은 ${concern}. 누적 이슈: ${context.narrative?.assistantLine ?? "아직 없습니다."} 예상 언론 질문은 "${prompt}"입니다.`
   };
 }
 
@@ -6703,7 +7298,8 @@ function draftMentalLabel(value) {
 }
 
 function addLog(state, message) {
-  state.logs = [message, ...state.logs].slice(0, LOG_LIMIT);
+  state.logs = [message, ...(Array.isArray(state.logs) ? state.logs : [])].slice(0, LOG_LIMIT);
+  rememberStructuredLogNarrative(state, message);
 }
 
 function deterministicRange(...parts) {

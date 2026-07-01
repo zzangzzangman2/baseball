@@ -1061,6 +1061,141 @@ img {
   border-left-color: #8a7468;
 }
 
+.narrative-memory-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(226, 219, 210, 0.95);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 254, 250, 0.98), rgba(247, 248, 245, 0.96)),
+    var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.narrative-memory-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.narrative-memory-head p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 760;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.narrative-arc-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.narrative-arc-card {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e1dbd1;
+  border-left: 4px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 16%);
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.98);
+}
+
+.narrative-arc-card.is-pressure,
+.narrative-arc-card.is-medical {
+  border-left-color: #9b5262;
+}
+
+.narrative-arc-card.is-development,
+.narrative-arc-card.is-trust,
+.narrative-arc-card.is-momentum {
+  border-left-color: #5f7568;
+}
+
+.narrative-arc-card.is-league-environment {
+  border-left-color: #607080;
+}
+
+.narrative-arc-card.is-empty {
+  opacity: 0.82;
+}
+
+.narrative-arc-top {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.narrative-arc-top span {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8f9f6;
+  color: #545d58;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.narrative-arc-top b {
+  color: color-mix(in srgb, var(--team-color, #2f343a), #2f343a 42%);
+  font-size: 0.98rem;
+  font-weight: 950;
+}
+
+.narrative-arc-card h3 {
+  min-width: 0;
+  font-size: 0.96rem;
+  line-height: 1.24;
+  overflow-wrap: anywhere;
+}
+
+.narrative-arc-card p,
+.narrative-arc-card small {
+  min-width: 0;
+  color: var(--muted);
+  font-weight: 760;
+  line-height: 1.38;
+  overflow-wrap: anywhere;
+}
+
+.narrative-arc-card p {
+  font-size: 0.83rem;
+}
+
+.narrative-arc-card small {
+  font-size: 0.73rem;
+}
+
+.narrative-heat-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8e3da;
+}
+
+.narrative-heat-track i {
+  display: block;
+  width: var(--heat);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--team-color, #2f343a), #ffffff 18%), #5f7568);
+}
+
 .preseason-desk-panel {
   display: grid;
   grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.1fr);
@@ -4858,6 +4993,10 @@ img {
   .metric-grid {
     grid-template-columns: repeat(3, minmax(145px, 1fr));
   }
+
+  .narrative-arc-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 860px) {
@@ -6489,6 +6628,7 @@ body {
   }
 
   .news-inbox-grid,
+  .narrative-arc-list,
   .preseason-desk-panel {
     grid-template-columns: 1fr;
   }
@@ -6563,6 +6703,10 @@ body {
   }
 
   .news-inbox-head {
+    flex-direction: column;
+  }
+
+  .narrative-memory-head {
     flex-direction: column;
   }
 

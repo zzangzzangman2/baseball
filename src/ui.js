@@ -13,6 +13,7 @@ import {
   initializeFreeAgency,
   initializePostseason,
   initializeSecondaryDraft,
+  rememberManagerAction,
   resolveMailDecision,
   simulateDay,
   simulateDays,
@@ -296,6 +297,7 @@ function renderActiveTabContent(activeTab, context) {
 
   if (activeTab === "news") {
     return renderTabSurface("news", "뉴스함", `
+      ${renderNarrativeMemoryPanel(state, selectedTeam)}
       ${renderNewsInboxPanel(state, selectedTeam, manager)}
       ${renderPendingMailDecisionPanel(state)}
       ${renderNewsLogPanel(state)}
@@ -373,6 +375,7 @@ function renderActiveTabContent(activeTab, context) {
   return renderTabSurface("clubhouse", "클럽하우스", `
     ${renderMetricGrid(state, selectedTeam, selectedRank, injuries)}
     ${renderManagerBriefingPanel(state, selectedTeam, manager)}
+    ${renderNarrativeMemoryPanel(state, selectedTeam)}
     ${renderNewsInboxPanel(state, selectedTeam, manager)}
     ${renderPendingMailDecisionPanel(state)}
     ${renderNextGamePanel(state, selectedTeam, nextGame)}
@@ -878,6 +881,84 @@ function renderManagerBriefingPanel(state, selectedTeam, manager) {
       <small>${escapeHtml(manager.appointedAt ?? state.currentDate ?? "")} 취임</small>
     </section>
   `;
+}
+
+function renderNarrativeMemoryPanel(state, selectedTeam) {
+  const arcs = buildNarrativeMemoryItems(state, selectedTeam);
+  const teamName = getTeamShortName(selectedTeam) ?? "우리 팀";
+  const leadHeat = arcs[0]?.heat ?? 0;
+  return `
+    <section class="narrative-memory-panel" data-narrative-memory aria-label="장기 서사 메모리">
+      <div class="narrative-memory-head">
+        <div>
+          <span class="mini-label">장기 서사</span>
+          <h2>${escapeHtml(teamName)} 메모리</h2>
+          <p>감독 결정, 경기 결과, 부상, 언론 프레임을 이어서 기억합니다.</p>
+        </div>
+        <span class="pill">열기 ${formatNumber(Math.round(Number(leadHeat ?? 0)))}</span>
+      </div>
+      <div class="narrative-arc-list">
+        ${arcs.length ? arcs.map(renderNarrativeArcCard).join("") : renderEmptyNarrativeMemory(teamName)}
+      </div>
+    </section>
+  `;
+}
+
+function buildNarrativeMemoryItems(state, selectedTeam) {
+  const teamId = String(selectedTeam?.id ?? state?.selectedTeamId ?? "");
+  return [...(state?.narratives?.arcs ?? [])]
+    .filter((arc) => !arc.teamId || arc.teamId === "league" || String(arc.teamId) === teamId)
+    .sort((a, b) => Number(b.heat ?? 0) - Number(a.heat ?? 0) || String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))
+    .slice(0, 4);
+}
+
+function renderNarrativeArcCard(arc) {
+  const heat = Math.max(0, Math.min(100, Math.round(Number(arc.heat ?? 0))));
+  const evidence = arc.evidence?.[0]?.text ?? "";
+  return `
+    <article class="narrative-arc-card is-${escapeAttribute(logTypeClass(arc.type))}">
+      <div class="narrative-arc-top">
+        <span>${escapeHtml(narrativeTypeLabel(arc.type))}</span>
+        <b>${formatNumber(heat)}</b>
+      </div>
+      <h3>${escapeHtml(arc.headline ?? arc.subject ?? "장기 이슈")}</h3>
+      <p>${escapeHtml(arc.summary ?? "")}</p>
+      ${evidence ? `<small>${escapeHtml(evidence)}</small>` : ""}
+      <div class="narrative-heat-track" style="--heat:${heat}%"><i></i></div>
+    </article>
+  `;
+}
+
+function renderEmptyNarrativeMemory(teamName) {
+  return `
+    <article class="narrative-arc-card is-empty">
+      <div class="narrative-arc-top">
+        <span>개인비서</span>
+        <b>0</b>
+      </div>
+      <h3>${escapeHtml(teamName)} 첫 서사 기록 대기</h3>
+      <p>취임 인터뷰, 라인업 저장, 경기 결과가 쌓이면 반복되는 이야기와 언론 프레임이 표시됩니다.</p>
+      <div class="narrative-heat-track" style="--heat:0%"><i></i></div>
+    </article>
+  `;
+}
+
+function narrativeTypeLabel(type) {
+  const labels = {
+    performance: "경기 흐름",
+    pressure: "압박",
+    trust: "신뢰",
+    momentum: "상승세",
+    medical: "메디컬",
+    development: "육성",
+    preseason: "캠프",
+    "front-office": "프런트",
+    "league-environment": "리그 환경",
+    "fa-signing": "FA",
+    "foreign-signing": "외국인",
+    "trade-complete": "트레이드"
+  };
+  return labels[type] ?? "서사";
 }
 
 function renderNewsInboxPanel(state, selectedTeam, manager) {
@@ -1396,6 +1477,16 @@ function bindOnboardingActions(root, state) {
       ...buildAppointmentNewsLogs(state, selectedTeam, manager, answers),
       ...((state.logs ?? []))
     ].slice(0, 60);
+    rememberManagerAction(state, {
+      type: "appointment",
+      teamId: state.selectedTeamId,
+      subject: `${manager.name} 감독 취임`,
+      headline: `${manager.name} 감독 첫 메시지`,
+      summary: answers.map((answer) => `${answer.question}: ${answer.label}`).join(" / "),
+      heat: 14,
+      confidence: 72,
+      tags: ["appointment", "interview", "manager"]
+    });
     state.ui = { ...(state.ui ?? {}), screen: "game" };
     render(root, state);
     resetViewportToTop();
@@ -1955,6 +2046,16 @@ function bindActions(root, state) {
       },
       ...((state.logs ?? []))
     ].slice(0, 80);
+    rememberManagerAction(state, {
+      type: "lineup-manual",
+      teamId: selectedTeam.id,
+      subject: "수동 선발 타순",
+      headline: `${getTeamShortName(selectedTeam) ?? selectedTeam.name} 수동 타순 고정`,
+      summary: `감독실이 1~9번 선발 오더를 직접 확정했습니다. 다음 경기 결과에 따라 타순 고정 프레임이 이어집니다.`,
+      heat: 11,
+      confidence: 64,
+      tags: ["lineup", "manager", "game-plan"]
+    });
     render(root, state);
     setStatus(root, "라인업을 저장했습니다. 다음 경기 시뮬레이션에 이 타순이 적용됩니다.");
   });
@@ -1963,6 +2064,16 @@ function bindActions(root, state) {
     const selectedTeam = getSelectedTeam(state);
     if (!selectedTeam) return;
     selectedTeam.lineupCard = null;
+    rememberManagerAction(state, {
+      type: "lineup-auto",
+      teamId: selectedTeam.id,
+      subject: "자동 추천 라인업",
+      headline: `${getTeamShortName(selectedTeam) ?? selectedTeam.name} 자동 추천 복귀`,
+      summary: "감독실이 수동 오더를 해제하고 컨디션/능력치 기반 자동 추천 라인업으로 돌아갔습니다.",
+      heat: 7,
+      confidence: 56,
+      tags: ["lineup", "manager", "automation"]
+    });
     render(root, state);
     setStatus(root, "자동 추천 라인업으로 되돌렸습니다.");
   });
