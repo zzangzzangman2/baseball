@@ -6,6 +6,7 @@ import {
   commitFreeAgentSigning,
   commitTradeProposal,
   getSelectedTeam,
+  getNextGamePreview,
   getStandings,
   initializeDraft,
   initializeFreeAgency,
@@ -13,6 +14,7 @@ import {
   initializeSecondaryDraft,
   simulateDay,
   simulateDays,
+  simulateNextUserGame,
   simulateDraft,
   simulatePostseason,
   simulateSecondaryDraft,
@@ -54,6 +56,43 @@ const TEAM_META = {
   kiwoom: { shortName: "키움", city: "서울", color: "#570514" }
 };
 
+const MANAGER_STYLES = [
+  { value: "balanced", label: "균형 운영", description: "라인업과 육성을 함께 본다" },
+  { value: "analytics", label: "데이터 중시", description: "수치와 매치업을 우선한다" },
+  { value: "player", label: "선수단 신뢰", description: "컨디션과 분위기를 살핀다" },
+  { value: "win-now", label: "승부수", description: "즉시 전력과 과감한 결정을 선호한다" }
+];
+
+const INAUGURAL_QUESTIONS = [
+  {
+    id: "goal",
+    question: "첫 시즌 목표",
+    options: [
+      { value: "contend", label: "가을야구 경쟁", note: "성적 압박을 받아들인다" },
+      { value: "build", label: "지속 가능한 팀", note: "육성과 뎁스 정리를 우선한다" },
+      { value: "balanced", label: "매일 이기는 습관", note: "장기와 단기를 함께 본다" }
+    ]
+  },
+  {
+    id: "message",
+    question: "선수단에 전할 말",
+    options: [
+      { value: "trust", label: "신뢰를 주겠다", note: "베테랑과 핵심 선수의 안정감" },
+      { value: "compete", label: "경쟁을 열겠다", note: "퓨처스와 백업에게 기회" },
+      { value: "detail", label: "디테일을 잡겠다", note: "수비, 주루, 컨디션 관리" }
+    ]
+  },
+  {
+    id: "front",
+    question: "프런트 운영 원칙",
+    options: [
+      { value: "patient", label: "무리한 거래는 없다", note: "자산 보존과 예산 관리" },
+      { value: "aggressive", label: "필요하면 움직인다", note: "트레이드와 FA 시장 적극 검토" },
+      { value: "scouting", label: "스카우트부터 넓힌다", note: "불확실성을 줄이는 운영" }
+    ]
+  }
+];
+
 const POSITION_GROUP_LABELS = {
   pitcher: "투수",
   catcher: "포수",
@@ -67,6 +106,8 @@ const GAMECAST_PIXEL_W = 120;
 const GAMECAST_PIXEL_H = 108;
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
 const GAMECAST_PLAYBACK_COUNT = 8;
+const GAMECAST_WATCH_PA_MS = 80;
+const GAMECAST_WATCH_GAP_MS = 6;
 const GAMECAST_PA_MS = 850;
 const GAMECAST_PA_GAP_MS = 120;
 let cleanupGamecastPixelScreen = null;
@@ -85,7 +126,9 @@ function render(root, state) {
 
   const standings = getStandings(state);
   const selectedTeam = getSelectedTeam(state);
+  const nextGame = getNextGamePreview(state, selectedTeam?.id ?? state.selectedTeamId);
   const selectedRank = getTeamRank(standings, selectedTeam);
+  const manager = getManagerProfile(state);
   const lineup = buildLineup(selectedTeam);
   const roster = getRoster(selectedTeam);
   const seasonLeaders = buildSeasonLeaders(selectedTeam);
@@ -144,24 +187,17 @@ function render(root, state) {
             <h1>${escapeHtml(getTeamName(selectedTeam) ?? "KBO GM Manager")}</h1>
             <p>${formatNumber(state.day)}일차 · ${formatNumber(state.gamesPlayed)} / 720경기 · ${escapeHtml(renderPhase(state.phase))}</p>
           </div>
-          <div class="topbar-controls">
+          <div class="topbar-controls topbar-identity">
             <label class="team-picker">
               <span>구단 선택</span>
               <select data-action="select-team" ${state.teams.length ? "" : "disabled"}>
                 ${renderTeamOptions(state)}
               </select>
             </label>
-            <div class="action-row" aria-label="Simulation actions">
-              <button class="button button-soft" data-action="next-day">다음 날</button>
-              <button class="button button-soft" data-action="week">빠른 주간</button>
-              <button class="button button-soft" data-action="postseason">가을야구</button>
-              <button class="button button-soft" data-action="draft">드래프트</button>
-              <button class="button button-soft" data-action="secondary-draft">2차 드래프트</button>
-              <button class="button button-soft" data-action="free-agency">FA시장</button>
-              <button class="button button-soft" data-action="auto-offseason">자동 스토브</button>
-              <button class="button button-soft" data-action="next-season">다음 시즌</button>
-              <button class="button button-soft" data-action="export-save">저장</button>
-              <button class="button button-soft" data-action="import-save">불러오기</button>
+            <div class="manager-chip">
+              <span>감독</span>
+              <strong>${escapeHtml(manager.name)}</strong>
+              <small>${formatNumber(manager.age)}세 · ${escapeHtml(managerStyleLabel(manager.style))}</small>
             </div>
             <p class="status-message" data-save-status aria-live="polite"></p>
           </div>
@@ -171,7 +207,7 @@ function render(root, state) {
           <div>
             <span class="mini-label">우리 구단</span>
             <h2>${escapeHtml(getTeamName(selectedTeam) ?? "구단을 기다리는 중")}</h2>
-            <p>${escapeHtml(selectedTeam?.home ?? getTeamLocation(selectedTeam))} · ${escapeHtml(selectedTeam?.vibe ?? "KBO 리그")}</p>
+            <p>${escapeHtml(selectedTeam?.home ?? getTeamLocation(selectedTeam))} · ${escapeHtml(manager.name)} 감독 체제</p>
           </div>
           <div class="team-logo-plate" aria-hidden="true">
             ${renderTeamLogo(selectedTeam, "team-logo hero-logo")}
@@ -186,6 +222,9 @@ function render(root, state) {
           ${renderMetricCard("부상", `${injuries.length}명`, injuries[0] ? `${escapeHtml(injuries[0].name)} 관리 필요` : "건강한 클럽하우스")}
         </section>
 
+        ${renderNextGamePanel(state, selectedTeam, nextGame)}
+        ${renderManagerBriefingPanel(state, selectedTeam, manager)}
+        ${renderOperationsBar()}
         ${renderFrontOfficePanels(frontOffice)}
         ${renderCommandCenterPanels(gmDesk)}
         ${renderTradeLedgerPanel(state)}
@@ -289,26 +328,81 @@ function render(root, state) {
   bindActions(root, state);
 }
 
+function renderOperationsBar() {
+  return `
+    <section class="operations-bar" aria-label="운영 메뉴">
+      <div class="operation-group">
+        <span>진행</span>
+        <button class="button button-primary" data-action="next-day">다음 날</button>
+        <button class="button button-soft" data-action="week">빠른 주간</button>
+      </div>
+      <div class="operation-group">
+        <span>시즌 업무</span>
+        <button class="button button-soft" data-action="postseason">가을야구</button>
+        <button class="button button-soft" data-action="draft">드래프트</button>
+        <button class="button button-soft" data-action="secondary-draft">2차 드래프트</button>
+        <button class="button button-soft" data-action="free-agency">FA시장</button>
+      </div>
+      <div class="operation-group">
+        <span>관리</span>
+        <button class="button button-soft" data-action="auto-offseason">자동 스토브</button>
+        <button class="button button-soft" data-action="next-season">다음 시즌</button>
+        <button class="button button-soft" data-action="export-save">저장</button>
+        <button class="button button-soft" data-action="import-save">불러오기</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderManagerBriefingPanel(state, selectedTeam, manager) {
+  const answers = Array.isArray(manager.interviewAnswers) ? manager.interviewAnswers : [];
+  const goal = answers.find((answer) => answer.id === "goal")?.label ?? "매 경기 준비";
+  const front = answers.find((answer) => answer.id === "front")?.label ?? "균형 있는 운영";
+  const message = answers.find((answer) => answer.id === "message")?.label ?? "선수단 신뢰";
+
+  return `
+    <section class="manager-briefing-panel" aria-label="감독 브리핑">
+      <div class="manager-briefing-main">
+        <span class="mini-label">감독실</span>
+        <h2>${escapeHtml(manager.name)} 감독 취임 브리핑</h2>
+        <p>${escapeHtml(getTeamShortName(selectedTeam) ?? "우리 팀")} · ${formatNumber(manager.age)}세 · ${escapeHtml(managerStyleLabel(manager.style))}</p>
+      </div>
+      <div class="manager-briefing-quotes">
+        <span>${escapeHtml(goal)}</span>
+        <span>${escapeHtml(message)}</span>
+        <span>${escapeHtml(front)}</span>
+      </div>
+      <small>${escapeHtml(manager.appointedAt ?? state.currentDate ?? "")} 취임</small>
+    </section>
+  `;
+}
+
 function renderOnboarding(root, state, screen) {
   const teams = state.teams ?? [];
+  const selectedTeam = getSelectedTeam(state);
   const logoStrip = renderStartLogoStrip(teams);
+  const screenClass = [
+    screen === "team-select" ? "is-team-select" : "",
+    screen === "manager-setup" ? "is-manager-step" : "",
+    screen === "appointment" ? "is-appointment-step" : ""
+  ].filter(Boolean).join(" ");
   root.innerHTML = `
     <main class="start-shell">
-      <section class="start-hero ${screen === "team-select" ? "is-team-select" : ""}">
+      <section class="start-hero ${screenClass}">
         <div class="start-copy">
           <div class="start-kicker">
             <span class="mini-label">KBO GM Manager</span>
             <span class="start-date">2026.03.01</span>
           </div>
-          <h1>${screen === "team-select" ? "함께할 구단을 골라요" : "봄 캠프에서 시작해요"}</h1>
-          <p>${screen === "team-select" ? "프런트 첫 날, 마음 가는 로고를 눌러 시즌을 열어보세요." : "프리시즌 첫날의 클럽하우스에서 당신의 프런트가 열립니다."}</p>
-          ${logoStrip}
-          ${screen === "team-select" ? "" : `
+          <h1>${escapeHtml(onboardingTitle(screen))}</h1>
+          <p>${escapeHtml(onboardingLead(screen, selectedTeam))}</p>
+          ${screen === "welcome" || screen === "team-select" ? logoStrip : renderOnboardingTeamPlate(selectedTeam)}
+          ${screen === "welcome" ? `
             <div class="start-actions">
               <button class="button button-primary" data-action="start-new" type="button">시작하기</button>
               <button class="button button-soft" data-action="load-save-start" type="button">불러오기</button>
             </div>
-          `}
+          ` : ""}
         </div>
         ${screen === "team-select" ? `
           <div class="team-select-stage">
@@ -334,6 +428,10 @@ function renderOnboarding(root, state, screen) {
               `).join("")}
             </div>
           </div>
+        ` : screen === "manager-setup" ? `
+          ${renderManagerSetupStage(state, selectedTeam)}
+        ` : screen === "appointment" ? `
+          ${renderAppointmentStage(state, selectedTeam)}
         ` : `
           ${renderStartPreview()}
         `}
@@ -341,6 +439,125 @@ function renderOnboarding(root, state, screen) {
     </main>
   `;
   bindOnboardingActions(root, state);
+}
+
+function onboardingTitle(screen) {
+  if (screen === "team-select") return "함께할 구단을 고르세요";
+  if (screen === "manager-setup") return "감독 프로필 작성";
+  if (screen === "appointment") return "취임 기자회견";
+  return "프리시즌을 시작합니다";
+}
+
+function onboardingLead(screen, selectedTeam) {
+  if (screen === "team-select") return "프런트 첫날, 맡을 구단을 선택하세요.";
+  if (screen === "manager-setup") return `${getTeamName(selectedTeam) ?? "선택한 구단"}의 새 감독으로 등록됩니다.`;
+  if (screen === "appointment") return "첫 공식 인터뷰 답변이 감독실 브리핑과 뉴스에 남습니다.";
+  return "구단을 고르고 감독 이름과 나이를 정한 뒤 취임식으로 시즌을 엽니다.";
+}
+
+function renderOnboardingTeamPlate(team) {
+  return `
+    <div class="start-club-plate" style="--team-color: ${escapeAttribute(getTeamColor(team))}">
+      ${renderTeamLogo(team, "team-logo start-club-logo")}
+      <span>
+        <strong>${escapeHtml(getTeamName(team) ?? "구단 선택 전")}</strong>
+        <small>${escapeHtml(team?.home ?? getTeamLocation(team) ?? "프리시즌 캠프")}</small>
+      </span>
+    </div>
+  `;
+}
+
+function renderManagerSetupStage(state, selectedTeam) {
+  const manager = getManagerProfile(state);
+  const selectedStyle = manager.style ?? "balanced";
+
+  return `
+    <div class="manager-setup-stage">
+      <div class="panel-head">
+        <div>
+          <span class="mini-label">감독 등록</span>
+          <h2>${escapeHtml(getTeamShortName(selectedTeam) ?? "KBO")} 감독실</h2>
+        </div>
+        <button class="button button-soft" data-action="back-to-team-select" type="button">구단 다시 선택</button>
+      </div>
+      <form class="manager-form" data-manager-form>
+        <label>
+          <span>감독 이름</span>
+          <input name="managerName" type="text" maxlength="12" autocomplete="name" value="${escapeAttribute(manager.name === "임시 감독" ? "" : manager.name)}" placeholder="예: 김민준" required>
+        </label>
+        <label>
+          <span>나이</span>
+          <input name="managerAge" type="number" min="25" max="75" step="1" value="${escapeAttribute(manager.age)}" required>
+        </label>
+        <label>
+          <span>운영 성향</span>
+          <select name="managerStyle">
+            ${MANAGER_STYLES.map((style) => `
+              <option value="${escapeAttribute(style.value)}" ${style.value === selectedStyle ? "selected" : ""}>${escapeHtml(style.label)}</option>
+            `).join("")}
+          </select>
+        </label>
+        <div class="manager-style-list">
+          ${MANAGER_STYLES.map((style) => `
+            <span class="${style.value === selectedStyle ? "is-selected" : ""}">
+              <strong>${escapeHtml(style.label)}</strong>
+              <small>${escapeHtml(style.description)}</small>
+            </span>
+          `).join("")}
+        </div>
+        <p class="onboarding-status" data-onboarding-status aria-live="polite"></p>
+        <div class="start-actions">
+          <button class="button button-primary" type="submit">취임 기자회견으로</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+function renderAppointmentStage(state, selectedTeam) {
+  const manager = getManagerProfile(state);
+
+  return `
+    <div class="appointment-stage">
+      <div class="appointment-card">
+        <div class="panel-head">
+          <div>
+            <span class="mini-label">취임식</span>
+            <h2>${escapeHtml(manager.name)} 감독 첫 인터뷰</h2>
+          </div>
+          ${renderTeamLogo(selectedTeam, "team-logo appointment-logo")}
+        </div>
+        <form class="interview-form" data-appointment-form>
+          ${INAUGURAL_QUESTIONS.map((question) => renderInterviewQuestion(question, manager)).join("")}
+          <p class="onboarding-status" data-onboarding-status aria-live="polite"></p>
+          <div class="start-actions">
+            <button class="button button-soft" data-action="back-to-manager-setup" type="button">프로필 수정</button>
+            <button class="button button-primary" type="submit">클럽하우스로 입장</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function renderInterviewQuestion(question, manager) {
+  const savedAnswer = (manager.interviewAnswers ?? []).find((answer) => answer.id === question.id)?.value;
+  return `
+    <fieldset class="interview-question">
+      <legend>${escapeHtml(question.question)}</legend>
+      <div class="interview-options">
+        ${question.options.map((option, index) => `
+          <label>
+            <input type="radio" name="${escapeAttribute(question.id)}" value="${escapeAttribute(option.value)}" ${savedAnswer === option.value || (!savedAnswer && index === 0) ? "checked" : ""}>
+            <span>
+              <strong>${escapeHtml(option.label)}</strong>
+              <small>${escapeHtml(option.note)}</small>
+            </span>
+          </label>
+        `).join("")}
+      </div>
+    </fieldset>
+  `;
 }
 
 function renderStartLogoStrip(teams) {
@@ -390,10 +607,89 @@ function bindOnboardingActions(root, state) {
   (root.querySelectorAll?.("[data-action='choose-start-team']") ?? []).forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedTeamId = button.dataset.teamId;
-      state.ui = { ...(state.ui ?? {}), screen: "game" };
+      state.ui = { ...(state.ui ?? {}), screen: "manager-setup" };
       render(root, state);
-      setStatus(root, "프리시즌 캠프에 합류했습니다. 다음 날 버튼으로 하루씩 진행하세요.");
     });
+  });
+
+  root.querySelector("[data-action='back-to-team-select']")?.addEventListener("click", () => {
+    state.ui = { ...(state.ui ?? {}), screen: "team-select" };
+    render(root, state);
+  });
+
+  root.querySelector("[data-action='back-to-manager-setup']")?.addEventListener("click", () => {
+    state.ui = { ...(state.ui ?? {}), screen: "manager-setup" };
+    render(root, state);
+  });
+
+  root.querySelector("[data-manager-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const name = String(form.elements.managerName?.value ?? "").trim();
+    const age = Number(form.elements.managerAge?.value ?? 0);
+    const style = String(form.elements.managerStyle?.value ?? "balanced");
+
+    if (name.length < 2) {
+      setOnboardingStatus(root, "감독 이름은 두 글자 이상 입력하세요.");
+      return;
+    }
+    if (!Number.isFinite(age) || age < 25 || age > 75) {
+      setOnboardingStatus(root, "나이는 25세부터 75세 사이로 입력하세요.");
+      return;
+    }
+
+    state.manager = {
+      ...(state.manager ?? {}),
+      name,
+      age: Math.round(age),
+      style,
+      teamId: state.selectedTeamId,
+      appointedAt: state.currentDate,
+      interviewAnswers: state.manager?.interviewAnswers ?? []
+    };
+    state.ui = { ...(state.ui ?? {}), screen: "appointment" };
+    render(root, state);
+  });
+
+  root.querySelector("[data-appointment-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const answers = INAUGURAL_QUESTIONS.map((question) => {
+      const value = String(form.elements[question.id]?.value ?? question.options[0]?.value ?? "");
+      const selected = question.options.find((option) => option.value === value) ?? question.options[0];
+      return {
+        id: question.id,
+        question: question.question,
+        value: selected?.value ?? "",
+        label: selected?.label ?? "",
+        note: selected?.note ?? ""
+      };
+    });
+    const manager = getManagerProfile(state);
+    const selectedTeam = getSelectedTeam(state);
+    state.manager = {
+      ...manager,
+      teamId: state.selectedTeamId,
+      appointedAt: manager.appointedAt ?? state.currentDate,
+      interviewAnswers: answers,
+      inaugurationComplete: true
+    };
+    state.logs = [
+      {
+        date: state.currentDate,
+        tag: "취임",
+        text: `${manager.name} 감독이 ${getTeamName(selectedTeam) ?? "구단"} 취임 기자회견을 마쳤습니다.`
+      },
+      {
+        date: state.currentDate,
+        tag: "인터뷰",
+        text: `첫 목표: ${answers[0]?.label ?? "시즌 준비"} · 운영 원칙: ${answers[2]?.label ?? "균형"}`
+      },
+      ...((state.logs ?? []))
+    ].slice(0, 60);
+    state.ui = { ...(state.ui ?? {}), screen: "game" };
+    render(root, state);
+    setStatus(root, `${manager.name} 감독 취임 완료. 프리시즌 캠프에 합류했습니다.`);
   });
 
   root.querySelector("[data-action='load-save-start']")?.addEventListener("click", () => {
@@ -842,6 +1138,31 @@ function bindActions(root, state) {
     setStatus(root, `빠른 주간 진행: ${beforeDate} → ${state.currentDate}, ${formatNumber(gamesDelta)}경기 완료.`);
   });
 
+  root.querySelector("[data-action='watch-next-game']")?.addEventListener("click", () => {
+    const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
+    state.ui = {
+      ...(state.ui ?? {}),
+      screen: "game",
+      focusGameId: result.game?.id ?? "",
+      gamecastMode: "watch"
+    };
+    render(root, state);
+    setStatus(root, result.ok ? `경기 보기 시작: ${result.message}` : result.message);
+    scrollToGamecast();
+  });
+
+  root.querySelector("[data-action='simulate-next-game']")?.addEventListener("click", () => {
+    const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "quick" });
+    state.ui = {
+      ...(state.ui ?? {}),
+      screen: "game",
+      focusGameId: result.game?.id ?? "",
+      gamecastMode: "summary"
+    };
+    render(root, state);
+    setStatus(root, result.ok ? `경기 시뮬레이션 완료: ${result.message}` : result.message);
+  });
+
   root.querySelector("[data-action='postseason']")?.addEventListener("click", () => {
     let message = "";
     if (!["complete", "postseason", "offseason"].includes(state.phase)) {
@@ -1052,6 +1373,20 @@ function setStatus(root, message) {
   }
 }
 
+function setOnboardingStatus(root, message) {
+  const status = root.querySelector("[data-onboarding-status]");
+  if (status) {
+    status.textContent = message;
+  }
+}
+
+function scrollToGamecast() {
+  if (typeof window === "undefined") return;
+  window.requestAnimationFrame(() => {
+    document.getElementById("gamecast")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
 function renderTeamOptions(state) {
   if (!state.teams.length) {
     return `<option>구단 데이터 준비 중</option>`;
@@ -1072,6 +1407,51 @@ function renderMetricCard(label, value, detail) {
       <strong>${value}</strong>
       <small>${detail}</small>
     </article>
+  `;
+}
+
+function renderNextGamePanel(state, selectedTeam, nextGame) {
+  const away = nextGame?.ok ? normalizeGameTeam(nextGame.awayTeamId, state) : null;
+  const home = nextGame?.ok ? normalizeGameTeam(nextGame.homeTeamId, state) : null;
+  const userIsAway = String(nextGame?.awayTeamId ?? "") === String(selectedTeam?.id ?? state.selectedTeamId);
+  const opponent = nextGame?.ok ? (userIsAway ? home : away) : null;
+  const disabled = nextGame?.ok ? "" : "disabled";
+  const dateText = nextGame?.ok ? nextGame.date : state.currentDate;
+  const venueText = nextGame?.ok
+    ? `${nextGame.ballpark || getTeamLocation(home)} · ${userIsAway ? "원정" : "홈"}`
+    : nextGame?.message ?? "다음 경기를 기다리는 중";
+
+  return `
+    <section class="next-game-panel" aria-label="다음 경기 진행">
+      <div class="next-game-copy">
+        <span class="mini-label">다음 경기</span>
+        <h2>${nextGame?.ok ? `${escapeHtml(nextGame.awayShortName)} @ ${escapeHtml(nextGame.homeShortName)}` : "경기 일정 대기"}</h2>
+        <p>${escapeHtml(dateText)} · ${escapeHtml(venueText)}</p>
+      </div>
+      <div class="next-game-matchup">
+        ${nextGame?.ok ? `
+          <div class="next-game-team ${userIsAway ? "is-user" : ""}">
+            ${renderTeamLogo(away, "team-logo mini-logo")}
+            <span>${escapeHtml(getTeamShortName(away) ?? "Away")}</span>
+          </div>
+          <b>VS</b>
+          <div class="next-game-team ${!userIsAway ? "is-user" : ""}">
+            ${renderTeamLogo(home, "team-logo mini-logo")}
+            <span>${escapeHtml(getTeamShortName(home) ?? "Home")}</span>
+          </div>
+        ` : `
+          <div class="next-game-team is-user">
+            ${renderTeamLogo(selectedTeam, "team-logo mini-logo")}
+            <span>${escapeHtml(getTeamShortName(selectedTeam) ?? "KBO")}</span>
+          </div>
+        `}
+      </div>
+      <div class="next-game-actions">
+        <button class="button button-primary" data-action="watch-next-game" ${disabled}>경기 보기</button>
+        <button class="button button-soft" data-action="simulate-next-game" ${disabled}>시뮬레이션</button>
+        <small>${nextGame?.ok ? `${escapeHtml(getTeamShortName(opponent) ?? "상대")}전 · 도트 중계 또는 결과만 선택` : "정규시즌 가능 상태에서 진행됩니다."}</small>
+      </div>
+    </section>
   `;
 }
 
@@ -1690,7 +2070,7 @@ function renderGames(state) {
 }
 
 function renderGamecastPanel(state) {
-  const game = state.lastGames?.[0];
+  const game = getFocusedGamecastGame(state);
   if (!game) {
     latestGamecastSequence = null;
     return `
@@ -1725,9 +2105,9 @@ function renderGamecastPanel(state) {
       <div class="panel-head">
         <div>
           <span class="mini-label">Gamecast</span>
-          <h2>빠른 도트 중계</h2>
+          <h2>${sequence.mode === "watch" ? "경기 보기 도트 중계" : "빠른 도트 중계"}</h2>
         </div>
-        <span class="pill">${formatNumber(events.length)} PA</span>
+        <span class="pill">${sequence.mode === "watch" ? "LIVE" : `${formatNumber(events.length)} PA`}</span>
       </div>
       <div class="gamecast-layout">
         <div class="gamecast-board">
@@ -1759,6 +2139,12 @@ function renderGamecastPanel(state) {
   `;
 }
 
+function getFocusedGamecastGame(state) {
+  const games = state.lastGames ?? [];
+  const focusId = String(state.ui?.focusGameId ?? "");
+  return (focusId ? games.find((game) => String(game?.id ?? "") === focusId) : null) ?? games[0] ?? null;
+}
+
 function renderGamecastEvent(event, state) {
   const normalized = event?.id ? event : normalizeGamecastEvent(event, state);
   return `
@@ -1783,7 +2169,10 @@ function eventTeamLabel(event, state) {
 function buildGamecastSequence(game, state) {
   const all = Array.isArray(game?.plateAppearanceEvents) ? game.plateAppearanceEvents : [];
   const chrono = sortGamecastEvents(all);
-  const tail = chrono.slice(-GAMECAST_PLAYBACK_COUNT);
+  const mode = String(state.ui?.focusGameId ?? "") === String(game?.id ?? "") && state.ui?.gamecastMode === "watch"
+    ? "watch"
+    : "summary";
+  const tail = mode === "watch" ? chrono : chrono.slice(-GAMECAST_PLAYBACK_COUNT);
   const tailSet = new Set(tail);
   let startAway = 0;
   let startHome = 0;
@@ -1798,10 +2187,13 @@ function buildGamecastSequence(game, state) {
     id: game?.id ?? `${game?.awayTeamId ?? "away"}-${game?.homeTeamId ?? "home"}`,
     awayId: game?.awayTeamId ?? "",
     homeId: game?.homeTeamId ?? "",
-    finalAway: Number(game?.awayScore ?? game?.awayRuns ?? 0),
-    finalHome: Number(game?.homeScore ?? game?.homeRuns ?? 0),
+    finalAway: Number(game?.awayRuns ?? game?.awayScore ?? 0),
+    finalHome: Number(game?.homeRuns ?? game?.homeScore ?? 0),
     startAway,
     startHome,
+    mode,
+    paMs: mode === "watch" ? GAMECAST_WATCH_PA_MS : GAMECAST_PA_MS,
+    gapMs: mode === "watch" ? GAMECAST_WATCH_GAP_MS : GAMECAST_PA_GAP_MS,
     events: tail.map((event) => normalizeGamecastEvent(event, state))
   };
 }
@@ -1956,6 +2348,7 @@ function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNod
     lastTimestamp: 0,
     done: false,
     shakeTimer: 0,
+    offscreenTimer: 0,
     sequence: normalizeGamecastSequenceForPlayback(sequence),
     scoreNodes,
     nowTitle,
@@ -1983,7 +2376,7 @@ function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNod
   };
   const finish = () => {
     state.done = true;
-    state.elapsedMs = state.sequence.events.length * (GAMECAST_PA_MS + GAMECAST_PA_GAP_MS);
+    state.elapsedMs = state.sequence.events.length * gamecastEventDuration(state.sequence);
     stop();
     renderCurrentFrame(true);
   };
@@ -1992,6 +2385,21 @@ function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNod
     const frame = buildGamecastFrameState(state, false);
     drawGamecastFrame(ctx, state, frame);
     syncGamecastDom(state, { ...frame, done: true });
+  };
+  const clearOffscreenPause = () => {
+    if (state.offscreenTimer) {
+      window.clearTimeout(state.offscreenTimer);
+      state.offscreenTimer = 0;
+    }
+  };
+  const scheduleOffscreenPause = () => {
+    clearOffscreenPause();
+    state.offscreenTimer = window.setTimeout(() => {
+      state.offscreenTimer = 0;
+      if (!state.visible && !state.hidden && !state.done) {
+        pauseOffscreen();
+      }
+    }, 900);
   };
   const loop = (timestamp) => {
     if (state.hidden) {
@@ -2046,8 +2454,12 @@ function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNod
 
   const intersectionObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver((entries) => {
     state.visible = entries.some((entry) => entry.isIntersecting);
-    if (state.visible) start();
-    else pauseOffscreen();
+    if (state.visible) {
+      clearOffscreenPause();
+      start();
+    } else {
+      scheduleOffscreenPause();
+    }
   }, { threshold: 0.05 }) : null;
   intersectionObserver?.observe(screen);
 
@@ -2060,6 +2472,7 @@ function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNod
     cleanup() {
       stop();
       if (state.shakeTimer) window.clearTimeout(state.shakeTimer);
+      clearOffscreenPause();
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
       if (typeof document !== "undefined") {
@@ -2078,8 +2491,15 @@ function normalizeGamecastSequenceForPlayback(sequence) {
     startHome: Number(sequence?.startHome ?? sequence?.finalHome ?? 0),
     finalAway: Number(sequence?.finalAway ?? sequence?.startAway ?? 0),
     finalHome: Number(sequence?.finalHome ?? sequence?.startHome ?? 0),
+    mode: String(sequence?.mode ?? "summary"),
+    paMs: Math.max(80, Number(sequence?.paMs ?? GAMECAST_PA_MS)),
+    gapMs: Math.max(0, Number(sequence?.gapMs ?? GAMECAST_PA_GAP_MS)),
     events: Array.isArray(sequence?.events) ? sequence.events : []
   };
+}
+
+function gamecastEventDuration(sequence) {
+  return Math.max(80, Number(sequence?.paMs ?? GAMECAST_PA_MS)) + Math.max(0, Number(sequence?.gapMs ?? GAMECAST_PA_GAP_MS));
 }
 
 function triggerGamecastShake(screen, state) {
@@ -2303,7 +2723,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
     };
   }
 
-  const slotMs = GAMECAST_PA_MS + GAMECAST_PA_GAP_MS;
+  const paMs = Math.max(80, Number(seq.paMs ?? GAMECAST_PA_MS));
+  const slotMs = gamecastEventDuration(seq);
   const totalMs = events.length * slotMs;
   if (forceFinal || state.prefersReducedMotion || state.elapsedMs >= totalMs) {
     const last = events[events.length - 1];
@@ -2322,7 +2743,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
   const index = Math.min(events.length - 1, Math.floor(state.elapsedMs / slotMs));
   const localMs = state.elapsedMs - index * slotMs;
   const event = events[index];
-  const progress = Math.max(0, Math.min(1, localMs / GAMECAST_PA_MS));
+  const progress = Math.max(0, Math.min(1, localMs / paMs));
   const settling = progress >= 0.72;
   const clearingInning = event.inningEnded && progress >= 0.92;
   const baseOccupancy = settling
@@ -2918,6 +3339,23 @@ function getTeamLogo(team) {
 
 function getPositionGroupLabel(key, fallback) {
   return POSITION_GROUP_LABELS[key] ?? fallback ?? "기타";
+}
+
+function getManagerProfile(state) {
+  const manager = state?.manager && typeof state.manager === "object" ? state.manager : {};
+  return {
+    name: manager.name || "임시 감독",
+    age: Number.isFinite(Number(manager.age)) ? Number(manager.age) : 42,
+    style: manager.style || "balanced",
+    teamId: manager.teamId || state?.selectedTeamId || "",
+    appointedAt: manager.appointedAt || state?.currentDate || "",
+    interviewAnswers: Array.isArray(manager.interviewAnswers) ? manager.interviewAnswers : [],
+    inaugurationComplete: Boolean(manager.inaugurationComplete)
+  };
+}
+
+function managerStyleLabel(style) {
+  return MANAGER_STYLES.find((entry) => entry.value === style)?.label ?? "균형 운영";
 }
 
 function renderPlayerMeta(player) {

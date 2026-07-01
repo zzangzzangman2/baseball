@@ -261,6 +261,7 @@ export function createInitialState() {
     day: 1,
     currentDate: formatDateKey(BASE_DATE),
     selectedTeamId: "lg",
+    manager: null,
     gamesPlayed: 0,
     phase: "preseason",
     ui: { screen: "welcome" },

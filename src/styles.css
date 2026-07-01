@@ -1,22 +1,22 @@
 :root {
   color-scheme: light;
-  --bg: #fbf8f3;
-  --bg-soft: #eef8f4;
-  --panel: #fffefb;
-  --panel-tint: #f7fbff;
-  --ink: #302d35;
-  --muted: #706b76;
-  --line: #e8dfd5;
-  --line-cool: #d8e8e2;
-  --coral: #ff8f83;
-  --rose: #f6b7c5;
-  --mint: #bfe8d8;
-  --sky: #b9d9f7;
-  --butter: #ffe39a;
-  --leaf: #74b49b;
-  --berry: #c64b74;
-  --shadow: 0 16px 34px rgba(72, 62, 54, 0.12);
-  --shadow-soft: 0 8px 20px rgba(72, 62, 54, 0.08);
+  --bg: #f3f5f1;
+  --bg-soft: #eef2ec;
+  --panel: #fffefa;
+  --panel-tint: #f7f8f5;
+  --ink: #242830;
+  --muted: #6b7179;
+  --line: #dde1da;
+  --line-cool: #d5ddd4;
+  --coral: #a87468;
+  --rose: #b98b95;
+  --mint: #8da99a;
+  --sky: #8c9dac;
+  --butter: #d6bd78;
+  --leaf: #6f907d;
+  --berry: #8e4f62;
+  --shadow: 0 16px 34px rgba(28, 32, 36, 0.09);
+  --shadow-soft: 0 8px 20px rgba(28, 32, 36, 0.07);
   font-family: "Segoe UI", "Malgun Gothic", Arial, sans-serif;
   letter-spacing: 0;
 }
@@ -45,7 +45,8 @@ body {
 }
 
 button,
-select {
+select,
+input {
   min-height: 42px;
   max-width: 100%;
   border: 1px solid var(--line);
@@ -74,8 +75,14 @@ select {
   white-space: nowrap;
 }
 
+input {
+  width: 100%;
+  padding: 0 12px;
+}
+
 button:focus-visible,
 select:focus-visible,
+input:focus-visible,
 a:focus-visible {
   outline: 3px solid rgba(255, 143, 131, 0.34);
   outline-offset: 2px;
@@ -942,6 +949,91 @@ img {
   min-width: 0;
   overflow-wrap: anywhere;
   line-height: 1.35;
+}
+
+.next-game-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(220px, 0.9fr) minmax(190px, 0.7fr);
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(232, 223, 213, 0.9);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(239, 250, 245, 0.9)),
+    var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.next-game-copy,
+.next-game-actions {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.next-game-copy h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(1.15rem, 1rem + 0.5vw, 1.55rem);
+  line-height: 1.15;
+}
+
+.next-game-copy p,
+.next-game-actions small {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 780;
+  line-height: 1.34;
+  overflow-wrap: anywhere;
+}
+
+.next-game-matchup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.next-game-matchup > b {
+  color: #b78b7c;
+  font-size: 0.78rem;
+  letter-spacing: 0;
+}
+
+.next-game-team {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(232, 223, 213, 0.9);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.next-game-team.is-user {
+  border-color: color-mix(in srgb, var(--team-color), #ffffff 54%);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--team-color), transparent 84%);
+}
+
+.next-game-team span {
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 900;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.next-game-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.next-game-actions small {
+  grid-column: 1 / -1;
 }
 
 .content-grid {
@@ -2856,6 +2948,7 @@ img {
   }
 
   .topbar-controls,
+  .next-game-panel,
   .content-grid,
   .front-office-grid,
   .gamecast-layout,
@@ -2885,6 +2978,10 @@ img {
 
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .next-game-actions {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .team-badge {
@@ -3106,6 +3203,15 @@ img {
   .nav-list,
   .metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .next-game-matchup,
+  .next-game-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .next-game-matchup > b {
+    justify-self: start;
   }
 
   .nav-item {
@@ -3404,5 +3510,233 @@ img {
   .award-card small,
   .award-meta {
     grid-column: 1;
+  }
+}
+
+/* Final visual pass: quiet front-office surface */
+body {
+  background:
+    linear-gradient(180deg, rgba(250, 251, 248, 0.98), rgba(238, 242, 236, 0.98)),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+.start-shell {
+  background:
+    linear-gradient(180deg, rgba(250, 251, 248, 0.98), rgba(238, 242, 236, 0.98)),
+    var(--bg);
+}
+
+.sidebar,
+.topbar,
+.hero-card,
+.panel,
+.metric-card,
+.next-game-panel,
+.manager-briefing-panel,
+.trade-ledger-panel,
+.free-agency-panel,
+.postseason-panel,
+.draft-panel,
+.secondary-draft-panel,
+.start-preview,
+.team-select-stage,
+.manager-setup-stage,
+.appointment-card {
+  border-color: var(--line);
+  background: rgba(255, 254, 250, 0.96);
+  box-shadow: var(--shadow-soft);
+}
+
+.front-office-panel,
+.command-panel,
+.proposal-card,
+.trade-command-card,
+.trade-command-card.is-armed,
+.trade-command-card.is-committed,
+.fa-card,
+.foreign-card,
+.award-card,
+.award-card.featured,
+.draft-card,
+.draft-card.is-picked,
+.draft-card.is-user-fit,
+.protection-card,
+.protection-card.is-protected,
+.protection-card.is-exposed,
+.series-card,
+.next-game-team,
+.free-agency-summary > *,
+.draft-summary > *,
+.secondary-draft-summary > *,
+.trade-asset-pill,
+.market-asset-pill,
+.series-game-pill,
+.scout-grade,
+.draft-chip-row > *,
+.eligibility-chip-row > * {
+  background: #fffefa;
+}
+
+.start-preview::before,
+.start-preview::after,
+.hero-card::before,
+.hero-card::after,
+.team-logo-plate::before,
+.team-logo-plate::after {
+  display: none;
+}
+
+.topbar {
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 380px);
+  background: rgba(255, 254, 250, 0.96);
+}
+
+.topbar-identity {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "picker"
+    "manager"
+    "status";
+  align-items: stretch;
+  gap: 10px;
+}
+
+.manager-chip,
+.start-club-plate {
+  border-left-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 20%);
+}
+
+.operations-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: stretch;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.96);
+  box-shadow: var(--shadow-soft);
+}
+
+.operation-group {
+  display: flex;
+  flex: 1 1 250px;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #e8ebe5;
+  border-radius: 8px;
+  background: #f8f9f6;
+}
+
+.operation-group > span {
+  flex: 0 0 100%;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.operation-group .button {
+  min-height: 36px;
+  padding: 7px 11px;
+}
+
+.button-soft {
+  border-color: var(--line);
+  background: #fbfcf8;
+  color: var(--ink);
+}
+
+.button-primary {
+  border-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 25%);
+  background: color-mix(in srgb, var(--team-color, #2f343a), #1f252b 18%);
+  color: #fff;
+}
+
+.nav-item:hover,
+.nav-item.is-active,
+.sidebar-card,
+.manager-chip,
+.operation-group,
+.manager-style-list span,
+.interview-question label,
+.manager-briefing-quotes span {
+  background: #f8f9f6;
+}
+
+.metric-card::before,
+.free-agency-panel::before,
+.postseason-panel::before,
+.draft-panel::before,
+.secondary-draft-panel::before,
+.fa-card::before,
+.foreign-card::before,
+.draft-card::before,
+.protection-card::before {
+  background: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 22%);
+}
+
+.roster-summary-panel,
+.contract-panel,
+.depth-needs-panel,
+.prospect-watch-panel,
+.scout-board-panel,
+.trade-block-panel,
+.inbox-panel,
+.scout-assignment-panel,
+.trade-proposal-panel,
+.free-agency-panel,
+.postseason-panel,
+.draft-panel,
+.secondary-draft-panel {
+  border-top-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 24%);
+}
+
+.team-logo-plate {
+  border-color: var(--line);
+  background: #fff;
+  box-shadow: none;
+}
+
+.eyebrow,
+.mini-label {
+  color: color-mix(in srgb, var(--team-color, #2f343a), #3f464c 52%);
+}
+
+.status-message {
+  color: color-mix(in srgb, var(--team-color, #2f343a), #35383d 36%);
+  text-align: left;
+}
+
+@media (max-width: 860px) {
+  .start-hero.is-manager-step,
+  .start-hero.is-appointment-step,
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .operation-group .button {
+    flex: 1 1 132px;
+  }
+
+  .interview-options,
+  .manager-briefing-quotes {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .operation-group,
+  .operation-group .button {
+    flex-basis: 100%;
+  }
+
+  .manager-style-list {
+    grid-template-columns: 1fr;
   }
 }

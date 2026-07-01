@@ -354,8 +354,38 @@ async function checkViewport(viewport) {
   await evaluateInBrowser(`document.querySelector("[data-action='start-new']")?.click(); true`);
   await waitForTeamSelect();
   await evaluateInBrowser(`document.querySelector("[data-action='choose-start-team'][data-team-id='kia']")?.click(); true`);
+  await waitForManagerSetup();
+  await evaluateInBrowser(`
+    (() => {
+      const form = document.querySelector("[data-manager-form]");
+      if (!form) return false;
+      form.elements.managerName.value = "검증감독";
+      form.elements.managerAge.value = "38";
+      form.elements.managerStyle.value = "balanced";
+      form.requestSubmit();
+      return true;
+    })()
+  `);
+  await waitForAppointment();
+  await evaluateInBrowser(`document.querySelector("[data-appointment-form]")?.requestSubmit(); true`);
   await waitForRenderedApp();
   await installGamecastRafProbe();
+  const nextGameProbe = await evaluateInBrowser(`
+    (() => {
+      const panel = document.querySelector(".next-game-panel");
+      return {
+        hasPanel: Boolean(panel),
+        hasWatch: Boolean(document.querySelector("[data-action='watch-next-game']")),
+        hasQuick: Boolean(document.querySelector("[data-action='simulate-next-game']")),
+        text: panel?.textContent?.trim() ?? ""
+      };
+    })()
+  `);
+  assert(
+    nextGameProbe.hasPanel && nextGameProbe.hasWatch && nextGameProbe.hasQuick && nextGameProbe.text.includes("다음 경기"),
+    "다음 경기 보기/시뮬레이션 패널을 찾지 못했습니다.",
+    "src/ui.js"
+  );
   const preseasonProbe = await evaluateInBrowser(`
     (() => {
       const before = document.body.innerText;
@@ -457,6 +487,8 @@ async function checkViewport(viewport) {
       const tradeLedgerPanelText = tradeLedgerPanel?.textContent ?? "";
       const freeAgencyPanel = document.querySelector("#free-agency.free-agency-panel");
       const freeAgencyPanelText = freeAgencyPanel?.textContent ?? "";
+      const nextGamePanel = document.querySelector(".next-game-panel");
+      const nextGamePanelText = nextGamePanel?.textContent ?? "";
       const hasPitchingSnapshot = bodyText.includes("선발 로테이션") && bodyText.includes("불펜 역할");
       const gamecastPanel = document.querySelector("#gamecast.gamecast-panel");
       const gamecastPanelText = gamecastPanel?.textContent ?? "";
@@ -581,6 +613,10 @@ async function checkViewport(viewport) {
         foreignCards: document.querySelectorAll("#free-agency .foreign-card").length,
         marketLedgerItems: document.querySelectorAll("#free-agency .market-ledger-item").length,
         hasMarketLedger: freeAgencyPanelText.includes("시장 장부"),
+        hasNextGamePanel: Boolean(nextGamePanel),
+        hasWatchNextAction: Boolean(document.querySelector("[data-action='watch-next-game']")),
+        hasSimNextAction: Boolean(document.querySelector("[data-action='simulate-next-game']")),
+        hasNextGameChoiceText: nextGamePanelText.includes("경기 보기") && nextGamePanelText.includes("시뮬레이션"),
         hasSeasonFastButton,
         hasWeekFastButton,
         hasAutoOffseasonAction,
@@ -598,7 +634,7 @@ async function checkViewport(viewport) {
         gamecastCanvasPixelUnique: gamecastCanvasPixels.unique,
         gamecastCanvasAlphaSamples: gamecastCanvasPixels.alpha,
         hasGamecastFeed: document.querySelectorAll(".gamecast-feed li").length > 0,
-        hasGamecastScore: gamecastPanelText.includes("빠른 도트 중계") && gamecastPanelText.includes("PA"),
+        hasGamecastScore: (gamecastPanelText.includes("빠른 도트 중계") || gamecastPanelText.includes("경기 보기 도트 중계")) && (gamecastPanelText.includes("PA") || gamecastPanelText.includes("LIVE")),
         hasPreseasonFlow: bodyText.includes("정규시즌") && bodyText.includes("5 / 720경기"),
         clippingIssues,
         hasPitchingSnapshot,
@@ -639,6 +675,7 @@ async function checkViewport(viewport) {
   assert(result.hasTradeLedgerPanel && result.hasTradeLedgerTitle, "트레이드 원장 UI를 찾지 못했습니다.", "src/ui.js");
   assert(result.hasTradeSupplementalAsset, "트레이드 보조 자산 표시를 찾지 못했습니다.", "src/ui.js");
   assert(!result.hasSeasonFastButton && result.hasWeekFastButton, "전체 시즌 버튼은 없어야 하고 빠른 주간 버튼은 있어야 합니다.", "src/ui.js");
+  assert(result.hasNextGamePanel && result.hasWatchNextAction && result.hasSimNextAction && result.hasNextGameChoiceText, "다음 경기 보기/시뮬레이션 선택 UI를 찾지 못했습니다.", "src/ui.js");
   assert(result.hasAutoOffseasonAction && result.hasNextSeasonAction, "자동 스토브/다음 시즌 버튼을 찾지 못했습니다.", "src/ui.js");
   assert(result.hasGamecastPanel && result.hasGamecastScreen && result.hasGamecastCanvas && result.hasGamecastFeed && result.hasGamecastScore, "빠른 도트 게임캐스트 UI를 찾지 못했습니다.", "src/ui.js");
   assert(liveProbe.feedCount > 0 && liveProbe.liveCount <= 1, `게임캐스트 live 행 수가 비정상입니다: ${liveProbe.liveCount}/${liveProbe.feedCount}`, "src/ui.js");
@@ -678,6 +715,7 @@ async function checkViewport(viewport) {
     "FA시장 OK",
     "자동스토브 OK",
     "다음시즌 OK",
+    "다음경기선택 OK",
     "프리시즌 OK",
     "빠른주간 OK",
     "도트중계 OK",
@@ -830,6 +868,58 @@ async function waitForTeamSelect() {
   }
 
   throw new VerificationError(`팀 선택 화면 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function waitForManagerSetup() {
+  const deadline = Date.now() + 5000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const rendered = await evaluateInBrowser(`
+        Boolean(
+          document.querySelector(".manager-setup-stage") &&
+          document.querySelector("[data-manager-form]") &&
+          document.querySelector("input[name='managerName']")
+        )
+      `);
+      if (rendered) {
+        await delay(100);
+        return;
+      }
+    } catch (error) {
+      lastError = error?.message ?? String(error);
+    }
+    await delay(80);
+  }
+
+  throw new VerificationError(`감독 등록 화면 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function waitForAppointment() {
+  const deadline = Date.now() + 5000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const rendered = await evaluateInBrowser(`
+        Boolean(
+          document.querySelector(".appointment-stage") &&
+          document.querySelector("[data-appointment-form]") &&
+          document.querySelectorAll(".interview-question").length > 0
+        )
+      `);
+      if (rendered) {
+        await delay(100);
+        return;
+      }
+    } catch (error) {
+      lastError = error?.message ?? String(error);
+    }
+    await delay(80);
+  }
+
+  throw new VerificationError(`취임 기자회견 화면 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
 }
 
 async function waitForBoxScore() {

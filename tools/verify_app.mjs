@@ -269,6 +269,7 @@ async function main() {
   await runCheck("가짜 이름 생성 잔재 없음", checkNoFakeNameResidue);
   await runCheck("개막 라인업 active 로스터 검증", checkOpeningLineupActiveRoster);
   await runCheck("simulateDay 실행 및 하루 5경기", checkSimulateDay);
+  await runCheck("다음 경기 보기/시뮬레이션 플로우", checkNextUserGameFlow);
   await runCheck("선수 누적 기록 모델", checkPlayerSeasonStats);
   await runCheck("경기 박스스코어/eventLog", checkGameBoxScoreEventLog);
   await runCheck("로테이션/불펜 운용 snapshot", checkPitchingSnapshotUsage);
@@ -329,6 +330,8 @@ async function checkModuleImports() {
   assertExport(dataModule, "createInitialState", MODULE_PATHS.data);
   assertExport(engineModule, "simulateDay", MODULE_PATHS.engine);
   assertExport(engineModule, "simulateDays", MODULE_PATHS.engine);
+  assertExport(engineModule, "getNextGamePreview", MODULE_PATHS.engine);
+  assertExport(engineModule, "simulateNextUserGame", MODULE_PATHS.engine);
   assertExport(engineModule, "simulateRegularSeason", MODULE_PATHS.engine);
   assertExport(engineModule, "initializePostseason", MODULE_PATHS.engine);
   assertExport(engineModule, "simulatePostseason", MODULE_PATHS.engine);
@@ -791,6 +794,25 @@ function checkSimulateDay() {
   );
 
   return `${state.currentDate}로 진행, 누적 ${state.gamesPlayed}경기, 최근 경기 ${state.lastGames.length}건`;
+}
+
+function checkNextUserGameFlow() {
+  ensureImportsReady();
+  const state = dataModule.createInitialState();
+  state.selectedTeamId = "lg";
+  const preview = engineModule.getNextGamePreview(state, state.selectedTeamId);
+  assert(preview.ok === true, `다음 경기 preview 실패: ${preview.message}`, MODULE_PATHS.engine);
+  assert(preview.awayTeamId === "lg" || preview.homeTeamId === "lg", `다음 경기 preview가 유저팀 경기가 아님: ${preview.awayTeamId}/${preview.homeTeamId}`, MODULE_PATHS.engine);
+
+  const result = engineModule.simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
+  const focused = state.lastGames?.[0];
+  assert(result.ok === true, `다음 경기 진행 실패: ${result.message}`, MODULE_PATHS.engine);
+  assert(state.gamesPlayed === 5, `다음 경기 진행 후 gamesPlayed=${state.gamesPlayed}/5`, MODULE_PATHS.engine);
+  assert(focused?.id === result.game?.id, "다음 경기 결과가 Gamecast 포커스 위치(lastGames[0])에 없습니다.", MODULE_PATHS.engine);
+  assert(focused?.awayTeamId === "lg" || focused?.homeTeamId === "lg", `포커스 경기가 유저팀 경기가 아님: ${focused?.awayTeamId}/${focused?.homeTeamId}`, MODULE_PATHS.engine);
+  assert((focused?.plateAppearanceEvents ?? []).length >= 60, `포커스 경기 PA 이벤트 부족: ${focused?.plateAppearanceEvents?.length ?? 0}`, MODULE_PATHS.engine);
+
+  return `${preview.date} ${preview.awayShortName}@${preview.homeShortName}, Gamecast PA ${focused.plateAppearanceEvents.length}개 포커스`;
 }
 
 function checkPlayerSeasonStats() {

@@ -201,6 +201,164 @@ export function buildPitchingSnapshot(team) {
   };
 }
 
+export function getNextGamePreview(state, teamId = state?.selectedTeamId) {
+  if (!state || ["complete", "postseason", "offseason"].includes(state.phase)) {
+    return { ok: false, code: "no-game", message: "진행 가능한 정규시즌 경기가 없습니다." };
+  }
+
+  const teams = Array.isArray(state.teams) ? state.teams : [];
+  if (teams.length < KBO_TEAM_COUNT) {
+    return { ok: false, code: "not-enough-teams", message: `${KBO_TEAM_COUNT}개 구단 데이터가 필요합니다.` };
+  }
+
+  let phase = state.phase || "preseason";
+  let gamesPlayed = Math.max(0, Math.floor(safeNumber(state.gamesPlayed)));
+  let date = parseDate(state.currentDate);
+  let skippedDays = 0;
+
+  for (let guard = 0; guard < 220; guard += 1) {
+    const dateKey = formatDateKey(date);
+    if (phase === "preseason") {
+      date = new Date(date.getTime() + MS_PER_DAY);
+      skippedDays += 1;
+      if (formatDateKey(date) >= openingDayForDateKey(formatDateKey(date))) phase = "regular";
+      continue;
+    }
+
+    if (gamesPlayed >= REGULAR_SEASON_GAMES) {
+      return { ok: false, code: "season-complete", message: "정규시즌 720경기를 모두 마쳤습니다." };
+    }
+
+    if (date.getUTCDay() === 1) {
+      date = new Date(date.getTime() + MS_PER_DAY);
+      skippedDays += 1;
+      continue;
+    }
+
+    const matchups = buildMatchups(teams, Math.floor(gamesPlayed / DAILY_GAME_COUNT));
+    const gamesToPlay = Math.min(matchups.length, REGULAR_SEASON_GAMES - gamesPlayed);
+    const matchup = findMatchupForTeam(matchups.slice(0, gamesToPlay), teamId) ?? matchups[0];
+    if (!matchup) {
+      date = new Date(date.getTime() + MS_PER_DAY);
+      skippedDays += 1;
+      continue;
+    }
+
+    return {
+      ok: true,
+      code: "ready",
+      date: dateKey,
+      skippedDays,
+      gameNumber: gamesPlayed + (matchups.indexOf(matchup) + 1),
+      awayTeamId: matchup.away?.id ?? "",
+      homeTeamId: matchup.home?.id ?? "",
+      awayName: matchup.away?.name ?? "",
+      homeName: matchup.home?.name ?? "",
+      awayShortName: matchup.away?.shortName ?? matchup.away?.name ?? "",
+      homeShortName: matchup.home?.shortName ?? matchup.home?.name ?? "",
+      ballpark: matchup.home?.home ?? "",
+      source: "next-game-preview-v1"
+    };
+  }
+
+  return { ok: false, code: "not-found", message: "다음 경기를 찾지 못했습니다." };
+}
+
+export function simulateNextUserGame(state, options = {}) {
+  if (!state || ["complete", "postseason", "offseason"].includes(state.phase)) {
+    return { ok: false, code: "no-game", message: "진행 가능한 정규시즌 경기가 없습니다." };
+  }
+
+  normalizeState(state);
+  const teamId = options.teamId ?? state.selectedTeamId;
+  const mode = options.mode === "watch" ? "watch" : "quick";
+  let skippedDays = 0;
+
+  for (let guard = 0; guard < 220; guard += 1) {
+    if (state.phase === "preseason") {
+      const date = parseDate(state.currentDate);
+      const weather = buildWeather(state, date);
+      state.weather = weather;
+      recoverRoster(state.teams);
+      advanceDate(state, date);
+      skippedDays += 1;
+      if (state.currentDate >= openingDayForDateKey(state.currentDate)) {
+        state.phase = "regular";
+        addLog(state, `${state.currentDate} 정규시즌 개막일입니다. 다음 경기부터 도트 중계를 볼 수 있어요.`);
+      } else {
+        addLog(state, `${state.currentDate} 프리시즌 훈련일입니다. 개막전까지 이동합니다.`);
+      }
+      continue;
+    }
+
+    const date = parseDate(state.currentDate);
+    const dateKey = formatDateKey(date);
+    const weather = buildWeather(state, date);
+    state.weather = weather;
+    recoverRoster(state.teams);
+
+    if (date.getUTCDay() === 1) {
+      addLog(state, `${dateKey} 월요일 휴식일: 다음 경기까지 회복일을 넘깁니다.`);
+      tickInjuries(state.teams);
+      advanceDate(state, date);
+      skippedDays += 1;
+      continue;
+    }
+
+    if (state.gamesPlayed >= REGULAR_SEASON_GAMES) {
+      state.phase = "complete";
+      return { ok: false, code: "season-complete", message: "정규시즌 720경기를 모두 마쳤습니다." };
+    }
+
+    const remaining = REGULAR_SEASON_GAMES - state.gamesPlayed;
+    const matchups = buildMatchups(state.teams, Math.floor(state.gamesPlayed / DAILY_GAME_COUNT));
+    const gamesToPlay = Math.min(matchups.length, Math.floor(remaining));
+    const playable = matchups.slice(0, gamesToPlay);
+    const focusMatchup = findMatchupForTeam(playable, teamId) ?? playable[0];
+    const focusIndex = playable.indexOf(focusMatchup);
+    const results = [];
+
+    for (let i = 0; i < gamesToPlay; i += 1) {
+      results.push(simulateGame(state, playable[i], i, weather, dateKey));
+    }
+
+    const focusGame = results[focusIndex] ?? results[0] ?? null;
+    const orderedResults = focusGame
+      ? [focusGame, ...results.filter((game) => game !== focusGame)]
+      : results;
+    state.lastGames = [...orderedResults, ...state.lastGames].slice(0, RECENT_LIMIT);
+    state.gamesPlayed += results.length;
+
+    if (results.length > 0) {
+      const focusText = focusGame ? `${focusGame.away} ${focusGame.awayScore}-${focusGame.homeScore} ${focusGame.home}` : `${results.length}경기`;
+      addLog(state, `${dateKey} ${weather.label}: ${mode === "watch" ? "경기 보기" : "빠른 시뮬레이션"} 완료, ${focusText}.`);
+    }
+
+    tickInjuries(state.teams);
+    advanceDate(state, date);
+
+    if (state.gamesPlayed >= REGULAR_SEASON_GAMES) {
+      state.phase = "complete";
+      addLog(state, `${dateKey} 정규시즌 종료: ${state.gamesPlayed}경기를 완료했습니다.`);
+    }
+
+    return {
+      ok: true,
+      code: "played",
+      mode,
+      skippedDays,
+      date: dateKey,
+      simulatedGames: results.length,
+      game: focusGame,
+      message: focusGame
+        ? `${focusGame.away} ${focusGame.awayScore}-${focusGame.homeScore} ${focusGame.home}`
+        : `${results.length}경기를 진행했습니다.`
+    };
+  }
+
+  return { ok: false, code: "not-found", message: "다음 경기를 찾지 못했습니다." };
+}
+
 export function simulateDay(state) {
   if (!state || ["complete", "postseason", "offseason"].includes(state.phase)) return state;
 
@@ -2518,6 +2676,14 @@ function buildMatchups(teams, gameDayIndex) {
   }
 
   return pairs;
+}
+
+function findMatchupForTeam(matchups, teamId) {
+  const key = String(teamId ?? "");
+  return (matchups ?? []).find((matchup) =>
+    String(matchup?.away?.id ?? "") === key ||
+    String(matchup?.home?.id ?? "") === key
+  ) ?? null;
 }
 
 function createPostseasonSeries(definition, participantBySeed) {
