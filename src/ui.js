@@ -12,6 +12,7 @@ import {
   initializeFreeAgency,
   initializePostseason,
   initializeSecondaryDraft,
+  resolveMailDecision,
   simulateDay,
   simulateDays,
   simulateNextUserGame,
@@ -102,14 +103,15 @@ const POSITION_GROUP_LABELS = {
   other: "기타"
 };
 
-const GAMECAST_PIXEL_W = 120;
-const GAMECAST_PIXEL_H = 108;
+const GAMECAST_PIXEL_W = 160;
+const GAMECAST_PIXEL_H = 144;
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
 const GAMECAST_PLAYBACK_COUNT = 8;
-const GAMECAST_WATCH_PA_MS = 80;
-const GAMECAST_WATCH_GAP_MS = 6;
+const GAMECAST_WATCH_PA_MS = 920;
+const GAMECAST_WATCH_GAP_MS = 140;
 const GAMECAST_PA_MS = 850;
 const GAMECAST_PA_GAP_MS = 120;
+const GAMECAST_SPEED_OPTIONS = [1, 2, 3, 4];
 let cleanupGamecastPixelScreen = null;
 let latestGamecastSequence = null;
 
@@ -219,6 +221,7 @@ function render(root, state) {
         ${renderNextGamePanel(state, selectedTeam, nextGame)}
         ${renderManagerBriefingPanel(state, selectedTeam, manager)}
         ${renderPreseasonDeskPanel(state, selectedTeam, manager)}
+        ${renderPendingMailDecisionPanel(state)}
         ${renderOperationsBar()}
         ${renderFrontOfficePanels(frontOffice)}
         ${renderCommandCenterPanels(gmDesk)}
@@ -408,6 +411,72 @@ function renderPreseasonMediaCard(item) {
       <small>${escapeHtml(item.date ?? "")}</small>
     </article>
   `;
+}
+
+function renderPendingMailDecisionPanel(state) {
+  const decision = state?.pendingMailDecision;
+  if (!decision || decision.status !== "open") return "";
+  const options = (Array.isArray(decision.options) && decision.options.length)
+    ? decision.options
+    : fallbackDecisionOptions(decision.type);
+  const severity = decision.severity ? `is-${logTypeClass(decision.severity)}` : "";
+  const blocking = decision.blocking ? "진행 전 처리 필요" : "보고 확인 필요";
+  return `
+    <section class="decision-mail-panel ${severity}" data-pending-mail-decision aria-label="긴급 보고 결정">
+      <div class="decision-mail-copy">
+        <span>${escapeHtml(blocking)}</span>
+        <h2>${escapeHtml(decision.headline ?? "긴급 보고")}</h2>
+        <p>${escapeHtml(decision.body ?? decision.text ?? "보고 내용을 확인하고 조치하십시오.")}</p>
+        <small>${escapeHtml(decision.source ?? decision.teamName ?? "개인비서")} · ${escapeHtml(decision.date ?? state.currentDate ?? "")}</small>
+      </div>
+      <div class="decision-mail-actions">
+        ${options.map((option) => `
+          <button class="decision-choice" data-action="resolve-mail-decision" data-decision-action="${escapeAttribute(option.action ?? "acknowledge")}">
+            <strong>${escapeHtml(option.label ?? "확인")}</strong>
+            <small>${escapeHtml(option.note ?? "")}</small>
+          </button>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function fallbackDecisionOptions(type) {
+  if (type === "medical-roster") {
+    return [
+      { action: "callup", label: "말소+콜업", note: "10일 재등록 제한" },
+      { action: "monitor", label: "하루 관찰", note: "의무 파트 관리" },
+      { action: "rush", label: "강행", note: "재부상 위험" }
+    ];
+  }
+  if (type === "foreign-lineup") {
+    return [
+      { action: "bench-hitter", label: "타자 제외", note: "2명 출전 제한" },
+      { action: "rotate-pitcher", label: "선발 조정", note: "로테이션 변경" },
+      { action: "acknowledge", label: "확인", note: "회의 안건" }
+    ];
+  }
+  if (type === "foreign-adaptation") {
+    return [
+      { action: "extra-support", label: "가족 초청", note: "5,000만 원" },
+      { action: "acknowledge", label: "면담 관리", note: "모니터링" },
+      { action: "demote", label: "2군 조정", note: "멘탈 하락" }
+    ];
+  }
+  if (type === "trade-offer") {
+    return [
+      { action: "accept", label: "제안 수락", note: "즉시 처리" },
+      { action: "counter", label: "현금 깎기", note: "역제안" },
+      { action: "reject", label: "거절", note: "자산 유지" }
+    ];
+  }
+  if (type === "waiver-claim") {
+    return [
+      { action: "claim", label: "클레임", note: "연봉 승계" },
+      { action: "pass", label: "패스", note: "현 roster 유지" }
+    ];
+  }
+  return [{ action: "acknowledge", label: "확인", note: "보고 처리" }];
 }
 
 function buildFallbackAssistantBriefing(state, selectedTeam, manager) {
@@ -1202,12 +1271,22 @@ function bindActions(root, state) {
     render(root, state);
   });
 
+  root.querySelectorAll("[data-action='resolve-mail-decision']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const result = resolveMailDecision(state, button.dataset.decisionAction || "acknowledge");
+      render(root, state);
+      setStatus(root, result.message || "긴급 보고를 처리했습니다.");
+    });
+  });
+
   root.querySelector("[data-action='next-day']")?.addEventListener("click", () => {
+    if (stopForBlockingMail(root, state)) return;
     simulateDay(state);
     render(root, state);
   });
 
   root.querySelector("[data-action='week']")?.addEventListener("click", () => {
+    if (stopForBlockingMail(root, state)) return;
     const beforeDate = state.currentDate;
     const beforeGames = Number(state.gamesPlayed ?? 0);
     simulateDays(state, 7);
@@ -1217,25 +1296,28 @@ function bindActions(root, state) {
   });
 
   root.querySelector("[data-action='watch-next-game']")?.addEventListener("click", () => {
+    if (stopForBlockingMail(root, state)) return;
     const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
     state.ui = {
       ...(state.ui ?? {}),
       screen: "game",
       focusGameId: result.game?.id ?? "",
-      gamecastMode: "watch"
+      gamecastMode: "watch",
+      gamecastExpanded: Boolean(result.ok)
     };
     render(root, state);
     setStatus(root, result.ok ? `경기 보기 시작: ${result.message}` : result.message);
-    scrollToGamecast();
   });
 
   root.querySelector("[data-action='simulate-next-game']")?.addEventListener("click", () => {
+    if (stopForBlockingMail(root, state)) return;
     const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "quick" });
     state.ui = {
       ...(state.ui ?? {}),
       screen: "game",
       focusGameId: result.game?.id ?? "",
-      gamecastMode: "summary"
+      gamecastMode: "summary",
+      gamecastExpanded: false
     };
     render(root, state);
     setStatus(root, result.ok ? `경기 시뮬레이션 완료: ${result.message}` : result.message);
@@ -1380,6 +1462,35 @@ function bindActions(root, state) {
     setStatus(root, result.message || "외국인 권리 계약 결과를 확인할 수 없습니다.");
   });
 
+  root.querySelectorAll("[data-action='open-gamecast-broadcast']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui = {
+        ...(state.ui ?? {}),
+        gamecastExpanded: true
+      };
+      render(root, state);
+    });
+  });
+
+  root.querySelectorAll("[data-action='close-gamecast-broadcast']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui = {
+        ...(state.ui ?? {}),
+        gamecastExpanded: false
+      };
+      render(root, state);
+    });
+  });
+
+  root.querySelector("[data-gamecast-modal]")?.addEventListener("click", (event) => {
+    if (event.target !== event.currentTarget) return;
+    state.ui = {
+      ...(state.ui ?? {}),
+      gamecastExpanded: false
+    };
+    render(root, state);
+  });
+
   root.querySelector("[data-action='export-save']")?.addEventListener("click", () => {
     try {
       downloadSaveFile(state);
@@ -1442,6 +1553,13 @@ function replaceState(target, source) {
   }
 
   Object.assign(target, source);
+}
+
+function stopForBlockingMail(root, state) {
+  const decision = state?.pendingMailDecision;
+  if (!decision || decision.status !== "open" || !decision.blocking) return false;
+  setStatus(root, `${decision.headline ?? "긴급 보고"}를 먼저 처리해야 날짜를 넘길 수 있습니다.`);
+  return true;
 }
 
 function setStatus(root, message) {
@@ -2177,18 +2295,22 @@ function renderGamecastPanel(state) {
     ? sequence.events
     : sortGamecastEvents(events).slice(-GAMECAST_PLAYBACK_COUNT).map((event) => normalizeGamecastEvent(event, state));
   const featured = feedEvents[0] ?? sequence.events[0] ?? null;
+  const broadcastModal = renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, featured);
 
   return `
-    <article class="panel gamecast-panel" id="gamecast">
+    <article class="panel gamecast-panel" id="gamecast" data-gamecast-instance-root>
       <div class="panel-head">
         <div>
           <span class="mini-label">Gamecast</span>
           <h2>${sequence.mode === "watch" ? "경기 보기 도트 중계" : "빠른 도트 중계"}</h2>
         </div>
-        <span class="pill">${sequence.mode === "watch" ? "LIVE" : `${formatNumber(events.length)} PA`}</span>
+        <div class="gamecast-head-actions">
+          ${game ? `<button class="button button-soft gamecast-expand-button" data-action="open-gamecast-broadcast" type="button">큰 화면</button>` : ""}
+          <span class="pill">${sequence.mode === "watch" ? "LIVE" : `${formatNumber(events.length)} PA`}</span>
+        </div>
       </div>
       <div class="gamecast-layout">
-        <div class="gamecast-board">
+        <div class="gamecast-board" data-gamecast-board>
           <div class="gamecast-scoreline">
             <span>
               ${renderTeamLogo(away, "team-logo mini-logo")}
@@ -2201,11 +2323,9 @@ function renderGamecastPanel(state) {
               <strong>${formatNumber(sequence.startHome)}</strong>
             </span>
           </div>
+          ${renderGamecastControls(sequence)}
           <div class="gamecast-screen ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen aria-hidden="true">
-            <div class="gamecast-pixel-stage" data-gamecast-stage>
-              <canvas id="${GAMECAST_CANVAS_ID}" class="gamecast-pixel-canvas" width="${GAMECAST_PIXEL_W}" height="${GAMECAST_PIXEL_H}" data-pixel-w="${GAMECAST_PIXEL_W}" data-pixel-h="${GAMECAST_PIXEL_H}" aria-hidden="true"></canvas>
-              <span class="gamecast-player-label" data-gamecast-player-label></span>
-            </div>
+            ${renderGamecastPixelStage("inline")}
           </div>
           <div class="gamecast-now">
             <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
@@ -2217,6 +2337,75 @@ function renderGamecastPanel(state) {
         </ol>
       </div>
     </article>
+    ${broadcastModal}
+  `;
+}
+
+function renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, featured) {
+  if (sequence.mode !== "watch" || state.ui?.gamecastExpanded !== true) return "";
+
+  return `
+    <div class="gamecast-broadcast-backdrop" data-gamecast-modal>
+      <section class="gamecast-broadcast-shell" role="dialog" aria-modal="true" aria-labelledby="gamecast-broadcast-title" data-gamecast-instance-root>
+        <header class="gamecast-broadcast-head">
+          <div>
+            <span class="mini-label">Live Pixel Broadcast</span>
+            <h2 id="gamecast-broadcast-title">경기 보기 도트 중계</h2>
+            <p>${escapeHtml(getTeamShortName(away) ?? "Away")} vs ${escapeHtml(getTeamShortName(home) ?? "Home")} · 고해상도 픽셀 뷰</p>
+          </div>
+          <button class="button button-soft gamecast-close-button" data-action="close-gamecast-broadcast" type="button" aria-label="중계창 닫기">닫기</button>
+        </header>
+        <div class="gamecast-broadcast-grid">
+          <div class="gamecast-board gamecast-broadcast-board" data-gamecast-board>
+            <div class="gamecast-scoreline gamecast-broadcast-scoreline">
+              <span>
+                ${renderTeamLogo(away, "team-logo mini-logo")}
+                <b>${escapeHtml(getTeamShortName(away) ?? "Away")}</b>
+                <strong>${formatNumber(sequence.startAway)}</strong>
+              </span>
+              <span>
+                ${renderTeamLogo(home, "team-logo mini-logo")}
+                <b>${escapeHtml(getTeamShortName(home) ?? "Home")}</b>
+                <strong>${formatNumber(sequence.startHome)}</strong>
+              </span>
+            </div>
+            ${renderGamecastControls(sequence, "broadcast")}
+            <div class="gamecast-screen gamecast-screen-large ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen aria-hidden="true">
+              ${renderGamecastPixelStage("broadcast")}
+            </div>
+            <div class="gamecast-now gamecast-broadcast-now">
+              <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
+              <small>${featured ? escapeHtml(gamecastNowDetail(featured)) : "타석 이벤트 대기"}</small>
+            </div>
+          </div>
+          <ol class="gamecast-feed gamecast-broadcast-feed">
+            ${feedEvents.length ? feedEvents.map((event) => renderGamecastEvent(event, state)).join("") : `<li><span>경기 이벤트 대기</span><small>PA 기록 없음</small></li>`}
+          </ol>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderGamecastPixelStage(instanceId) {
+  const safeInstanceId = escapeAttribute(instanceId);
+  return `
+    <div class="gamecast-pixel-stage" data-gamecast-stage>
+      <canvas id="${GAMECAST_CANVAS_ID}-${safeInstanceId}" class="gamecast-pixel-canvas" width="${GAMECAST_PIXEL_W}" height="${GAMECAST_PIXEL_H}" data-gamecast-canvas data-pixel-w="${GAMECAST_PIXEL_W}" data-pixel-h="${GAMECAST_PIXEL_H}" aria-hidden="true"></canvas>
+      <span class="gamecast-player-label" data-gamecast-player-label></span>
+    </div>
+  `;
+}
+
+function renderGamecastControls(sequence, variant = "inline") {
+  if (sequence.mode !== "watch") return "";
+  return `
+    <div class="gamecast-controls ${variant === "broadcast" ? "is-broadcast" : ""}" aria-label="중계 재생 속도">
+      ${GAMECAST_SPEED_OPTIONS.map((speed) => `
+        <button class="gamecast-speed-button ${speed === 1 ? "is-active" : ""}" data-gamecast-speed="${speed}" type="button" aria-pressed="${speed === 1 ? "true" : "false"}">x${formatNumber(speed)}</button>
+      `).join("")}
+      <button class="gamecast-speed-button is-skip" data-gamecast-skip type="button">스킵</button>
+    </div>
   `;
 }
 
@@ -2361,35 +2550,42 @@ function initGamecastPixelScreen(root) {
     cleanupGamecastPixelScreen = null;
   }
 
-  const screen = root?.querySelector?.("[data-gamecast-screen]");
-  const canvas = root?.querySelector?.(`#${GAMECAST_CANVAS_ID}`);
-  const stage = root?.querySelector?.("[data-gamecast-stage]");
-  const playerLabel = root?.querySelector?.("[data-gamecast-player-label]");
-  if (!screen || !canvas || typeof canvas.getContext !== "function") return;
+  const screens = [...(root?.querySelectorAll?.("[data-gamecast-screen]") ?? [])];
+  const controllers = [];
 
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  for (const screen of screens) {
+    const board = screen.closest("[data-gamecast-board]");
+    const instanceRoot = screen.closest("[data-gamecast-instance-root]") ?? root;
+    const canvas = screen.querySelector("[data-gamecast-canvas]");
+    const stage = screen.querySelector("[data-gamecast-stage]");
+    const playerLabel = screen.querySelector("[data-gamecast-player-label]");
+    if (!board || !canvas || typeof canvas.getContext !== "function") continue;
 
-  const scoreNodes = [...root.querySelectorAll(".gamecast-scoreline strong")];
-  const nowTitle = root.querySelector(".gamecast-now strong");
-  const nowDetail = root.querySelector(".gamecast-now small");
-  const feedItems = [...root.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")];
-  const controller = createGamecastPixelController({
-    screen,
-    stage,
-    canvas,
-    ctx,
-    sequence: latestGamecastSequence,
-    scoreNodes,
-    nowTitle,
-    nowDetail,
-    playerLabel,
-    feedItems
-  });
-  cleanupGamecastPixelScreen = controller.cleanup;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) continue;
+
+    controllers.push(createGamecastPixelController({
+      screen,
+      stage,
+      canvas,
+      ctx,
+      sequence: latestGamecastSequence,
+      scoreNodes: [...board.querySelectorAll(".gamecast-scoreline strong")],
+      nowTitle: board.querySelector(".gamecast-now strong"),
+      nowDetail: board.querySelector(".gamecast-now small"),
+      playerLabel,
+      feedItems: [...instanceRoot.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")],
+      speedControls: [...board.querySelectorAll("[data-gamecast-speed]")],
+      skipControls: [...board.querySelectorAll("[data-gamecast-skip]")]
+    }));
+  }
+
+  cleanupGamecastPixelScreen = () => {
+    for (const controller of controllers) controller.cleanup();
+  };
 }
 
-function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, playerLabel, feedItems }) {
+function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, playerLabel, feedItems, speedControls = [], skipControls = [] }) {
   const palette = {
     outline: "#23202a",
     grassLo: "#4f8a73",
@@ -2429,6 +2625,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     hidden: typeof document !== "undefined" ? document.hidden : false,
     scale: 1,
     dpr: 1,
+    playbackRate: 1,
     elapsedMs: 0,
     lastTimestamp: 0,
     done: false,
@@ -2445,6 +2642,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     prefersReducedMotion,
     shakenEventId: ""
   };
+  state.playbackRate = sanitizeGamecastSpeed(state.sequence.playbackRate);
 
   const resize = () => resizeGamecastCanvas(screen, stage, canvas, ctx, state);
   const stop = () => {
@@ -2465,6 +2663,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     state.elapsedMs = state.sequence.events.length * gamecastEventDuration(state.sequence);
     stop();
     renderCurrentFrame(true);
+    syncGamecastSpeedControls(state, speedControls, skipControls);
   };
   const pauseOffscreen = () => {
     stop();
@@ -2499,7 +2698,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     if (!state.lastTimestamp) state.lastTimestamp = timestamp;
     const delta = Math.min(80, Math.max(0, timestamp - state.lastTimestamp));
     state.lastTimestamp = timestamp;
-    state.elapsedMs += delta;
+    state.elapsedMs += delta * state.playbackRate;
     const frame = renderCurrentFrame(false);
     if (frame.event?.outcome === "homeRun" && !state.prefersReducedMotion && state.shakenEventId !== frame.event.id) {
       triggerGamecastShake(screen, state);
@@ -2528,9 +2727,27 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     if (state.hidden) finish();
     else start();
   };
+  const setSpeed = (speed) => {
+    state.playbackRate = sanitizeGamecastSpeed(speed);
+    state.done = false;
+    state.lastTimestamp = 0;
+    syncGamecastSpeedControls(state, speedControls, skipControls);
+    start();
+  };
+  const onSpeedClick = (event) => {
+    event.preventDefault();
+    setSpeed(event.currentTarget?.dataset?.gamecastSpeed);
+  };
+  const onSkipClick = (event) => {
+    event.preventDefault();
+    finish();
+  };
 
   resize();
   renderCurrentFrame(state.prefersReducedMotion || !state.sequence.events.length);
+  syncGamecastSpeedControls(state, speedControls, skipControls);
+  for (const button of speedControls) button.addEventListener("click", onSpeedClick);
+  for (const button of skipControls) button.addEventListener("click", onSkipClick);
 
   const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
     resize();
@@ -2561,6 +2778,8 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
       clearOffscreenPause();
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
+      for (const button of speedControls) button.removeEventListener("click", onSpeedClick);
+      for (const button of skipControls) button.removeEventListener("click", onSkipClick);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibilityChange);
       }
@@ -2581,12 +2800,31 @@ function normalizeGamecastSequenceForPlayback(sequence) {
     mode: String(sequence?.mode ?? "summary"),
     paMs: Math.max(80, Number(sequence?.paMs ?? GAMECAST_PA_MS)),
     gapMs: Math.max(0, Number(sequence?.gapMs ?? GAMECAST_PA_GAP_MS)),
+    playbackRate: sanitizeGamecastSpeed(sequence?.playbackRate),
     events: Array.isArray(sequence?.events) ? sequence.events : []
   };
 }
 
 function gamecastEventDuration(sequence) {
   return Math.max(80, Number(sequence?.paMs ?? GAMECAST_PA_MS)) + Math.max(0, Number(sequence?.gapMs ?? GAMECAST_PA_GAP_MS));
+}
+
+function sanitizeGamecastSpeed(value) {
+  const speed = Number(value);
+  return GAMECAST_SPEED_OPTIONS.includes(speed) ? speed : 1;
+}
+
+function syncGamecastSpeedControls(state, speedControls, skipControls) {
+  for (const button of speedControls ?? []) {
+    const speed = sanitizeGamecastSpeed(button.dataset?.gamecastSpeed);
+    const active = speed === state.playbackRate && !state.done;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+  for (const button of skipControls ?? []) {
+    button.classList.toggle("is-active", Boolean(state.done));
+    button.disabled = Boolean(state.done);
+  }
 }
 
 function triggerGamecastShake(screen, state) {
@@ -2649,10 +2887,22 @@ function drawGamecastFieldTo(ctx, palette) {
   drawBallparkBases(ctx, palette);
 }
 
+function gamecastX(value) {
+  return Math.round((Number(value) / 120) * GAMECAST_PIXEL_W);
+}
+
+function gamecastY(value) {
+  return Math.round((Number(value) / 108) * GAMECAST_PIXEL_H);
+}
+
+function gamecastSize(value) {
+  return Math.max(1, Math.round((Number(value) / 120) * GAMECAST_PIXEL_W));
+}
+
 function drawBallparkOutfield(ctx, palette) {
-  const fx = 60;
-  const fy = 104;
-  const wallRadius = 90;
+  const fx = gamecastX(60);
+  const fy = gamecastY(104);
+  const wallRadius = gamecastSize(90);
   for (let y = 0; y < GAMECAST_PIXEL_H; y += 1) {
     for (let x = 0; x < GAMECAST_PIXEL_W; x += 1) {
       const distance = Math.hypot(x - fx, y - fy);
@@ -2660,52 +2910,53 @@ function drawBallparkOutfield(ctx, palette) {
         const crowd = [palette.crowdA, palette.crowdB, palette.crowdC][(x + y) % 3];
         const color = (x * 5 + y * 3) % 9 === 0 ? crowd : ((x + y) % 2 ? palette.stand : palette.standD);
         drawPixel(ctx, x, y, color);
-      } else if (distance > wallRadius - 2) {
-        drawPixel(ctx, x, y, y < 30 ? palette.wallCap : palette.wall);
-      } else if (distance > wallRadius - 5) {
+      } else if (distance > wallRadius - gamecastSize(2)) {
+        drawPixel(ctx, x, y, y < gamecastY(30) ? palette.wallCap : palette.wall);
+      } else if (distance > wallRadius - gamecastSize(5)) {
         drawPixel(ctx, x, y, palette.track);
       } else {
-        drawPixel(ctx, x, y, Math.floor(distance / 6) % 2 ? palette.grassLo : palette.grassHi);
+        drawPixel(ctx, x, y, Math.floor(distance / gamecastSize(6)) % 2 ? palette.grassLo : palette.grassHi);
       }
     }
   }
 
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(48, 4, 24, 8);
+  ctx.fillRect(gamecastX(48), gamecastY(4), gamecastSize(24), gamecastSize(8));
   ctx.fillStyle = "#12211b";
-  ctx.fillRect(49, 5, 22, 6);
+  ctx.fillRect(gamecastX(49), gamecastY(5), gamecastSize(22), gamecastSize(6));
   for (let index = 0; index < 6; index += 1) {
-    drawPixel(ctx, 51 + index * 3, 8, index % 2 ? palette.crowdC : palette.grassHi);
+    ctx.fillStyle = index % 2 ? palette.crowdC : palette.grassHi;
+    ctx.fillRect(gamecastX(51 + index * 3), gamecastY(8), gamecastSize(1), gamecastSize(1));
   }
 
-  for (let y = 30; y < 48; y += 1) {
-    drawPixel(ctx, 15, y, palette.pole);
-    drawPixel(ctx, 105, y, palette.pole);
+  for (let y = gamecastY(30); y < gamecastY(48); y += 1) {
+    drawPixel(ctx, gamecastX(15), y, palette.pole);
+    drawPixel(ctx, gamecastX(105), y, palette.pole);
   }
 
   const bases = gamecastBasePositions();
-  drawPixelLine(ctx, bases.home.x, bases.home.y, 16, 46, palette.base, 1);
-  drawPixelLine(ctx, bases.home.x, bases.home.y, 104, 46, palette.base, 1);
+  drawPixelLine(ctx, bases.home.x, bases.home.y, gamecastX(16), gamecastY(46), palette.base, gamecastSize(1));
+  drawPixelLine(ctx, bases.home.x, bases.home.y, gamecastX(104), gamecastY(46), palette.base, gamecastSize(1));
 }
 
 function drawBallparkInfield(ctx, palette) {
   const bases = gamecastBasePositions();
-  drawPixelLine(ctx, bases.home.x, bases.home.y, bases.first.x, bases.first.y, palette.dirtM, 3);
-  drawPixelLine(ctx, bases.first.x, bases.first.y, bases.second.x, bases.second.y, palette.dirtM, 3);
-  drawPixelLine(ctx, bases.second.x, bases.second.y, bases.third.x, bases.third.y, palette.dirtM, 3);
-  drawPixelLine(ctx, bases.third.x, bases.third.y, bases.home.x, bases.home.y, palette.dirtM, 3);
+  drawPixelLine(ctx, bases.home.x, bases.home.y, bases.first.x, bases.first.y, palette.dirtM, gamecastSize(3));
+  drawPixelLine(ctx, bases.first.x, bases.first.y, bases.second.x, bases.second.y, palette.dirtM, gamecastSize(3));
+  drawPixelLine(ctx, bases.second.x, bases.second.y, bases.third.x, bases.third.y, palette.dirtM, gamecastSize(3));
+  drawPixelLine(ctx, bases.third.x, bases.third.y, bases.home.x, bases.home.y, palette.dirtM, gamecastSize(3));
 
-  for (const base of [bases.first, bases.second, bases.third]) fillPixelCircle(ctx, base.x, base.y, 5, palette.dirtM);
-  fillPixelCircle(ctx, bases.home.x, bases.home.y, 6, palette.dirtM);
-  fillPixelCircle(ctx, bases.mound.x, bases.mound.y, 6, palette.dirtL);
-  fillPixelCircle(ctx, bases.mound.x, bases.mound.y, 4, palette.dirtM);
+  for (const base of [bases.first, bases.second, bases.third]) fillPixelCircle(ctx, base.x, base.y, gamecastSize(5), palette.dirtM);
+  fillPixelCircle(ctx, bases.home.x, bases.home.y, gamecastSize(6), palette.dirtM);
+  fillPixelCircle(ctx, bases.mound.x, bases.mound.y, gamecastSize(6), palette.dirtL);
+  fillPixelCircle(ctx, bases.mound.x, bases.mound.y, gamecastSize(4), palette.dirtM);
 
   ctx.fillStyle = palette.base;
-  ctx.fillRect(bases.mound.x - 1, bases.mound.y - 1, 3, 1);
+  ctx.fillRect(bases.mound.x - gamecastSize(1), bases.mound.y - gamecastSize(1), gamecastSize(3), gamecastSize(1));
   ctx.fillStyle = palette.dirtL;
-  ctx.fillRect(bases.home.x - 8, bases.home.y - 5, 3, 7);
-  ctx.fillRect(bases.home.x + 6, bases.home.y - 5, 3, 7);
-  drawPixelSprite(ctx, palette, bases.home.x - 2, bases.home.y - 2, [
+  ctx.fillRect(bases.home.x - gamecastSize(8), bases.home.y - gamecastSize(5), gamecastSize(3), gamecastSize(7));
+  ctx.fillRect(bases.home.x + gamecastSize(6), bases.home.y - gamecastSize(5), gamecastSize(3), gamecastSize(7));
+  drawPixelSprite(ctx, palette, bases.home.x - gamecastSize(2), bases.home.y - gamecastSize(2), [
     [0, 0, palette.base],
     [1, 0, palette.base],
     [2, 0, palette.base],
@@ -2721,7 +2972,7 @@ function drawBallparkBases(ctx, palette) {
 }
 
 function drawBallparkBase(ctx, palette, position) {
-  drawPixelSprite(ctx, palette, position.x - 2, position.y - 1, [
+  drawPixelSprite(ctx, palette, position.x - gamecastSize(2), position.y - gamecastSize(1), [
     [0, 0, palette.base],
     [1, 0, palette.base],
     [2, 0, palette.base],
@@ -2748,10 +2999,12 @@ function drawPixel(ctx, x, y, color) {
 function drawPixelOutPips(ctx, palette, frame) {
   const outs = Math.min(3, Math.max(0, Number(frame.outs ?? 0)));
   for (let index = 0; index < 3; index += 1) {
+    const x = gamecastX(96) + index * gamecastSize(7);
+    const y = gamecastY(98);
     ctx.fillStyle = palette.outline;
-    ctx.fillRect(96 + index * 7, 98, 6, 6);
+    ctx.fillRect(x, y, gamecastSize(6), gamecastSize(6));
     ctx.fillStyle = index < outs ? palette.out : palette.baseSh;
-    ctx.fillRect(97 + index * 7, 99, 4, 4);
+    ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), gamecastSize(4), gamecastSize(4));
   }
 }
 
@@ -2791,11 +3044,11 @@ function drawPixelAction(ctx, palette, frame) {
 
 function gamecastBasePositions() {
   return {
-    home: { x: 60, y: 96 },
-    first: { x: 86, y: 76 },
-    second: { x: 60, y: 56 },
-    third: { x: 34, y: 76 },
-    mound: { x: 60, y: 76 }
+    home: { x: gamecastX(60), y: gamecastY(96) },
+    first: { x: gamecastX(86), y: gamecastY(76) },
+    second: { x: gamecastX(60), y: gamecastY(56) },
+    third: { x: gamecastX(34), y: gamecastY(76) },
+    mound: { x: gamecastX(60), y: gamecastY(76) }
   };
 }
 
@@ -2870,18 +3123,18 @@ function buildGamecastPlayerLabel(event, progress, runners) {
   const advance = gamecastAdvanceCount(event.outcome);
   const targetBase = advance > 0 ? Math.min(4, advance) : 0;
   const targetPath = targetBase > 0 ? gamecastPathBetween(0, targetBase) : [];
-  const target = targetPath.length ? targetPath[targetPath.length - 1] : { x: bases.home.x + 7, y: bases.home.y - 3 };
+  const target = targetPath.length ? targetPath[targetPath.length - 1] : { x: bases.home.x + gamecastSize(7), y: bases.home.y - gamecastSize(3) };
   const position = batterRunner?.position
-    ?? (progress < 0.72 ? { x: bases.home.x, y: bases.home.y - 4 } : target)
-    ?? { x: bases.home.x, y: bases.home.y - 4 };
+    ?? (progress < 0.72 ? { x: bases.home.x, y: bases.home.y - gamecastSize(4) } : target)
+    ?? { x: bases.home.x, y: bases.home.y - gamecastSize(4) };
   const fadeIn = Math.min(1, Math.max(0, progress / 0.08));
   const fadeOut = progress > 0.82 ? Math.max(0, (0.96 - progress) / 0.14) : 1;
   const opacity = Math.max(0, Math.min(1, fadeIn * fadeOut));
   return {
     visible: opacity > 0.08,
     text: shortenGamecastPlayerName(event.hitterName),
-    x: Math.max(12, Math.min(108, position.x)),
-    y: Math.max(12, Math.min(98, position.y - 12)),
+    x: Math.max(gamecastX(10), Math.min(gamecastX(110), position.x)),
+    y: Math.max(gamecastY(10), Math.min(gamecastY(98), position.y - gamecastSize(14))),
     opacity,
     scoring: Number(event.runs ?? 0) > 0 && progress >= 0.55
   };
@@ -2945,8 +3198,8 @@ function buildRunnerSprites(event, progress, palette) {
   const outT = Math.min(1, moveT * 1.3);
   runners.push({
     position: {
-      x: Math.round(lerp(bases.home.x, bases.home.x + 7, outT)),
-      y: Math.round(lerp(bases.home.y, bases.home.y - 3, outT))
+      x: Math.round(lerp(bases.home.x, bases.home.x + gamecastSize(7), outT)),
+      y: Math.round(lerp(bases.home.y, bases.home.y - gamecastSize(3), outT))
     },
     trail: [],
     color: palette.out,
@@ -2979,15 +3232,15 @@ function buildBallSprite(event, progress) {
     const t = progress / 0.15;
     return {
       x: Math.round(lerp(bases.mound.x, bases.home.x, t)),
-      y: Math.round(lerp(bases.mound.y, bases.home.y - 4, t))
+      y: Math.round(lerp(bases.mound.y, bases.home.y - gamecastSize(4), t))
     };
   }
   if (event.outcome !== "homeRun" || progress >= 0.72) return null;
   const t = Math.max(0, Math.min(1, (progress - 0.15) / 0.57));
   const eased = easeOutCubic(t);
   return {
-    x: Math.round(60 + Math.sin(t * Math.PI) * 34),
-    y: Math.round(92 - 78 * eased - Math.sin(t * Math.PI) * 16)
+    x: Math.round(gamecastX(60) + Math.sin(t * Math.PI) * gamecastSize(34)),
+    y: Math.round(gamecastY(92) - gamecastSize(78) * eased - Math.sin(t * Math.PI) * gamecastSize(16))
   };
 }
 
@@ -2999,8 +3252,8 @@ function buildBallTrail(event, progress) {
     const t = Math.max(0, Math.min(1, (p - 0.15) / 0.57));
     const eased = easeOutCubic(t);
     points.push({
-      x: Math.round(60 + Math.sin(t * Math.PI) * 34),
-      y: Math.round(92 - 78 * eased - Math.sin(t * Math.PI) * 16)
+      x: Math.round(gamecastX(60) + Math.sin(t * Math.PI) * gamecastSize(34)),
+      y: Math.round(gamecastY(92) - gamecastSize(78) * eased - Math.sin(t * Math.PI) * gamecastSize(16))
     });
   }
   return points;
@@ -3016,14 +3269,14 @@ function gamecastAdvanceCount(outcome) {
 
 function gamecastPathBetween(startBase, targetBase) {
   const bases = gamecastBasePositions();
-  const points = [bases.home, bases.first, bases.second, bases.third, { x: 60, y: 102 }];
+  const points = [bases.home, bases.first, bases.second, bases.third, { x: gamecastX(60), y: gamecastY(102) }];
   const start = Math.max(0, Math.min(4, startBase));
   const target = Math.max(start, Math.min(4, targetBase));
   return points.slice(start, target + 1).map((point) => ({ ...point }));
 }
 
 function positionAlongPath(path, t) {
-  if (!path.length) return { x: 60, y: 96 };
+  if (!path.length) return { x: gamecastX(60), y: gamecastY(96) };
   if (path.length === 1) return { ...path[0] };
   const scaled = t * (path.length - 1);
   const index = Math.min(path.length - 2, Math.floor(scaled));
@@ -3067,19 +3320,19 @@ function syncGamecastPlayerLabel(labelNode, label) {
 
 function drawPixelScoreBurst(ctx, palette, frame) {
   const count = Math.max(1, Math.min(4, Number(frame.event?.runs ?? 1)));
-  const x = 8;
-  const y = 86;
+  const x = gamecastX(8);
+  const y = gamecastY(86);
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(x + 2, y, 1, 7);
-  ctx.fillRect(x, y + 3, 5, 1);
-  ctx.fillRect(x + 7, y, 2, 7);
+  ctx.fillRect(x + gamecastSize(2), y, gamecastSize(1), gamecastSize(7));
+  ctx.fillRect(x, y + gamecastSize(3), gamecastSize(5), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(7), y, gamecastSize(2), gamecastSize(7));
   ctx.fillStyle = palette.homerL;
-  ctx.fillRect(x + 2, y + 1, 1, 5);
-  ctx.fillRect(x + 1, y + 3, 3, 1);
-  ctx.fillRect(x + 8, y + 1, 1, 5);
+  ctx.fillRect(x + gamecastSize(2), y + gamecastSize(1), gamecastSize(1), gamecastSize(5));
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(3), gamecastSize(3), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(8), y + gamecastSize(1), gamecastSize(1), gamecastSize(5));
   ctx.fillStyle = palette.runnerL;
   for (let index = 1; index < count; index += 1) {
-    ctx.fillRect(x + 11 + index * 2, y + 5, 1, 1);
+    ctx.fillRect(x + gamecastSize(11 + index * 2), y + gamecastSize(5), gamecastSize(1), gamecastSize(1));
   }
 }
 
@@ -3095,25 +3348,32 @@ function drawPixelSprite(ctx, palette, ox, oy, cells) {
   for (const c of cells) { ctx.fillStyle = c[2]; ctx.fillRect(ox + c[0], oy + c[1], 1, 1); }
 }
 
-// 5x8 outlined running person; runFrame 0/1 = stride, 2 = standing
+// 7x11 outlined chibi player; runFrame 0/1 = stride, 2 = standing
 function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0) {
   const S = palette.skin;
   const L = palette.legs;
-  const ox = Math.round(position.x) - 2;
-  const oy = Math.round(position.y) - 8;
+  const ox = Math.round(position.x) - 3;
+  const oy = Math.round(position.y) - (squash ? 10 : 11);
   const J = palette.base;
   const cells = [
-    [1, 0, color], [2, 0, color], [3, 0, color],
-    [1, 1, S], [2, 1, S], [3, 1, S],
-    [1, 2, J], [2, 2, J], [3, 2, J],
-    [1, 3, J], [2, 3, J], [3, 3, J],
-    [1, 4, J], [2, 4, J], [3, 4, J]
+    [2, 0, color], [3, 0, color], [4, 0, color],
+    [1, 1, color], [2, 1, color], [3, 1, color], [4, 1, color], [5, 1, color],
+    [2, 2, S], [3, 2, S], [4, 2, S],
+    [2, 3, S], [3, 3, S], [4, 3, S],
+    [2, 4, J], [3, 4, J], [4, 4, J],
+    [1, 5, J], [2, 5, J], [3, 5, color], [4, 5, J], [5, 5, J],
+    [2, 6, J], [3, 6, J], [4, 6, J],
+    [2, 7, color], [3, 7, color], [4, 7, color]
   ];
-  if (runFrame === 2) cells.push([1, 5, L], [3, 5, L], [1, 6, L], [3, 6, L], [1, 7, L], [3, 7, L]);
-  else if (runFrame === 1) cells.push([4, 3, S], [0, 2, S], [1, 5, L], [3, 5, L], [1, 6, L], [4, 6, L], [0, 7, L], [4, 7, L]);
-  else cells.push([0, 3, S], [4, 2, S], [1, 5, L], [3, 5, L], [0, 6, L], [3, 6, L], [0, 7, L], [4, 7, L]);
+  if (runFrame === 2) {
+    cells.push([1, 8, L], [2, 8, L], [4, 8, L], [5, 8, L], [1, 9, L], [5, 9, L], [1, 10, L], [5, 10, L]);
+  } else if (runFrame === 1) {
+    cells.push([6, 4, S], [0, 5, S], [1, 8, L], [4, 8, L], [1, 9, L], [5, 9, L], [0, 10, L], [5, 10, L]);
+  } else {
+    cells.push([0, 4, S], [6, 5, S], [2, 8, L], [5, 8, L], [1, 9, L], [5, 9, L], [1, 10, L], [6, 10, L]);
+  }
   ctx.fillStyle = palette.grassEdge;
-  ctx.fillRect(ox + 1, oy + 8, 3, 1);
+  ctx.fillRect(ox + 1, oy + 12, 5, 1);
   drawPixelSprite(ctx, palette, ox, oy, cells);
 }
 
@@ -3121,15 +3381,15 @@ function drawPixelBall(ctx, palette, position, color) {
   const x = Math.round(position.x);
   const y = Math.round(position.y);
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(x - 1, y - 1, 4, 4);
+  ctx.fillRect(x - 1, y - 1, 5, 5);
   ctx.fillStyle = color;
-  ctx.fillRect(x, y, 2, 2);
+  ctx.fillRect(x, y, 3, 3);
 }
 
 function drawTrail(ctx, color, trail) {
   ctx.fillStyle = color;
   for (const point of trail ?? []) {
-    ctx.fillRect(Math.round(point.x), Math.round(point.y), 2, 2);
+    ctx.fillRect(Math.round(point.x), Math.round(point.y), gamecastSize(2), gamecastSize(2));
   }
 }
 

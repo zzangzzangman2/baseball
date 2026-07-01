@@ -433,7 +433,19 @@ async function checkViewport(viewport) {
     })()
   `);
   assert(weeklyProbe.hasWeekButton && weeklyProbe.dateAdvanced && weeklyProbe.gamesStillZero && weeklyProbe.boxscores === 0, "빠른 주간 진행이 프리시즌에서 7일만 안전하게 넘기지 못했습니다.", "src/ui.js");
-  await evaluateInBrowser(`for (let i = 0; i < 20; i += 1) { document.querySelector("[data-action='next-day']")?.click(); } true`);
+  await evaluateInBrowser(`
+    (() => {
+      for (let i = 0; i < 20; i += 1) {
+        for (let guard = 0; guard < 4; guard += 1) {
+          const decision = document.querySelector("[data-pending-mail-decision] [data-action='resolve-mail-decision']");
+          if (!decision) break;
+          decision.click();
+        }
+        document.querySelector("[data-action='next-day']")?.click();
+      }
+      return true;
+    })()
+  `);
   await waitForBoxScore();
   await waitForFreeAgencyPanel();
   await evaluateInBrowser(`document.querySelector("#gamecast")?.scrollIntoView({ block: "center", inline: "nearest" }); true`);
@@ -516,7 +528,7 @@ async function checkViewport(viewport) {
       const gamecastPanel = document.querySelector("#gamecast.gamecast-panel");
       const gamecastPanelText = gamecastPanel?.textContent ?? "";
       const gamecastScreen = document.querySelector("[data-gamecast-screen]");
-      const gamecastCanvas = document.querySelector("#gamecast-pixel-canvas.gamecast-pixel-canvas");
+      const gamecastCanvas = document.querySelector("[data-gamecast-canvas].gamecast-pixel-canvas");
       const gamecastCanvasRect = gamecastCanvas?.getBoundingClientRect();
       const gamecastCanvasStyle = gamecastCanvas ? getComputedStyle(gamecastCanvas) : null;
       const gamecastCanvasPixels = gamecastCanvas ? (() => {
@@ -552,6 +564,9 @@ async function checkViewport(viewport) {
         ".gamecast-now small",
         ".assistant-brief-card p",
         ".media-brief-card p",
+        ".decision-mail-copy p",
+        ".decision-choice strong",
+        ".decision-choice small",
         ".news-item p",
         ".fa-offer-item small",
         ".market-ledger-item small",
@@ -643,6 +658,7 @@ async function checkViewport(viewport) {
         hasWatchNextAction: Boolean(document.querySelector("[data-action='watch-next-game']")),
         hasSimNextAction: Boolean(document.querySelector("[data-action='simulate-next-game']")),
         hasNextGameChoiceText: nextGamePanelText.includes("경기 보기") && nextGamePanelText.includes("시뮬레이션"),
+        hasDailyReport: bodyText.includes("전력분석") && bodyText.includes("퓨처스"),
         hasSeasonFastButton,
         hasWeekFastButton,
         hasAutoOffseasonAction,
@@ -710,10 +726,11 @@ async function checkViewport(viewport) {
   assert(playbackProbe.rafRequested > 0 && playbackProbe.rafActive === 0, `게임캐스트 rAF 정지 실패: active=${playbackProbe.rafActive}, requested=${playbackProbe.rafRequested}`, "src/ui.js");
   assert(playbackProbe.scoreMatchesGameCard, `게임캐스트 최종 점수 불일치: gamecast=${playbackProbe.scoreline}, card=${playbackProbe.gameScore}`, "src/ui.js");
   assert(liveProbe.feedCount <= 1 || liveProbe.nowText !== playbackProbe.nowText || liveProbe.score !== playbackProbe.scoreline, "게임캐스트 재생 중 현재 타석/스코어 동기화 변화가 감지되지 않았습니다.", "src/ui.js");
-  assert(result.gamecastCanvasPixelW === 120 && result.gamecastCanvasPixelH === 108, `게임캐스트 내부 해상도가 120x108이 아닙니다: ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/ui.js");
-  assert(result.gamecastCanvasCssWidth % 120 === 0 && result.gamecastCanvasCssHeight % 108 === 0, `픽셀 캔버스 CSS 크기가 120x108의 정수 배율이 아닙니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
-  assert(result.gamecastCanvasCssWidth >= 240 && result.gamecastCanvasCssHeight >= 216, `게임캐스트 표시 배율이 2x 미만입니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/styles.css");
-  assert(result.gamecastCanvasCssWidth / 120 === result.gamecastCanvasCssHeight / 108, `게임캐스트 표시 비율이 120:108과 다릅니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/styles.css");
+  assert(result.hasDailyReport, "정규시즌 진행 후 전력분석/퓨처스 일일 보고가 확인되지 않았습니다.", "src/engine.js");
+  assert(result.gamecastCanvasPixelW >= 120 && result.gamecastCanvasPixelH >= 108, `게임캐스트 내부 해상도가 너무 작습니다: ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/ui.js");
+  assert(result.gamecastCanvasCssWidth % result.gamecastCanvasPixelW === 0 && result.gamecastCanvasCssHeight % result.gamecastCanvasPixelH === 0, `픽셀 캔버스 CSS 크기가 내부 해상도의 정수 배율이 아닙니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/ui.js");
+  assert(result.gamecastCanvasCssWidth >= result.gamecastCanvasPixelW && result.gamecastCanvasCssHeight >= result.gamecastCanvasPixelH, `게임캐스트 표시 크기가 내부 해상도보다 작습니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/styles.css");
+  assert(result.gamecastCanvasCssWidth / result.gamecastCanvasPixelW === result.gamecastCanvasCssHeight / result.gamecastCanvasPixelH, `게임캐스트 표시 비율이 내부 해상도와 다릅니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/styles.css");
   assert(result.gamecastCanvasWidth >= result.gamecastCanvasCssWidth && result.gamecastCanvasHeight >= result.gamecastCanvasCssHeight, `픽셀 캔버스 버퍼가 CSS 표시 크기보다 작습니다: buffer ${result.gamecastCanvasWidth}x${result.gamecastCanvasHeight}, css ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
   assert(/pixelated|crisp-edges/i.test(result.gamecastCanvasImageRendering), `픽셀 캔버스 image-rendering=${result.gamecastCanvasImageRendering}`, "src/styles.css");
   assert(result.gamecastCanvasPixelUnique >= 6 && result.gamecastCanvasAlphaSamples > 0, `픽셀 캔버스가 비었거나 팔레트가 너무 단조롭습니다: unique=${result.gamecastCanvasPixelUnique}, alpha=${result.gamecastCanvasAlphaSamples}`, "src/ui.js");

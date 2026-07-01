@@ -12,6 +12,10 @@ const OPENING_DAY = "2026-03-28";
 const OPENING_DAY_MONTH_DAY = "03-28";
 const PRESEASON_MEDIA_OUTLETS = ["SBS 스포츠", "KBS 스포츠", "MBC 스포츠", "JTBC 스포츠", "MBN 스포츠", "SPOTV"];
 const MAIL_DECISION_LIMIT = 24;
+const KBO_OPTION_LOCK_DAYS = 10;
+const KBO_FOREIGN_REGISTERED_LIMIT = 3;
+const KBO_FOREIGN_APPEARANCE_LIMIT = 2;
+const FOREIGN_FAMILY_SUPPORT_KRW = 50_000_000;
 const POSTSEASON_RULE_SOURCE = "KBO 운영제도 v1: 와일드카드 4위 1승 어드밴티지, 준PO/PO 5전 3선승, 한국시리즈 7전 4선승";
 const DRAFT_RULE_SOURCE = "KBO 신인 드래프트 v1: 전면 드래프트 11라운드, 최대 110명 지명";
 const DRAFT_POOL_SIZE = 150;
@@ -437,6 +441,7 @@ export function simulateDay(state) {
 export function simulateDays(state, days) {
   const count = Math.max(0, Math.floor(safeNumber(days)));
   for (let i = 0; i < count; i += 1) {
+    if (state?.pendingMailDecision?.status === "open" && state.pendingMailDecision.blocking) break;
     simulateDay(state);
   }
   return state;
@@ -459,6 +464,8 @@ export function resolveMailDecision(state, action = "acknowledge") {
   let result;
   if (decision.type === "medical-roster") {
     result = resolveMedicalRosterDecision(state, decision, action);
+  } else if (decision.type === "foreign-lineup") {
+    result = resolveForeignLineupDecision(state, decision, action);
   } else if (decision.type === "foreign-adaptation") {
     result = resolveForeignAdaptationDecision(state, decision, action);
   } else if (decision.type === "trade-offer") {
@@ -5344,6 +5351,10 @@ function normalizeState(state) {
   state.lastGames = Array.isArray(state.lastGames) ? state.lastGames : [];
   state.eventLog = Array.isArray(state.eventLog) ? state.eventLog : [];
   state.logs = Array.isArray(state.logs) ? state.logs : [];
+  state.mailDecisions = Array.isArray(state.mailDecisions) ? state.mailDecisions : [];
+  state.pendingMailDecision = state.pendingMailDecision && typeof state.pendingMailDecision === "object"
+    ? state.pendingMailDecision
+    : null;
   state.teams = Array.isArray(state.teams) ? state.teams : [];
   state.trades = state.trades && typeof state.trades === "object" ? state.trades : { completed: [] };
   state.trades.completed = Array.isArray(state.trades.completed) ? state.trades.completed : [];
@@ -5363,6 +5374,11 @@ function normalizeState(state) {
     team.attendanceTotal = safeNumber(team.attendanceTotal);
     team.homeGames = safeNumber(team.homeGames);
     team.roster = Array.isArray(team.roster) ? team.roster : [];
+    for (const player of team.roster) {
+      if (player.rosterLock && typeof player.rosterLock !== "object") {
+        player.rosterLock = null;
+      }
+    }
   }
 }
 
@@ -5415,12 +5431,15 @@ function collectNewInjuries(state, snapshot = new Map()) {
 
 function addDailyMorningRoutine(state, context = {}) {
   const reportDate = context.reportDate ?? state.currentDate;
+  const morningDate = addDaysKey(reportDate, 1);
   const results = Array.isArray(context.results) ? context.results : [];
   const team = findTeamById(state, state.selectedTeamId) ?? state.teams?.[0] ?? null;
   const focusGame = context.focusGame ?? findGameForTeam(results, team?.id) ?? results[0] ?? null;
   const newInjuries = Array.isArray(context.newInjuries) ? context.newInjuries : [];
   const selectedInjuries = newInjuries.filter((entry) => String(entry.teamId) === String(team?.id));
   const totalRuns = sum(results, "totalRuns");
+  const futuresReport = buildFuturesDailyReport(state, team, reportDate);
+  const weeklyPower = summarizeWeeklyPower(results, focusGame, team);
   const gameText = focusGame
     ? `${focusGame.away} ${focusGame.awayScore}-${focusGame.homeScore} ${focusGame.home}`
     : `${results.length}경기`;
@@ -5431,80 +5450,632 @@ function addDailyMorningRoutine(state, context = {}) {
       : "신규 부상 보고 없음";
 
   addLog(state, {
-    date: reportDate,
-    type: "media",
-    tag: "KBO 데일리",
-    source: "KBO 데일리",
-    headline: `${reportDate} 리그 데일리 리캡`,
-    text: `${results.length}경기에서 총 ${totalRuns}득점이 나왔습니다. 포커스 게임은 ${gameText}입니다.`
+    date: morningDate,
+    type: "daily-report",
+    tag: "전력분석",
+    source: "전력분석팀",
+    headline: `[전력분석] ${formatKoreanMonthDay(reportDate)} 경기 결과 및 주간 전력 분석 보고`,
+    text: `1군 포커스: ${gameText}. 리그 ${results.length}경기 총 ${totalRuns}득점, ${weeklyPower}. 퓨처스리그: ${futuresReport.scoreText}. 2군 감독 보고: ${futuresReport.note}`
   });
 
   addLog(state, {
-    date: reportDate,
+    date: morningDate,
+    type: "media",
+    tag: selectMediaOutlet(reportDate, team?.id ?? "kbo"),
+    source: selectMediaOutlet(reportDate, team?.id ?? "kbo"),
+    headline: `${team?.shortName ?? "KBO"} 벤치 선택에 시선 집중`,
+    text: `${gameText} 이후 ${PRESEASON_MEDIA_OUTLETS.join(", ")} 데스크가 라인업 피로도와 콜업 후보를 주요 이슈로 다뤘습니다.`
+  });
+
+  addLog(state, {
+    date: morningDate,
     type: "assistant",
     tag: "개인비서",
     source: "개인비서",
     headline: `${team?.shortName ?? "우리 팀"} 경기 후 아침 보고`,
-    text: `${gameText}. ${injuryText}. 라인업/피로도와 다음 경기 선발 컨디션을 확인하십시오.`
+    text: `${gameText}. ${injuryText}. 오늘 확인할 항목은 엔트리 재등록 가능일, 외국인 출전 제한, 불펜 과부하, 시장 알림입니다.`
   });
 
-  if (selectedInjuries.length && state.pendingMailDecision?.status !== "open") {
-    const injury = selectedInjuries[0];
-    state.pendingMailDecision = {
-      id: `medical-${reportDate}-${injury.playerId}`,
-      date: reportDate,
-      status: "open",
-      type: "medical-roster",
-      teamId: injury.teamId,
-      teamName: injury.teamName,
-      playerId: injury.playerId,
-      playerName: injury.name,
-      injuredDays: injury.injuredDays,
-      headline: `${injury.name} 부상 대응 필요`,
-      body: `${injury.teamShortName} ${injury.name}이 ${injury.injuredDays}일 이탈 예정입니다. 휴식, 대체 콜업, 강행 중 하나를 결정해야 합니다.`
-    };
-  }
+  if (selectedInjuries.length) addMedicalReportLog(state, team, selectedInjuries[0], morningDate);
+  addRosterReentryNotices(state, team, morningDate);
+  addForeignLineupWarningLog(state, team, morningDate);
+  addBullpenOverloadLog(state, team, morningDate);
+  addForeignAdaptationLog(state, team, morningDate);
+  addDailyMarketBreakLog(state, team, morningDate);
 }
 
 function resolveMedicalRosterDecision(state, decision, action) {
   const entry = findPlayerEntry(state, decision.playerId, decision.teamId) ?? findPlayerEntry(state, decision.playerId);
   const player = entry?.player ?? null;
   const team = entry?.team ?? findTeamById(state, decision.teamId);
+  const callupEntry = findPlayerEntry(state, decision.callupCandidateId, decision.teamId) ??
+    (team ? { team, player: selectCallupCandidate(team, player ?? decision, state.currentDate), index: -1 } : null);
+  if (["callup", "auto-replace"].includes(action) && player && team) {
+    const eligibleDate = addDaysKey(state.currentDate, KBO_OPTION_LOCK_DAYS);
+    player.status = "futures";
+    player.rosterLock = {
+      type: "kbo-10day-option",
+      reason: "medical",
+      demotedDate: state.currentDate,
+      eligibleDate,
+      noticeSent: ""
+    };
+    player.fatigue = clamp(safeNumber(player.fatigue) - 8, 0, 100);
+    if (callupEntry?.player && callupEntry.player !== player) {
+      callupEntry.player.status = "active";
+      callupEntry.player.rosterLock = {
+        type: "first-team-registration",
+        reason: "injury-replacement",
+        activatedDate: state.currentDate,
+        replacesPlayerId: player.id ?? decision.playerId
+      };
+      callupEntry.player.morale = clamp(safeNumber(callupEntry.player.morale, 50) + 4, 20, 90);
+    }
+    team.morale = clamp(safeNumber(team.morale, 50) + 1, 20, 85);
+    const replacementText = callupEntry?.player && callupEntry.player !== player
+      ? `대체 선수 ${callupEntry.player.name}을 1군 등록했습니다.`
+      : "대체 등록 후보가 부족해 프런트에 추가 확인을 요청했습니다.";
+    return {
+      ok: true,
+      code: "medical-callup",
+      message: `${player.name}을 1군 엔트리에서 말소했습니다. 재등록 가능일은 ${eligibleDate}입니다. ${replacementText}`
+    };
+  }
   if (action === "rush" && player) {
     player.injuredDays = Math.max(0, safeNumber(player.injuredDays) - 1);
-    player.fatigue = clamp(safeNumber(player.fatigue) + 8, 0, 100);
-    return { ok: true, code: "rushed", message: `${player.name}의 복귀 일정을 하루 앞당겼지만 피로도가 올라갔습니다.` };
-  }
-  if (action === "callup" && team) {
-    team.morale = clamp(safeNumber(team.morale, 50) + 1, 20, 85);
-    return { ok: true, code: "callup-planned", message: `${team.shortName ?? team.name} 대체 엔트리 운용안을 승인했습니다.` };
+    player.fatigue = clamp(safeNumber(player.fatigue) + 12, 0, 100);
+    player.dailyCondition = clamp(safeNumber(player.dailyCondition, player.form) - 8, 20, 95);
+    return { ok: true, code: "rushed", message: `${player.name}의 복귀 일정을 당겼습니다. 단, 피로도와 재부상 위험이 크게 올라갔습니다.` };
   }
   if (player) {
     player.fatigue = clamp(safeNumber(player.fatigue) - 6, 0, 100);
+    player.dailyCondition = clamp(safeNumber(player.dailyCondition, player.form) + 2, 20, 95);
   }
-  return { ok: true, code: "rest", message: `${decision.playerName ?? player?.name ?? "부상 선수"}의 회복 우선 방침을 확정했습니다.` };
+  return { ok: true, code: "medical-monitor", message: `${decision.playerName ?? player?.name ?? "부상 선수"}의 회복 우선 방침을 확정했습니다. 트레이닝 파트가 매일 상태를 재보고합니다.` };
+}
+
+function resolveForeignLineupDecision(state, decision, action) {
+  const benchEntry = findPlayerEntry(state, decision.benchPlayerId, decision.teamId);
+  const starterEntry = findPlayerEntry(state, decision.starterPlayerId, decision.teamId);
+  if (action === "bench-hitter" && benchEntry?.player) {
+    benchEntry.player.gameRestriction = {
+      type: "foreign-appearance-limit",
+      date: state.currentDate,
+      reason: "KBO 2명 출전 제한"
+    };
+    benchEntry.player.dailyCondition = clamp(safeNumber(benchEntry.player.dailyCondition, benchEntry.player.form) - 2, 20, 95);
+    return { ok: true, code: "foreign-hitter-benched", message: `${benchEntry.player.name}을 오늘 외국인 출전 제한 관리 대상으로 표시했습니다.` };
+  }
+  if (action === "rotate-pitcher" && starterEntry?.player) {
+    starterEntry.player.gameRestriction = {
+      type: "foreign-appearance-limit",
+      date: state.currentDate,
+      reason: "외국인 선발 로테이션 조정"
+    };
+    starterEntry.player.armFreshness = clamp(safeNumber(starterEntry.player.armFreshness, 80) + 4, 20, 100);
+    return { ok: true, code: "foreign-starter-held", message: `${starterEntry.player.name}의 외국인 선발 출전안을 보류하고 로테이션 조정을 지시했습니다.` };
+  }
+  return { ok: true, code: "foreign-lineup-ack", message: "외국인 선수 출전 제한 경고를 확인하고 라인업 검토 안건으로 남겼습니다." };
 }
 
 function resolveForeignAdaptationDecision(state, decision, action) {
   const team = findTeamById(state, decision.teamId) ?? findTeamById(state, state.selectedTeamId);
-  if (team) {
-    team.morale = clamp(safeNumber(team.morale, 50) + (action === "extra-support" ? 2 : 1), 20, 85);
+  const entry = findPlayerEntry(state, decision.playerId, decision.teamId);
+  const player = entry?.player ?? null;
+  if (["extra-support", "family-support"].includes(action)) {
+    if (player) {
+      player.morale = clamp(safeNumber(player.morale, 50) + 10, 20, 95);
+      player.dailyCondition = clamp(safeNumber(player.dailyCondition, player.form) + 8, 25, 98);
+      player.form = clamp(safeNumber(player.form, 50) + 3, 35, 80);
+    }
+    if (team) {
+      team.morale = clamp(safeNumber(team.morale, 50) + 2, 20, 85);
+      team.payroll = roundNumber(safeNumber(team.payroll) + FOREIGN_FAMILY_SUPPORT_KRW / 100_000_000, 1);
+    }
+    return { ok: true, code: "foreign-family-support", message: `${decision.playerName ?? player?.name ?? "외국인 선수"} 가족 초청과 통역 지원 비용 ${formatMoneyForLog(FOREIGN_FAMILY_SUPPORT_KRW)}을 승인했습니다.` };
   }
-  return { ok: true, code: "foreign-adaptation", message: "외국인 선수 적응 지원안을 프런트와 공유했습니다." };
+  if (action === "demote" && player) {
+    player.status = "futures";
+    player.morale = clamp(safeNumber(player.morale, 50) - 12, 10, 90);
+    if (team) team.morale = clamp(safeNumber(team.morale, 50) - 1, 20, 85);
+    return { ok: true, code: "foreign-demoted", message: `${player.name}을 2군 조정으로 보냈습니다. 단, 멘탈과 선수단 분위기가 내려갔습니다.` };
+  }
+  if (player) {
+    player.morale = clamp(safeNumber(player.morale, 50) + 2, 20, 95);
+  }
+  if (team) team.morale = clamp(safeNumber(team.morale, 50) + 1, 20, 85);
+  return { ok: true, code: "foreign-adaptation-monitor", message: "외국인 선수 적응 상태를 통역 파트 주간 면담으로 관리합니다." };
 }
 
 function resolveTradeOfferDecision(state, decision, action) {
   if (action === "reject") {
     return { ok: true, code: "trade-rejected", message: "트레이드 제안을 보류하고 기존 자산 가치를 유지했습니다." };
   }
+  if (action === "counter") {
+    return { ok: true, code: "trade-countered", message: `현금 보상 ${formatMoneyForLog(safeNumber(decision.cashKRW))}을 낮추는 역제안을 보냈습니다.` };
+  }
+  if (action === "accept") {
+    const result = completeBreakTrade(state, decision);
+    if (result.ok) return result;
+  }
   return { ok: true, code: "trade-reviewed", message: "트레이드 제안을 스카우트/재정팀 검토 안건으로 넘겼습니다." };
 }
 
 function resolveWaiverClaimDecision(state, decision, action) {
   if (action === "claim") {
-    return { ok: true, code: "waiver-claim", message: "웨이버 클레임 우선순위 등록을 요청했습니다." };
+    const result = completeWaiverClaim(state, decision);
+    if (result.ok) return result;
+    return { ok: true, code: "waiver-claim-requested", message: "웨이버 클레임 우선순위 등록을 요청했습니다." };
   }
   return { ok: true, code: "waiver-pass", message: "웨이버 후보를 패스하고 현재 로스터를 유지했습니다." };
+}
+
+function buildFuturesDailyReport(state, team, dateKey) {
+  const player = selectFuturesReportPlayer(team, dateKey);
+  const runsFor = deterministicRange(dateKey, team?.id ?? "kbo", "futures-rf", 1, 9);
+  const runsAgainst = deterministicRange(dateKey, team?.id ?? "kbo", "futures-ra", 0, 8);
+  const scoreText = `${team?.shortName ?? "우리"} 퓨처스 ${runsFor}-${runsAgainst} 상대 퓨처스`;
+  if (!player) {
+    return {
+      scoreText,
+      note: "퓨처스 등록 선수 표본이 부족합니다. 육성군 원장을 보강해야 합니다."
+    };
+  }
+  const hot = deterministicRange(dateKey, player.id ?? player.name, "futures-hot", 0, 4) === 0;
+  const statLine = player.role === "pitcher"
+    ? `${deterministicRange(dateKey, player.id, "ip", 2, 6)}이닝 ${deterministicRange(dateKey, player.id, "k", 2, 8)}탈삼진`
+    : `${deterministicRange(dateKey, player.id, "hit", 1, 4)}안타 ${hot ? "1홈런" : "멀티출루"}`;
+  const note = hot
+    ? `${player.name} 선수가 퓨처스에서 4경기 연속 장타 흐름을 보입니다. 1군 콜업을 강하게 추천합니다.`
+    : `${player.name} 선수는 ${statLine}로 컨디션을 끌어올렸습니다. 다음 원정 전 한 번 더 확인하십시오.`;
+  return { scoreText, note, player };
+}
+
+function summarizeWeeklyPower(results, focusGame, team) {
+  const closeGames = (results ?? []).filter((game) => Math.abs(safeNumber(game.awayScore) - safeNumber(game.homeScore)) <= 1).length;
+  const homeRuns = sum(results ?? [], "awayHomeRuns") + sum(results ?? [], "homeHomeRuns");
+  const teamResult = focusGame && team
+    ? String(focusGame.homeTeamId) === String(team.id)
+      ? safeNumber(focusGame.homeScore) - safeNumber(focusGame.awayScore)
+      : safeNumber(focusGame.awayScore) - safeNumber(focusGame.homeScore)
+    : 0;
+  const trend = teamResult > 0 ? "승부처 기대득점이 개선" : teamResult < 0 ? "후반 대타/불펜 선택 재점검 필요" : "연장·동점 운영 변수 확대";
+  return `1점차 ${closeGames}경기, 홈런 ${homeRuns}개, ${trend}`;
+}
+
+function addMedicalReportLog(state, team, injury, morningDate) {
+  const candidate = selectCallupCandidate(team, injury, morningDate);
+  const hospital = selectMedicalHospital(injury, morningDate);
+  addLog(state, {
+    date: morningDate,
+    type: "medical",
+    tag: "트레이닝 파트",
+    source: "트레이닝 파트",
+    headline: `[트레이닝 파트] ${injury.name} 선수 정밀 검진 결과 보고`,
+    text: `${hospital} 검진 결과, ${injury.position ?? injury.role ?? "주전"} ${injury.name} 선수는 ${injuryLabel(injury.injuredDays)} 판정입니다. 1군 엔트리 말소(10일 통보)가 필요하며, 대체 후보는 ${candidate?.name ?? "추가 확인 필요"}입니다.`
+  });
+  if (hasOpenMailDecision(state)) return;
+  state.pendingMailDecision = buildPendingDecision({
+    id: `medical-${morningDate}-${injury.playerId}`,
+    date: morningDate,
+    type: "medical-roster",
+    blocking: true,
+    severity: "danger",
+    teamId: injury.teamId,
+    teamName: injury.teamName,
+    playerId: injury.playerId,
+    playerName: injury.name,
+    injuredDays: injury.injuredDays,
+    callupCandidateId: candidate?.id ?? "",
+    headline: `${injury.name} 부상 엔트리 조치 필요`,
+    body: `${injury.teamShortName} ${injury.name}이 ${injury.injuredDays}일 이탈 예정입니다. KBO 1군 말소 시 ${KBO_OPTION_LOCK_DAYS}일 재등록 제한이 걸립니다. 오늘 경기 전 대체 콜업 또는 강행 여부를 결정하십시오.`,
+    options: [
+      { action: "callup", label: "말소+콜업", note: `${candidate?.name ?? "퓨처스 후보"} 등록` },
+      { action: "monitor", label: "하루 관찰", note: "트레이닝 파트 집중 관리" },
+      { action: "rush", label: "강행", note: "재부상 위험 증가" }
+    ]
+  });
+}
+
+function addRosterReentryNotices(state, team, dateKey) {
+  if (!team) return;
+  for (const player of team.roster ?? []) {
+    const lock = player.rosterLock;
+    if (!lock || lock.type !== "kbo-10day-option") continue;
+    if (player.status === "active" || String(lock.noticeSent ?? "") === dateKey) continue;
+    if (String(lock.eligibleDate ?? "") > dateKey) continue;
+    lock.noticeSent = dateKey;
+    addLog(state, {
+      date: dateKey,
+      type: "operations",
+      tag: "운영팀",
+      source: "운영팀",
+      headline: `[운영팀] ${player.name} 선수 1군 재등록 가능일 안내`,
+      text: `부상 치료차 말소되었던 ${player.name} 선수의 ${KBO_OPTION_LOCK_DAYS}일 페널티가 오늘 해제됐습니다. 1군 등록 여부를 라인업 회의에서 결정하십시오.`
+    });
+  }
+}
+
+function addForeignLineupWarningLog(state, team, dateKey) {
+  if (!team) return;
+  const registered = (team.roster ?? []).filter((player) =>
+    player.foreignPlayer?.isForeign &&
+    !["released", "unavailable"].includes(String(player.foreignPlayer?.registrationStatus ?? "registered"))
+  );
+  const activeRegistered = registered.filter((player) => player.status === "active");
+  if (activeRegistered.length > KBO_FOREIGN_REGISTERED_LIMIT) {
+    addLog(state, {
+      date: dateKey,
+      type: "operations",
+      tag: "운영팀",
+      source: "운영팀",
+      headline: "[운영팀] 외국인 선수 등록 인원 초과 점검",
+      text: `현재 1군 외국인 등록 후보가 ${activeRegistered.length}명입니다. KBO 기준 ${KBO_FOREIGN_REGISTERED_LIMIT}명 등록 틀에 맞춰 권리/말소 상태를 정리하십시오.`
+    });
+  }
+
+  const lineup = buildLineup(team);
+  const pitching = buildPitchingSnapshot(team);
+  const starter = findPlayerById(team, pitching.nextStarter?.id);
+  const foreignHitters = lineup.filter((player) => player.foreignPlayer?.isForeign);
+  const appearanceCount = foreignHitters.length + (starter?.foreignPlayer?.isForeign ? 1 : 0);
+  if (appearanceCount <= KBO_FOREIGN_APPEARANCE_LIMIT) return;
+
+  const benchPlayer = foreignHitters.at(-1) ?? null;
+  addLog(state, {
+    date: dateKey,
+    type: "coaching",
+    tag: "코칭스태프",
+    source: "코칭스태프",
+    headline: "[코칭스태프] 오늘 경기 외국인 선수 선발 라인업 경고",
+    text: `선발 ${starter?.name ?? "확인 필요"}와 외국인 타자 ${foreignHitters.length}명을 동시에 쓰면 경기당 ${KBO_FOREIGN_APPEARANCE_LIMIT}명 출전 제한을 넘습니다. ${benchPlayer?.name ?? "외국인 타자 1명"} 벤치 대기가 필요합니다.`
+  });
+  if (hasOpenMailDecision(state)) return;
+  state.pendingMailDecision = buildPendingDecision({
+    id: `foreign-lineup-${dateKey}-${team.id}`,
+    date: dateKey,
+    type: "foreign-lineup",
+    blocking: false,
+    severity: "warning",
+    teamId: team.id,
+    teamName: team.name,
+    starterPlayerId: starter?.id ?? "",
+    benchPlayerId: benchPlayer?.id ?? "",
+    headline: "외국인 선수 출전 제한 확인",
+    body: `KBO 규정상 경기당 외국인 선수 출전은 최대 ${KBO_FOREIGN_APPEARANCE_LIMIT}명입니다. 자동 라인업이 제한을 넘길 수 있어 경기 전 조정안을 남깁니다.`,
+    options: [
+      { action: "bench-hitter", label: "타자 1명 제외", note: benchPlayer?.name ?? "외국인 타자" },
+      { action: "rotate-pitcher", label: "선발 조정", note: starter?.name ?? "외국인 선발" },
+      { action: "acknowledge", label: "확인", note: "라인업 회의에서 처리" }
+    ]
+  });
+}
+
+function addBullpenOverloadLog(state, team, dateKey) {
+  if (!team) return;
+  const pitching = buildPitchingSnapshot(team);
+  const overloaded = (pitching.bullpen ?? [])
+    .map((entry) => findPlayerById(team, entry.id))
+    .filter(Boolean)
+    .filter((player) => safeNumber(player.fatigue) >= 58 || safeNumber(player.armFreshness, 80) <= 46)
+    .sort((a, b) => (safeNumber(b.fatigue) - safeNumber(b.armFreshness, 80)) - (safeNumber(a.fatigue) - safeNumber(a.armFreshness, 80)))[0];
+  if (!overloaded) return;
+  addLog(state, {
+    date: dateKey,
+    type: "coaching",
+    tag: "수석코치",
+    source: "수석코치",
+    headline: `[수석코치] 불펜 투수진 과부하(혹사) 경고`,
+    text: `${overloaded.name} 투수의 피로도는 ${Math.round(safeNumber(overloaded.fatigue))}%, 팔 컨디션은 ${Math.round(safeNumber(overloaded.armFreshness, 80))}%입니다. 오늘 또 등판시키면 장기 부상 위험이 크게 올라갑니다.`
+  });
+}
+
+function addForeignAdaptationLog(state, team, dateKey) {
+  if (!team) return;
+  const candidates = (team.roster ?? []).filter((player) =>
+    player.foreignPlayer?.isForeign &&
+    player.status === "active" &&
+    safeNumber(player.injuredDays) === 0
+  );
+  const player = candidates
+    .map((candidate) => ({
+      player: candidate,
+      score: (60 - safeNumber(candidate.form, 50)) + (60 - safeNumber(candidate.dailyCondition, candidate.form)) + deterministicRange(dateKey, candidate.id, "adapt", 0, 12)
+    }))
+    .sort((a, b) => b.score - a.score)[0]?.player ?? null;
+  if (!player) return;
+  const shouldReport = safeNumber(player.form, 50) < 46 ||
+    safeNumber(player.dailyCondition, player.form) < 45 ||
+    deterministicRange(dateKey, team.id, player.id, "homesick", 0, 13) === 0;
+  if (!shouldReport) return;
+  addLog(state, {
+    date: dateKey,
+    type: "interpreter",
+    tag: "통역 파트",
+    source: "통역 파트",
+    headline: `[통역 파트] ${player.name} 선수 최근 컨디션 저하 사유 보고`,
+    text: `${player.name} 선수가 한국 생활 적응 및 향수병 스트레스를 호소했습니다. 가족 초청 비용은 ${formatMoneyForLog(FOREIGN_FAMILY_SUPPORT_KRW)}로 추산됩니다.`
+  });
+  if (hasOpenMailDecision(state)) return;
+  state.pendingMailDecision = buildPendingDecision({
+    id: `foreign-adapt-${dateKey}-${player.id}`,
+    date: dateKey,
+    type: "foreign-adaptation",
+    blocking: false,
+    severity: "notice",
+    teamId: team.id,
+    teamName: team.name,
+    playerId: player.id,
+    playerName: player.name,
+    headline: `${player.name} 한국 문화 적응 지원 결정`,
+    body: `통역 파트는 ${player.name}의 멘탈 회복을 위해 가족 초청 또는 주간 면담을 제안했습니다. 비용 처리와 2군 조정 중 선택할 수 있습니다.`,
+    options: [
+      { action: "extra-support", label: "가족 초청", note: `${formatMoneyForLog(FOREIGN_FAMILY_SUPPORT_KRW)} 소모` },
+      { action: "acknowledge", label: "면담 관리", note: "비용 없이 모니터링" },
+      { action: "demote", label: "2군 조정", note: "멘탈 급락 위험" }
+    ]
+  });
+}
+
+function addDailyMarketBreakLog(state, team, dateKey) {
+  if (!team || state.phase !== "regular") return;
+  const roll = deterministicRange(dateKey, team.id, "market-break", 0, 17);
+  if (roll === 4) {
+    addTradeOfferBreakLog(state, team, dateKey);
+  } else if (roll === 11) {
+    addWaiverNoticeBreakLog(state, team, dateKey);
+  }
+}
+
+function addTradeOfferBreakLog(state, team, dateKey) {
+  const offer = buildBreakTradeOffer(state, team, dateKey);
+  if (!offer) return;
+  addLog(state, {
+    date: dateKey,
+    type: "trade-offer",
+    tag: "트레이드",
+    source: offer.sourceTeamName,
+    headline: `[트레이드] ${offer.sourceTeamName} 구단으로부터의 선수 트레이드 제안`,
+    text: `${offer.sourceTeamShortName}에서 취약 포지션 보강 카드 ${offer.incomingPlayerName}을 제시했습니다. 대가로 ${offer.outgoingPlayerName}와 현금 ${formatMoneyForLog(offer.cashKRW)}을 요구합니다.`
+  });
+  if (hasOpenMailDecision(state)) return;
+  state.pendingMailDecision = buildPendingDecision({
+    ...offer,
+    id: `trade-offer-${dateKey}-${offer.sourceTeamId}-${team.id}`,
+    date: dateKey,
+    type: "trade-offer",
+    blocking: false,
+    severity: "notice",
+    headline: `${offer.sourceTeamShortName} 트레이드 제안`,
+    body: `${offer.incomingPlayerName}을 받는 대신 ${offer.outgoingPlayerName}와 현금 ${formatMoneyForLog(offer.cashKRW)}을 내주는 제안입니다. 스카우트팀은 즉시 전력 보강, 재정팀은 현금 부담을 지적했습니다.`,
+    options: [
+      { action: "accept", label: "제안 수락", note: "선수 이동 처리" },
+      { action: "counter", label: "현금 깎기", note: "역제안 발송" },
+      { action: "reject", label: "거절", note: "자산 유지" }
+    ]
+  });
+}
+
+function addWaiverNoticeBreakLog(state, team, dateKey) {
+  const candidate = buildWaiverCandidate(state, team, dateKey);
+  if (!candidate) return;
+  addLog(state, {
+    date: dateKey,
+    type: "waiver",
+    tag: "KBO 사무국",
+    source: "KBO 사무국",
+    headline: "[KBO 사무국] 타 구단 웨이버 공시 선수 명단 통보",
+    text: `${candidate.sourceTeamShortName} ${candidate.playerName} 선수가 웨이버 공시됐습니다. 7일 이내 잔여 연봉 ${formatMoneyForLog(candidate.salaryKRW)} 승계 신청이 가능합니다.`
+  });
+  if (hasOpenMailDecision(state)) return;
+  state.pendingMailDecision = buildPendingDecision({
+    ...candidate,
+    id: `waiver-${dateKey}-${candidate.playerId}`,
+    date: dateKey,
+    type: "waiver-claim",
+    blocking: false,
+    severity: "notice",
+    headline: `${candidate.playerName} 웨이버 클레임 검토`,
+    body: `${candidate.playerName}은 ${candidate.position} 뎁스 보강 카드입니다. 잔여 연봉 ${formatMoneyForLog(candidate.salaryKRW)}을 승계하면 조건 없이 영입할 수 있습니다.`,
+    options: [
+      { action: "claim", label: "클레임 신청", note: "잔여 연봉 승계" },
+      { action: "pass", label: "패스", note: "현 로스터 유지" }
+    ]
+  });
+}
+
+function buildPendingDecision(decision) {
+  return {
+    status: "open",
+    text: decision.body ?? "",
+    ...decision,
+    options: Array.isArray(decision.options) ? decision.options : []
+  };
+}
+
+function completeBreakTrade(state, decision) {
+  const sourceTeam = findTeamById(state, decision.sourceTeamId);
+  const targetTeam = findTeamById(state, decision.teamId) ?? findTeamById(state, state.selectedTeamId);
+  const incomingEntry = findPlayerEntry(state, decision.incomingPlayerId, decision.sourceTeamId);
+  const outgoingEntry = findPlayerEntry(state, decision.outgoingPlayerId, decision.teamId);
+  if (!sourceTeam || !targetTeam || !incomingEntry?.player || !outgoingEntry?.player) {
+    return { ok: false, code: "trade-missing-player", message: "트레이드 대상 선수를 찾지 못했습니다." };
+  }
+  sourceTeam.roster.splice(incomingEntry.index, 1);
+  targetTeam.roster.splice(outgoingEntry.index, 1);
+  transferPlayerToTeam(incomingEntry.player, targetTeam.id);
+  transferPlayerToTeam(outgoingEntry.player, sourceTeam.id);
+  targetTeam.roster.push(incomingEntry.player);
+  sourceTeam.roster.push(outgoingEntry.player);
+  targetTeam.payroll = roundNumber(safeNumber(targetTeam.payroll) + safeNumber(decision.cashKRW) / 100_000_000, 1);
+  const completedTrade = {
+    id: `break-${state.currentDate}-${decision.incomingPlayerId}-${decision.outgoingPlayerId}`,
+    type: "daily-break-offer",
+    status: "complete",
+    date: state.currentDate,
+    buyerTeamId: targetTeam.id,
+    buyerTeamName: targetTeam.name,
+    sellerTeamId: sourceTeam.id,
+    sellerTeamName: sourceTeam.name,
+    incoming: toTradeLedgerPlayer(incomingEntry.player, sourceTeam, targetTeam),
+    outgoing: toTradeLedgerPlayer(outgoingEntry.player, targetTeam, sourceTeam),
+    additionalAssets: [{
+      id: `cash-${state.currentDate}-${targetTeam.id}-${sourceTeam.id}`,
+      assetType: "cash",
+      fromTeamId: targetTeam.id,
+      fromTeamName: targetTeam.name,
+      toTeamId: sourceTeam.id,
+      toTeamName: sourceTeam.name,
+      amountKRW: safeNumber(decision.cashKRW),
+      valueScore: safeNumber(decision.cashKRW) / 100_000_000
+    }],
+    summary: `${targetTeam.shortName ?? targetTeam.name} acquire ${incomingEntry.player.name}; ${sourceTeam.shortName ?? sourceTeam.name} acquire ${outgoingEntry.player.name}`
+  };
+  state.trades.completed = [completedTrade, ...(state.trades.completed ?? [])].slice(0, 60);
+  return { ok: true, code: "trade-accepted", message: `${incomingEntry.player.name} ↔ ${outgoingEntry.player.name} 트레이드를 수락했습니다. 현금 ${formatMoneyForLog(decision.cashKRW)}이 함께 반영됐습니다.` };
+}
+
+function completeWaiverClaim(state, decision) {
+  const targetTeam = findTeamById(state, decision.teamId) ?? findTeamById(state, state.selectedTeamId);
+  const sourceEntry = findPlayerEntry(state, decision.playerId, decision.sourceTeamId);
+  if (!targetTeam || !sourceEntry?.team || !sourceEntry?.player || sourceEntry.team === targetTeam) {
+    return { ok: false, code: "waiver-missing-player", message: "웨이버 대상 선수를 찾지 못했습니다." };
+  }
+  sourceEntry.team.roster.splice(sourceEntry.index, 1);
+  transferPlayerToTeam(sourceEntry.player, targetTeam.id);
+  sourceEntry.player.status = "active";
+  sourceEntry.player.waiverClaimedAt = state.currentDate;
+  targetTeam.roster.push(sourceEntry.player);
+  targetTeam.payroll = roundNumber(safeNumber(targetTeam.payroll) + safeNumber(decision.salaryKRW) / 100_000_000, 1);
+  return { ok: true, code: "waiver-claimed", message: `${sourceEntry.player.name} 웨이버 클레임을 완료했습니다. 잔여 연봉 ${formatMoneyForLog(decision.salaryKRW)}을 승계합니다.` };
+}
+
+function buildBreakTradeOffer(state, team, dateKey) {
+  const otherTeams = (state.teams ?? []).filter((entry) => String(entry.id) !== String(team?.id));
+  const sourceTeam = otherTeams[hashParts(dateKey, team?.id ?? "team", "trade-source") % Math.max(1, otherTeams.length)];
+  if (!sourceTeam) return null;
+  const incoming = [...(sourceTeam.roster ?? [])]
+    .filter((player) => player.status === "active" && safeNumber(player.injuredDays) === 0)
+    .sort((a, b) => tradeCommitPlayerValue(b) - tradeCommitPlayerValue(a))[deterministicRange(dateKey, sourceTeam.id, "incoming-index", 2, 8)] ??
+    sourceTeam.roster?.[0];
+  const outgoing = [...(team.roster ?? [])]
+    .filter((player) => !player.foreignPlayer?.isForeign && safeNumber(player.age, 30) <= 27 && safeNumber(player.injuredDays) === 0)
+    .sort((a, b) => safeNumber(b.pot, b.ovr) - safeNumber(a.pot, a.ovr))[0] ??
+    team.roster?.find((player) => !player.foreignPlayer?.isForeign);
+  if (!incoming || !outgoing) return null;
+  return {
+    teamId: team.id,
+    teamName: team.name,
+    sourceTeamId: sourceTeam.id,
+    sourceTeamName: sourceTeam.name,
+    sourceTeamShortName: sourceTeam.shortName ?? sourceTeam.name,
+    incomingPlayerId: incoming.id,
+    incomingPlayerName: incoming.name,
+    outgoingPlayerId: outgoing.id,
+    outgoingPlayerName: outgoing.name,
+    cashKRW: deterministicRange(dateKey, team.id, sourceTeam.id, "cash", 1, 5) * 100_000_000
+  };
+}
+
+function buildWaiverCandidate(state, team, dateKey) {
+  const otherTeams = (state.teams ?? []).filter((entry) => String(entry.id) !== String(team?.id));
+  const sourceTeam = otherTeams[hashParts(dateKey, team?.id ?? "team", "waiver-source") % Math.max(1, otherTeams.length)];
+  if (!sourceTeam) return null;
+  const candidate = [...(sourceTeam.roster ?? [])]
+    .filter((player) => !player.foreignPlayer?.isForeign && safeNumber(player.age, 30) >= 28 && safeNumber(player.injuredDays) === 0)
+    .sort((a, b) => {
+      const salaryA = safeNumber(a.contract?.salary?.payrollAmountKRW);
+      const salaryB = safeNumber(b.contract?.salary?.payrollAmountKRW);
+      return tradeCommitPlayerValue(b) / Math.max(1, salaryB / 100_000_000) - tradeCommitPlayerValue(a) / Math.max(1, salaryA / 100_000_000);
+    })[0];
+  if (!candidate) return null;
+  return {
+    teamId: team.id,
+    teamName: team.name,
+    sourceTeamId: sourceTeam.id,
+    sourceTeamName: sourceTeam.name,
+    sourceTeamShortName: sourceTeam.shortName ?? sourceTeam.name,
+    playerId: candidate.id,
+    playerName: candidate.name,
+    position: candidate.position ?? (candidate.role === "pitcher" ? "P" : "UTIL"),
+    salaryKRW: safeNumber(candidate.contract?.salary?.payrollAmountKRW, 120_000_000)
+  };
+}
+
+function selectFuturesReportPlayer(team, dateKey) {
+  const roster = team?.roster ?? [];
+  const pool = roster.filter((player) =>
+    player.status !== "active" &&
+    !["released", "retired"].includes(String(player.status ?? "")) &&
+    safeNumber(player.injuredDays) === 0
+  );
+  const fallback = roster.filter((player) => safeNumber(player.age, 30) <= 24 && safeNumber(player.injuredDays) === 0);
+  return [...(pool.length ? pool : fallback)]
+    .sort((a, b) =>
+      (safeNumber(b.pot, b.ovr) + deterministicRange(dateKey, b.id, "futures-report", 0, 12)) -
+      (safeNumber(a.pot, a.ovr) + deterministicRange(dateKey, a.id, "futures-report", 0, 12))
+    )[0] ?? null;
+}
+
+function selectCallupCandidate(team, injuredPlayer, dateKey = "") {
+  const injuredRole = injuredPlayer?.role ?? "";
+  const injuredPosition = injuredPlayer?.position ?? "";
+  return [...(team?.roster ?? [])]
+    .filter((player) =>
+      String(player.id) !== String(injuredPlayer?.id ?? injuredPlayer?.playerId ?? "") &&
+      player.status !== "active" &&
+      !["released", "retired"].includes(String(player.status ?? "")) &&
+      safeNumber(player.injuredDays) === 0 &&
+      !isRosterLocked(player, dateKey)
+    )
+    .map((player) => ({
+      player,
+      score:
+        safeNumber(player.ovr) +
+        safeNumber(player.pot, player.ovr) * 0.2 +
+        (player.role === injuredRole ? 18 : 0) +
+        (player.position === injuredPosition ? 12 : 0) -
+        safeNumber(player.fatigue) * 0.25
+    }))
+    .sort((a, b) => b.score - a.score)[0]?.player ?? null;
+}
+
+function isRosterLocked(player, dateKey = "") {
+  const lock = player?.rosterLock;
+  if (!lock || lock.type !== "kbo-10day-option") return false;
+  const referenceDate = dateKey || lock.demotedDate || "0000-00-00";
+  return String(lock.eligibleDate ?? "") > String(referenceDate);
+}
+
+function selectMedicalHospital(injury, dateKey) {
+  const hospitals = ["세종스포츠정형외과", "잠실스포츠메디컬센터", "광주선수촌정형외과", "부산스포츠재활병원"];
+  return hospitals[hashParts(injury?.playerId ?? injury?.name, dateKey, "hospital") % hospitals.length];
+}
+
+function injuryLabel(days) {
+  const count = safeNumber(days);
+  if (count >= 10) return `우측 발목 인대 염좌로 ${count}일 이탈`;
+  if (count >= 5) return `근육 미세 손상으로 ${count}일 관리`;
+  return `타박 및 컨디션 저하로 ${count}일 관찰`;
+}
+
+function selectMediaOutlet(dateKey, salt) {
+  return PRESEASON_MEDIA_OUTLETS[hashParts(dateKey, salt, "daily-media") % PRESEASON_MEDIA_OUTLETS.length];
+}
+
+function hasOpenMailDecision(state) {
+  return state.pendingMailDecision?.status === "open";
+}
+
+function addDaysKey(dateKey, days) {
+  const date = parseDate(dateKey);
+  date.setUTCDate(date.getUTCDate() + Math.floor(safeNumber(days)));
+  return formatDateKey(date);
+}
+
+function formatKoreanMonthDay(dateKey) {
+  const [, month = "1", day = "1"] = String(dateKey ?? "").match(/^\d{4}-(\d{2})-(\d{2})$/) ?? [];
+  return `${safeNumber(month, 1)}월 ${safeNumber(day, 1)}일`;
 }
 
 function buildDraftScoutingOfficialLog(state) {
