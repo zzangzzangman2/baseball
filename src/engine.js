@@ -1,5 +1,6 @@
 import { REGULAR_SEASON_GAMES, formatDateKey } from "./data.js";
 import { buildTradeMarket } from "./frontOffice.js";
+import { appendFinanceLedger, syncStateFoundation } from "./stateSchema.js";
 
 const KBO_TEAM_COUNT = 10;
 const DAILY_GAME_COUNT = 5;
@@ -966,7 +967,41 @@ export function commitFreeAgentSigning(state, offer = null) {
   if (compensation) {
     market.compensationLedger.unshift(compensation);
     market.compensationLedger = market.compensationLedger.slice(0, MARKET_LEDGER_LIMIT);
+    appendFinanceLedger(state, {
+      id: `finance-${compensation.id}-payable`,
+      date: state.currentDate,
+      category: "fa-compensation",
+      type: "expense",
+      teamId: signingTeam.id,
+      counterpartyTeamId: originalTeam.id,
+      amountKRW: compensation.cashKRW,
+      description: `${player.name} FA 보상금 예정`,
+      sourceEventId: signing.id
+    });
+    appendFinanceLedger(state, {
+      id: `finance-${compensation.id}-receivable`,
+      date: state.currentDate,
+      category: "fa-compensation",
+      type: "income",
+      teamId: originalTeam.id,
+      counterpartyTeamId: signingTeam.id,
+      amountKRW: compensation.cashKRW,
+      description: `${player.name} FA 보상금 수취 예정`,
+      sourceEventId: signing.id
+    });
   }
+
+  appendFinanceLedger(state, {
+    id: `finance-${signing.id}`,
+    date: state.currentDate,
+    category: "fa-contract",
+    type: "commitment",
+    teamId: signingTeam.id,
+    counterpartyTeamId: originalTeam.id,
+    amountKRW: selectedOffer.totalGuaranteeKRW,
+    description: `${player.name} FA ${selectedOffer.years}년 보장 계약`,
+    sourceEventId: signing.id
+  });
 
   appendEvent(state, {
     id: `event-${signing.id}`,
@@ -983,6 +1018,7 @@ export function commitFreeAgentSigning(state, offer = null) {
     summary: `${signingTeam.name} FA ${player.name} ${selectedOffer.years}년 계약`
   });
   addLog(state, `${state.currentDate} FA 계약: ${signingTeam.name} ${player.name} ${selectedOffer.years}년 ${formatMoneyForLog(selectedOffer.totalGuaranteeKRW)}.`);
+  syncStateFoundation(state);
 
   return { ok: true, code: "signed", message: `${player.name} FA 계약을 완료했어요.`, signing, compensation };
 }
@@ -1032,6 +1068,17 @@ export function commitForeignPlayerSigning(state, offer = null) {
   market.foreignSignings.unshift(signing);
   market.foreignSignings = market.foreignSignings.slice(0, MARKET_LEDGER_LIMIT);
 
+  appendFinanceLedger(state, {
+    id: `finance-${signing.id}`,
+    date: state.currentDate,
+    category: "foreign-rights",
+    type: "commitment",
+    teamId: team.id,
+    amountKRW: selectedOffer.contractKRW + safeNumber(selectedOffer.optionKRW),
+    description: `${candidate.displayCode} 외국인 권리 계약`,
+    sourceEventId: signing.id
+  });
+
   appendEvent(state, {
     id: `event-${signing.id}`,
     type: "foreign.signed",
@@ -1043,6 +1090,7 @@ export function commitForeignPlayerSigning(state, offer = null) {
     summary: `${team.name} 외국인 후보 ${candidate.displayCode} 권리 확보`
   });
   addLog(state, `${state.currentDate} 외국인 권리 계약: ${team.name} ${candidate.displayCode} ${formatMoneyForLog(selectedOffer.contractKRW)}.`);
+  syncStateFoundation(state);
 
   return { ok: true, code: "signed", message: `${candidate.displayCode} 외국인 권리 계약을 완료했어요.`, signing };
 }
@@ -2686,6 +2734,7 @@ export function commitTradeProposal(state, proposal) {
   commitSupplementalTradeAssets(state, completedTrade);
   appendEvent(state, buildTradeCompletedEvent(completedTrade));
   addLog(state, `${state.currentDate} 트레이드 완료: ${buyerTeam.name} ${incomingPlayer.name} ↔ ${sellerTeam.name} ${outgoingPlayer.name}.`);
+  syncStateFoundation(state);
 
   return {
     ok: true,
@@ -3608,6 +3657,28 @@ function commitSupplementalTradeAssets(state, trade) {
         toTeamId: asset.toTeamId,
         amountKRW: asset.amountKRW,
         status: "booked"
+      });
+      appendFinanceLedger(state, {
+        id: `finance-${trade.id}-${asset.id}-expense`,
+        date: trade.date,
+        category: "trade-cash",
+        type: "expense",
+        teamId: asset.fromTeamId,
+        counterpartyTeamId: asset.toTeamId,
+        amountKRW: asset.amountKRW,
+        description: `${trade.summary} 현금 지급`,
+        sourceEventId: trade.id
+      });
+      appendFinanceLedger(state, {
+        id: `finance-${trade.id}-${asset.id}-income`,
+        date: trade.date,
+        category: "trade-cash",
+        type: "income",
+        teamId: asset.toTeamId,
+        counterpartyTeamId: asset.fromTeamId,
+        amountKRW: asset.amountKRW,
+        description: `${trade.summary} 현금 수취`,
+        sourceEventId: trade.id
       });
     } else if (asset.assetType === "draftPick") {
       state.tradeAssets.draftPickLedger.unshift({
@@ -5610,6 +5681,8 @@ function normalizeState(state) {
       }
     }
   }
+
+  syncStateFoundation(state);
 }
 
 function advanceDate(state, date) {
@@ -5801,6 +5874,16 @@ function resolveForeignAdaptationDecision(state, decision, action) {
     if (team) {
       team.morale = clamp(safeNumber(team.morale, 50) + 2, 20, 85);
       team.payroll = roundNumber(safeNumber(team.payroll) + FOREIGN_FAMILY_SUPPORT_KRW / 100_000_000, 1);
+      appendFinanceLedger(state, {
+        id: `finance-foreign-family-${state.currentDate}-${decision.playerId ?? "player"}`,
+        date: state.currentDate,
+        category: "foreign-adaptation",
+        type: "expense",
+        teamId: team.id,
+        amountKRW: FOREIGN_FAMILY_SUPPORT_KRW,
+        description: `${decision.playerName ?? player?.name ?? "외국인 선수"} 가족 초청 및 통역 지원`,
+        sourceEventId: decision.id ?? ""
+      });
     }
     return { ok: true, code: "foreign-family-support", message: `${decision.playerName ?? player?.name ?? "외국인 선수"} 가족 초청과 통역 지원 비용 ${formatMoneyForLog(FOREIGN_FAMILY_SUPPORT_KRW)}을 승인했습니다.` };
   }

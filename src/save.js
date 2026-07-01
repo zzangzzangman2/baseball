@@ -1,5 +1,7 @@
+import { GAME_STATE_SCHEMA_VERSION, syncStateFoundation } from "./stateSchema.js";
+
 const SAVE_FORMAT = "kbo-gm-manager-save";
-const SAVE_VERSION = 1;
+const SAVE_VERSION = GAME_STATE_SCHEMA_VERSION;
 const DEFAULT_SAVE_DATE = "2026-03-01";
 
 export function exportGameState(state) {
@@ -62,7 +64,7 @@ export function validateGameState(candidate) {
     }
   }
 
-  return cloned;
+  return syncStateFoundation(cloned);
 }
 
 function readSavePayload(parsed) {
@@ -76,8 +78,8 @@ function readSavePayload(parsed) {
     throw new TypeError(`지원하지 않는 저장 파일 형식입니다: ${String(parsed.format ?? "없음")}`);
   }
 
-  if (parsed.version !== SAVE_VERSION) {
-    throw new TypeError(`지원하지 않는 저장 파일 버전입니다: ${String(parsed.version ?? "없음")}`);
+  if (Number(parsed.version) > SAVE_VERSION) {
+    throw new TypeError(`현재 앱보다 최신 저장 파일입니다: ${String(parsed.version ?? "없음")}`);
   }
 
   if (!Object.hasOwn(parsed, "state")) {

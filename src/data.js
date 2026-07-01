@@ -1,6 +1,7 @@
 import { ROSTER_SOURCE_LABEL, TEAM_ROSTERS } from "./rosters/index.js";
 import { buildPlayerRatings } from "./ratings.js";
 import KBO_STATS_2026 from "./ratings_sources/kboStats2026.js";
+import { syncStateFoundation } from "./stateSchema.js";
 
 export const TEAM_COUNT = 10;
 export const REGULAR_SEASON_GAMES = 720;
@@ -257,7 +258,7 @@ export function createInitialState() {
     roster: createRoster(seed, teamIndex)
   }));
 
-  return {
+  const state = {
     day: 1,
     currentDate: formatDateKey(BASE_DATE),
     selectedTeamId: "lg",
@@ -285,6 +286,8 @@ export function createInitialState() {
     ],
     teams
   };
+
+  return syncStateFoundation(state);
 }
 
 function createRoster(teamSeed, teamIndex) {

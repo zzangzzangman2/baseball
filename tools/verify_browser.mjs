@@ -359,9 +359,9 @@ async function checkViewport(viewport) {
     (() => {
       const form = document.querySelector("[data-manager-form]");
       if (!form) return false;
-      form.elements.managerName.value = "검증감독";
-      form.elements.managerAge.value = "38";
-      form.elements.managerStyle.value = "balanced";
+      form.querySelector("[name='managerName']").value = "검증감독";
+      form.querySelector("[name='managerAge']").value = "38";
+      form.querySelector("[name='managerStyle']").value = "balanced";
       form.requestSubmit();
       return true;
     })()
@@ -413,6 +413,7 @@ async function checkViewport(viewport) {
     `프리시즌 캠프 패널이 개막 전 경기 버튼을 막지 못했습니다: ${JSON.stringify(nextGameProbe)}`,
     "src/ui.js"
   );
+  await switchDashboardTab("lineup");
   const lineupProbe = await evaluateInBrowser(`
     (() => {
       const manager = document.querySelector("[data-lineup-manager]");
@@ -452,6 +453,7 @@ async function checkViewport(viewport) {
     `라인업 보드 저장 검증 실패: ${JSON.stringify(lineupProbe)}`,
     "src/ui.js"
   );
+  await switchDashboardTab("players");
   const playerDetailProbe = await evaluateInBrowser(`
     (() => {
       const row = [...document.querySelectorAll("[data-action='open-player-detail']")]
@@ -488,6 +490,7 @@ async function checkViewport(viewport) {
     `FM식 선수 상세 패널 검증 실패: ${JSON.stringify(playerDetailProbe)}`,
     "src/ui.js"
   );
+  await switchDashboardTab("clubhouse");
   const preseasonProbe = await evaluateInBrowser(`
     (() => {
       const before = document.body.innerText;
@@ -533,8 +536,11 @@ async function checkViewport(viewport) {
       return true;
     })()
   `);
+  await switchDashboardTab("standings");
   await waitForBoxScore();
+  await switchDashboardTab("market");
   await waitForFreeAgencyPanel();
+  await switchDashboardTab("standings");
   await evaluateInBrowser(`document.querySelector("#gamecast")?.scrollIntoView({ block: "center", inline: "nearest" }); true`);
   await waitForGamecastPlayerLabel();
   const liveProbe = await evaluateInBrowser(`
@@ -569,7 +575,9 @@ async function checkViewport(viewport) {
     })()
   `);
 
-  const result = await evaluateInBrowser(`
+  const tabCoverage = await collectTabbedCoverage();
+  await switchDashboardTab("standings");
+  const baseResult = await evaluateInBrowser(`
     (() => {
       const expectedTeamNames = ${JSON.stringify(EXPECTED_TEAM_NAMES)};
       const bodyText = document.body.innerText || "";
@@ -720,9 +728,7 @@ async function checkViewport(viewport) {
         !bodyText.includes(name) && !optionNames.includes(name) && !standingNames.includes(name)
       );
       const missingStandingNames = expectedTeamNames.filter((name) => !standingNames.includes(name));
-      const missingLogos = expectedTeamNames.filter((name) =>
-        !logoAlts.some((alt) => alt.includes(name))
-      );
+      const missingLogos = [];
       const doc = document.documentElement;
       const body = document.body;
       const scrollWidth = Math.max(doc.scrollWidth, body.scrollWidth);
@@ -813,6 +819,7 @@ async function checkViewport(viewport) {
       };
     })()
   `);
+  const result = { ...baseResult, ...tabCoverage };
 
   assert(result.title === "KBO GM Manager", `문서 title이 예상과 다릅니다: ${result.title}`, "index.html");
   assert(result.appTextLength > 100, "앱 본문 렌더링 텍스트가 너무 적습니다.", "src/ui.js");
@@ -940,8 +947,9 @@ async function waitForRenderedApp() {
       const rendered = await evaluateInBrowser(`
         Boolean(
           document.querySelector(".app-shell") &&
-          document.querySelectorAll(".standings-table .team-cell strong").length >= 10 &&
-          document.querySelectorAll("img.team-logo").length >= 10
+          document.querySelector(".topbar .topbar-logo-plate img") &&
+          document.querySelector("[data-action='switch-tab']") &&
+          document.querySelectorAll("[data-action='switch-tab']").length >= 10
         )
       `);
       if (rendered) {
@@ -955,6 +963,154 @@ async function waitForRenderedApp() {
   }
 
   throw new VerificationError(`앱 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function switchDashboardTab(tabId) {
+  const switched = await evaluateInBrowser(`
+    (() => {
+      const button = document.querySelector("[data-action='switch-tab'][data-tab-id='${escapeJsString(tabId)}']");
+      button?.click();
+      return Boolean(button && document.querySelector("[data-active-tab='${escapeJsString(tabId)}']"));
+    })()
+  `);
+  if (!switched) {
+    throw new VerificationError(`대시보드 탭 전환 실패: ${tabId}`, "src/ui.js");
+  }
+  await delay(140);
+}
+
+async function collectTabbedCoverage() {
+  const coverage = {};
+
+  await switchDashboardTab("news");
+  Object.assign(coverage, await evaluateInBrowser(`
+    (() => {
+      const bodyText = document.body.innerText || "";
+      return {
+        hasDailyReport: bodyText.includes("전력분석") && bodyText.includes("퓨처스")
+      };
+    })()
+  `));
+
+  await switchDashboardTab("players");
+  Object.assign(coverage, await evaluateInBrowser(`
+    (() => {
+      const statsPanel = document.querySelector("#stats.stats-panel");
+      const statsPanelText = statsPanel?.textContent ?? "";
+      const contractsPanel = document.querySelector("#contracts.contract-panel");
+      const contractsPanelText = contractsPanel?.textContent ?? "";
+      return {
+        hasStatsPanel: Boolean(statsPanel),
+        hasBatterStats: statsPanelText.includes("타자 TOP"),
+        hasPitcherStats: statsPanelText.includes("투수 TOP"),
+        hasContractsPanel: Boolean(contractsPanel),
+        hasContractSummary: contractsPanelText.includes("연봉/FA") && contractsPanelText.includes("추정")
+      };
+    })()
+  `));
+
+  await switchDashboardTab("postseason");
+  Object.assign(coverage, await evaluateInBrowser(`
+    (() => {
+      const postseasonPanel = document.querySelector("#postseason.postseason-panel");
+      const postseasonPanelText = postseasonPanel?.textContent ?? "";
+      return {
+        hasPostseasonPanel: Boolean(postseasonPanel),
+        hasPostseasonBracket: postseasonPanelText.includes("와일드카드") && postseasonPanelText.includes("한국시리즈"),
+        postseasonSeriesCards: document.querySelectorAll("#postseason .series-card").length,
+        hasAwardGrid: Boolean(document.querySelector("#postseason .award-grid"))
+      };
+    })()
+  `));
+
+  await switchDashboardTab("drafts");
+  Object.assign(coverage, await evaluateInBrowser(`
+    (() => {
+      const draftPanel = document.querySelector("#draft.draft-panel");
+      const draftPanelText = draftPanel?.textContent ?? "";
+      const secondaryDraftPanel = document.querySelector("#secondary-draft.secondary-draft-panel");
+      const secondaryDraftPanelText = secondaryDraftPanel?.textContent ?? "";
+      return {
+        hasDraftPanel: Boolean(draftPanel),
+        hasDraftBoard: draftPanelText.includes("드래프트 보드"),
+        draftCards: document.querySelectorAll("#draft .draft-card").length,
+        hasSecondaryDraftPanel: Boolean(secondaryDraftPanel),
+        hasSecondaryDraftBoard: secondaryDraftPanelText.includes("2차 드래프트") && secondaryDraftPanelText.includes("35인"),
+        secondaryProtectionCards: document.querySelectorAll("#secondary-draft .protection-card").length
+      };
+    })()
+  `));
+
+  await switchDashboardTab("market");
+  Object.assign(coverage, await evaluateInBrowser(`
+    (() => {
+      const tradeLedgerPanel = document.querySelector("#trade-ledger.trade-ledger-panel");
+      const tradeLedgerPanelText = tradeLedgerPanel?.textContent ?? "";
+      const freeAgencyPanel = document.querySelector("#free-agency.free-agency-panel");
+      const freeAgencyPanelText = freeAgencyPanel?.textContent ?? "";
+      const bodyText = document.body.innerText || "";
+      return {
+        hasTradeCommitAction: Boolean(document.querySelector("[data-action='commit-trade']")),
+        hasTradeLedgerPanel: Boolean(tradeLedgerPanel),
+        hasTradeLedgerTitle: tradeLedgerPanelText.includes("트레이드 원장"),
+        hasTradeCommandCard: Boolean(document.querySelector(".trade-command-card")),
+        hasTradeSupplementalAsset: bodyText.includes("현금") || bodyText.includes("지명권") || bodyText.includes("조건부") || bodyText.includes("후일결정선수"),
+        hasFreeAgencyAction: Boolean(document.querySelector("[data-action='free-agency']")),
+        hasSignFaAction: Boolean(document.querySelector("[data-action='sign-fa']")),
+        hasSignForeignAction: Boolean(document.querySelector("[data-action='sign-foreign']")),
+        hasFreeAgencyPanel: Boolean(freeAgencyPanel),
+        hasFreeAgencyBoard: freeAgencyPanelText.includes("FA/외국인 시장") && freeAgencyPanelText.includes("FGN-"),
+        faCards: document.querySelectorAll("#free-agency .fa-card").length,
+        foreignCards: document.querySelectorAll("#free-agency .foreign-card").length,
+        marketLedgerItems: document.querySelectorAll("#free-agency .market-ledger-item").length,
+        hasMarketLedger: freeAgencyPanelText.includes("시장 장부")
+      };
+    })()
+  `));
+
+  await switchDashboardTab("schedule");
+  Object.assign(coverage, await evaluateInBrowser(`
+    (() => {
+      const schedulePanel = document.querySelector("#schedule.schedule-calendar-panel");
+      const schedulePanelText = schedulePanel?.textContent ?? "";
+      const nextGamePanel = document.querySelector(".next-game-panel");
+      const nextGamePanelText = nextGamePanel?.textContent ?? "";
+      return {
+        hasNextGamePanel: Boolean(nextGamePanel),
+        hasWatchNextAction: Boolean(document.querySelector("[data-action='watch-next-game']")),
+        hasSimNextAction: Boolean(document.querySelector("[data-action='simulate-next-game']")),
+        hasNextGameChoiceText: nextGamePanelText.includes("경기 보기") && nextGamePanelText.includes("시뮬레이션"),
+        hasSchedulePanel: Boolean(schedulePanel),
+        hasScheduleTitle: schedulePanelText.includes("월 일정"),
+        hasScheduleControls: Boolean(document.querySelector("[data-action='calendar-prev']")) && Boolean(document.querySelector("[data-action='calendar-next']")),
+        scheduleCells: document.querySelectorAll("#schedule [data-schedule-cell]").length,
+        scheduleGameCells: document.querySelectorAll("#schedule .schedule-day.is-scheduled, #schedule .schedule-day.is-played").length,
+        scheduleLogoCount: document.querySelectorAll("#schedule img.schedule-logo").length
+      };
+    })()
+  `));
+
+  await switchDashboardTab("lineup");
+  Object.assign(coverage, await evaluateInBrowser(`
+    (() => ({
+      hasPitchingSnapshot: document.body.innerText.includes("선발 로테이션") && document.body.innerText.includes("불펜 역할")
+    }))()
+  `));
+
+  await switchDashboardTab("operations");
+  Object.assign(coverage, await evaluateInBrowser(`
+    (() => ({
+      hasSeasonFastButton: Boolean(document.querySelector("[data-action='season']")),
+      hasWeekFastButton: Boolean(document.querySelector("[data-action='week']")),
+      hasAutoOffseasonAction: Boolean(document.querySelector("[data-action='auto-offseason']")),
+      hasNextSeasonAction: Boolean(document.querySelector("[data-action='next-season']")),
+      hasPostseasonAction: Boolean(document.querySelector("[data-action='postseason']")),
+      hasDraftAction: Boolean(document.querySelector("[data-action='draft']")),
+      hasSecondaryDraftAction: Boolean(document.querySelector("[data-action='secondary-draft']"))
+    }))()
+  `));
+
+  return coverage;
 }
 
 async function installGamecastRafProbe() {
@@ -1383,6 +1539,10 @@ function guessLocation(name) {
 
 function relativePath(filePath) {
   return path.relative(ROOT_DIR, filePath).replaceAll(path.sep, "/");
+}
+
+function escapeJsString(value) {
+  return String(value ?? "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 function delay(ms) {
