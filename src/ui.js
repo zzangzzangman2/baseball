@@ -3567,7 +3567,9 @@ function normalizeGamecastEvent(event, state) {
   const sequence = Number(event?.sequence ?? 0);
   const inning = Number(event?.inning ?? 1);
   const offenseTeam = normalizeGameTeam(event?.offenseTeamId, state);
+  const defenseTeam = normalizeGameTeam(event?.defenseTeamId, state);
   const teamColor = normalizeHexColor(getTeamColor(offenseTeam), side === "home" ? "#c64b74" : "#315288");
+  const defenseColor = normalizeHexColor(getTeamColor(defenseTeam), side === "home" ? "#315288" : "#c64b74");
 
   return {
     id: `${event?.gameId ?? "game"}-${side}-${inning}-${sequence}-${event?.outcome ?? "idle"}`,
@@ -3576,8 +3578,16 @@ function normalizeGamecastEvent(event, state) {
     side,
     sequence,
     offenseTeamId: event?.offenseTeamId ?? "",
+    defenseTeamId: event?.defenseTeamId ?? "",
     offenseLabel: eventTeamLabel(event, state),
     hitterName: String(event?.hitterName ?? "타자"),
+    pitcherName: String(event?.pitcherName ?? "투수"),
+    defenderName: String(event?.defenderName ?? ""),
+    battedBallType: String(event?.battedBallType ?? ""),
+    fieldingPosition: String(event?.fieldingPosition ?? ""),
+    doublePlay: Boolean(event?.doublePlay),
+    reachedOnError: Boolean(event?.reachedOnError),
+    ballparkName: String(event?.ballparkName ?? ""),
     runs,
     rbi: Number(event?.rbi ?? 0),
     outsBefore,
@@ -3590,6 +3600,9 @@ function normalizeGamecastEvent(event, state) {
     teamColor,
     teamJerseyColor: side === "home" ? "#fffefb" : "#d9d3ca",
     teamJerseyShadow: side === "home" ? "#e8ded0" : "#c9bcab",
+    defenseColor,
+    defenseJerseyColor: side === "home" ? "#d9d3ca" : "#fffefb",
+    defenseJerseyShadow: side === "home" ? "#c9bcab" : "#e8ded0",
     teamTrailColor: mixHexColors(teamColor, "#fffefb", 0.42)
   };
 }
@@ -3619,7 +3632,22 @@ function gamecastNowTitle(event) {
 
 function gamecastNowDetail(event) {
   const runs = Number(event?.runs ?? 0);
-  return `${event?.hitterName || "타자"} ${outcomeLabel(event?.outcome)}${runs > 0 ? ` · ${formatNumber(runs)}득점` : ""}`;
+  const parts = [`${event?.hitterName || "타자"} ${outcomeLabel(event?.outcome)}`];
+  const batted = battedBallTypeLabel(event?.battedBallType);
+  const fielder = event?.defenderName ? `${event.defenderName}${event.fieldingPosition ? `(${event.fieldingPosition})` : ""}` : "";
+  if (batted) parts.push(batted);
+  if (fielder && ["out", "error"].includes(event?.outcome)) parts.push(fielder);
+  if (event?.doublePlay) parts.push("병살");
+  if (runs > 0) parts.push(`${formatNumber(runs)}득점`);
+  return parts.join(" · ");
+}
+
+function battedBallTypeLabel(type) {
+  if (type === "groundBall") return "땅볼";
+  if (type === "lineDrive") return "라이너";
+  if (type === "flyBall") return "뜬공";
+  if (type === "popUp") return "팝플라이";
+  return "";
 }
 
 function gamecastOutcomeClass(outcome) {
@@ -3982,6 +4010,7 @@ function drawGamecastFrame(ctx, state, frame) {
   drawPixelSideIcon(ctx, palette, frame);
   drawPixelAction(ctx, palette, frame);
   if (frame.scoreFlash) drawPixelScoreBurst(ctx, palette, frame);
+  drawPixelBroadcastBug(ctx, palette, frame);
 }
 
 function buildGamecastFieldCache(palette) {
@@ -4225,6 +4254,87 @@ function drawPixelSideIcon(ctx, palette, frame) {
   ctx.fillRect(x + 2, y + 4, 3, 2);
 }
 
+function drawPixelBroadcastBug(ctx, palette, frame) {
+  const x = gamecastX(3);
+  const y = gamecastY(91);
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x, y, gamecastSize(31), gamecastSize(14));
+  ctx.fillStyle = "#12211b";
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), gamecastSize(29), gamecastSize(12));
+
+  drawPixelScoreDigits(ctx, palette, x + gamecastSize(3), y + gamecastSize(3), Number(frame.score?.away ?? 0), palette.base);
+  ctx.fillStyle = palette.baseSh;
+  ctx.fillRect(x + gamecastSize(11), y + gamecastSize(6), gamecastSize(2), gamecastSize(1));
+  drawPixelScoreDigits(ctx, palette, x + gamecastSize(15), y + gamecastSize(3), Number(frame.score?.home ?? 0), palette.base);
+
+  const sideY = y + gamecastSize(3);
+  ctx.fillStyle = frame.side === "home" ? palette.homerL : palette.defenderL;
+  ctx.fillRect(x + gamecastSize(24), sideY, gamecastSize(3), gamecastSize(2));
+  ctx.fillStyle = palette.baseSh;
+  ctx.fillRect(x + gamecastSize(24), sideY + gamecastSize(4), gamecastSize(1 + Math.min(3, Number(frame.outs ?? 0)) * 2), gamecastSize(1));
+
+  const bases = [frame.bases?.[0], frame.bases?.[1], frame.bases?.[2]];
+  const bx = x + gamecastSize(25);
+  const by = y + gamecastSize(10);
+  [[1, 0], [0, -1], [-1, 0]].forEach(([dx, dy], index) => {
+    ctx.fillStyle = bases[index] ? palette.spark : palette.stand;
+    ctx.fillRect(bx + gamecastSize(dx * 2), by + gamecastSize(dy * 2), gamecastSize(2), gamecastSize(2));
+  });
+
+  if (frame.event?.doublePlay) drawMiniPixelLetters(ctx, palette, "DP", x + gamecastSize(2), y + gamecastSize(10), palette.spark);
+  else if (frame.event?.fieldingPosition) drawMiniPixelLetters(ctx, palette, frame.event.fieldingPosition.slice(0, 2), x + gamecastSize(2), y + gamecastSize(10), palette.defenderL);
+}
+
+function drawPixelScoreDigits(ctx, palette, x, y, value, color) {
+  const text = String(Math.max(0, Math.min(99, Math.floor(Number(value) || 0)))).padStart(2, "0");
+  for (let index = 0; index < text.length; index += 1) {
+    drawMiniPixelDigit(ctx, palette, text[index], x + gamecastSize(index * 4), y, color);
+  }
+}
+
+function drawMiniPixelDigit(ctx, palette, digit, x, y, color) {
+  const map = {
+    "0": ["111", "101", "101", "101", "111"],
+    "1": ["010", "110", "010", "010", "111"],
+    "2": ["111", "001", "111", "100", "111"],
+    "3": ["111", "001", "111", "001", "111"],
+    "4": ["101", "101", "111", "001", "001"],
+    "5": ["111", "100", "111", "001", "111"],
+    "6": ["111", "100", "111", "101", "111"],
+    "7": ["111", "001", "010", "010", "010"],
+    "8": ["111", "101", "111", "101", "111"],
+    "9": ["111", "101", "111", "001", "111"]
+  }[digit] ?? ["000", "000", "000", "000", "000"];
+  ctx.fillStyle = color;
+  map.forEach((row, rowIndex) => {
+    [...row].forEach((cell, colIndex) => {
+      if (cell === "1") ctx.fillRect(x + gamecastSize(colIndex), y + gamecastSize(rowIndex), gamecastSize(1), gamecastSize(1));
+    });
+  });
+}
+
+function drawMiniPixelLetters(ctx, palette, text, x, y, color) {
+  const letters = {
+    P: ["110", "101", "110", "100", "100"],
+    C: ["111", "100", "100", "100", "111"],
+    B: ["110", "101", "110", "101", "110"],
+    S: ["111", "100", "111", "001", "111"],
+    L: ["100", "100", "100", "100", "111"],
+    R: ["110", "101", "110", "101", "101"],
+    F: ["111", "100", "110", "100", "100"],
+    D: ["110", "101", "101", "101", "110"]
+  };
+  ctx.fillStyle = color;
+  String(text ?? "").toUpperCase().slice(0, 2).split("").forEach((letter, letterIndex) => {
+    const map = letters[letter] ?? letters.F;
+    map.forEach((row, rowIndex) => {
+      [...row].forEach((cell, colIndex) => {
+        if (cell === "1") ctx.fillRect(x + gamecastSize(letterIndex * 4 + colIndex), y + gamecastSize(rowIndex), gamecastSize(1), gamecastSize(1));
+      });
+    });
+  });
+}
+
 function drawPixelAction(ctx, palette, frame) {
   if (frame.flash) {
     ctx.fillStyle = palette.base;
@@ -4321,16 +4431,54 @@ function drawPixelContactBurst(ctx, palette, burst) {
 }
 
 function drawPixelFielders(ctx, palette, frame) {
+  const positions = gamecastDefensiveAlignment();
+  const activePosition = normalizeFieldingPosition(frame.event?.fieldingPosition);
+  const defenderColor = frame.defenseColor ?? (frame.side === "home" ? palette.defender : "#575160");
+  const jerseyColor = frame.defenseJerseyColor ?? palette.defenderL;
+  const activeProgress = Number(frame.progress ?? 0);
+
+  for (const fielder of positions) {
+    const isActive = activePosition && fielder.key === activePosition && activeProgress >= 0.28 && activeProgress <= 0.82;
+    if (isActive) continue;
+    const pose = fielder.key === "C" ? "catcher" : activePosition === fielder.key && activeProgress > 0.82 ? "catch" : "field";
+    drawPixelRunner(ctx, palette, fielder.position, false, defenderColor, fielder.frame, {
+      jerseyColor,
+      pose,
+      fieldingKey: fielder.key
+    });
+  }
+}
+
+function gamecastDefensiveAlignment() {
   const bases = gamecastBasePositions();
-  const defenderColor = frame.side === "home" ? palette.defender : "#575160";
-  drawPixelRunner(ctx, palette, { x: bases.mound.x, y: bases.mound.y + gamecastSize(2) }, false, defenderColor, 2, {
-    jerseyColor: palette.uniformSh,
-    pose: "field"
-  });
-  drawPixelRunner(ctx, palette, { x: bases.home.x - gamecastSize(8), y: bases.home.y + gamecastSize(4) }, false, "#575160", 2, {
-    jerseyColor: palette.defenderL,
-    pose: "catcher"
-  });
+  return [
+    { key: "LF", position: { x: gamecastX(30), y: gamecastY(44) }, frame: 1 },
+    { key: "CF", position: { x: gamecastX(60), y: gamecastY(34) }, frame: 2 },
+    { key: "RF", position: { x: gamecastX(90), y: gamecastY(44) }, frame: 0 },
+    { key: "SS", position: { x: gamecastX(46), y: gamecastY(64) }, frame: 1 },
+    { key: "2B", position: { x: gamecastX(74), y: gamecastY(64) }, frame: 0 },
+    { key: "3B", position: { x: gamecastX(29), y: gamecastY(76) }, frame: 2 },
+    { key: "1B", position: { x: gamecastX(91), y: gamecastY(76) }, frame: 2 },
+    { key: "P", position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(2) }, frame: 2 },
+    { key: "C", position: { x: bases.home.x - gamecastSize(8), y: bases.home.y + gamecastSize(4) }, frame: 2 }
+  ];
+}
+
+function normalizeFieldingPosition(position) {
+  const raw = String(position ?? "").trim().toUpperCase();
+  if (!raw) return "";
+  if (["P", "투수"].includes(raw)) return "P";
+  if (["C", "포수"].includes(raw)) return "C";
+  if (["1B", "1루수"].includes(raw)) return "1B";
+  if (["2B", "2루수"].includes(raw)) return "2B";
+  if (["3B", "3루수"].includes(raw)) return "3B";
+  if (["SS", "유격수"].includes(raw)) return "SS";
+  if (["LF", "좌익수"].includes(raw)) return "LF";
+  if (["CF", "중견수"].includes(raw)) return "CF";
+  if (["RF", "우익수"].includes(raw)) return "RF";
+  if (["IF", "내야수"].includes(raw)) return "SS";
+  if (["OF", "외야수"].includes(raw)) return "CF";
+  return raw;
 }
 
 function gamecastBasePositions() {
@@ -4357,6 +4505,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
       runners: [],
       offenseColor: state.palette.runner,
       offenseJerseyColor: state.palette.uniform,
+      defenseColor: state.palette.defender,
+      defenseJerseyColor: state.palette.defenderL,
       defenseSprites: [],
       throwLines: [],
       ballShadow: null,
@@ -4380,6 +4530,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
       runners: [],
       offenseColor: last.teamColor ?? state.palette.runner,
       offenseJerseyColor: last.teamJerseyColor ?? state.palette.uniform,
+      defenseColor: last.defenseColor ?? state.palette.defender,
+      defenseJerseyColor: last.defenseJerseyColor ?? state.palette.defenderL,
       defenseSprites: [],
       throwLines: [],
       ballShadow: null,
@@ -4424,6 +4576,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
     flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
     offenseColor: event.teamColor ?? state.palette.runner,
     offenseJerseyColor: event.teamJerseyColor ?? state.palette.uniform,
+    defenseColor: event.defenseColor ?? state.palette.defender,
+    defenseJerseyColor: event.defenseJerseyColor ?? state.palette.defenderL,
     progress
   };
 }
@@ -4705,8 +4859,8 @@ function buildGamecastDefenseSprites(event, progress, palette) {
 
   const sprites = [{
     position,
-    color: palette.defender,
-    jerseyColor: palette.defenderL,
+    color: event.defenseColor ?? palette.defender,
+    jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
     runFrame: Math.floor(t * 8) % 2,
     squash: t > 0.88,
     pose: impactPose
@@ -4715,8 +4869,8 @@ function buildGamecastDefenseSprites(event, progress, palette) {
   if (event.outcome === "homeRun" && progress > 0.64) {
     sprites.push({
       position: { x: Math.round(target.x), y: Math.round(target.y + gamecastSize(7)) },
-      color: palette.defenderSh,
-      jerseyColor: palette.defenderL,
+      color: event.defenseColor ?? palette.defenderSh,
+      jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
       runFrame: 2,
       squash: false,
       pose: "lookUp"
@@ -4773,7 +4927,7 @@ function battedBallPoint(event, t) {
   const start = { x: bases.home.x + gamecastSize(2), y: bases.home.y - gamecastSize(7) };
   const target = battedBallTarget(event);
   const eased = easeOutCubic(t);
-  const lift = battedBallLift(event.outcome) * Math.sin(t * Math.PI);
+  const lift = battedBallLift(event) * Math.sin(t * Math.PI);
   return {
     x: Math.round(lerp(start.x, target.x, eased)),
     y: Math.round(lerp(start.y, target.y, eased) - lift)
@@ -4797,6 +4951,15 @@ function battedBallTarget(event) {
   const yJitter = gamecastEventNoise(event, 3) * 5;
   const clampX = (value) => gamecastX(Math.max(10, Math.min(110, value)));
   const clampY = (value) => gamecastY(Math.max(18, Math.min(88, value)));
+  const fieldingSpot = gamecastFieldingSpot(event);
+  if (fieldingSpot) {
+    const battedType = String(event?.battedBallType ?? "");
+    const liftY = battedType === "flyBall" ? -6 : battedType === "groundBall" ? 5 : 0;
+    return {
+      x: clampX(fieldingSpot.x + xJitter * 0.35),
+      y: clampY(fieldingSpot.y + liftY + yJitter * 0.35)
+    };
+  }
   if (event?.outcome === "homeRun") return { x: clampX((pullSide > 0 ? 102 : 18) + xJitter), y: clampY(22 + yJitter * 0.5) };
   if (event?.outcome === "triple") return { x: clampX((pullSide > 0 ? 104 : 16) + xJitter), y: clampY(35 + yJitter) };
   if (event?.outcome === "double") return { x: clampX((pullSide > 0 ? 94 : 26) + xJitter), y: clampY(43 + yJitter) };
@@ -4805,7 +4968,12 @@ function battedBallTarget(event) {
   return { x: clampX((pullSide > 0 ? 82 : 38) + xJitter), y: clampY(48 + yJitter) };
 }
 
-function battedBallLift(outcome) {
+function battedBallLift(event) {
+  const outcome = event?.outcome;
+  const battedType = String(event?.battedBallType ?? "");
+  if (battedType === "groundBall") return gamecastSize(outcome === "single" || outcome === "error" ? 3 : 5);
+  if (battedType === "lineDrive") return gamecastSize(outcome === "homeRun" ? 18 : 10);
+  if (battedType === "flyBall") return gamecastSize(outcome === "homeRun" ? 27 : 22);
   if (outcome === "homeRun") return gamecastSize(24);
   if (outcome === "triple" || outcome === "double") return gamecastSize(16);
   if (outcome === "out") return gamecastSize(20);
@@ -4814,6 +4982,9 @@ function battedBallLift(outcome) {
 }
 
 function gamecastDefenderStartForTarget(target, event) {
+  const key = normalizeFieldingPosition(event?.fieldingPosition);
+  const alignment = gamecastDefensiveAlignment().find((fielder) => fielder.key === key);
+  if (alignment) return { ...alignment.position };
   const leftSide = target.x < gamecastX(60);
   const deep = target.y < gamecastY(52);
   const infield = target.y > gamecastY(68);
@@ -4823,6 +4994,22 @@ function gamecastDefenderStartForTarget(target, event) {
     x: leftSide ? gamecastX(deep ? 31 : 40) : gamecastX(deep ? 89 : 80),
     y: gamecastY(deep ? 42 : 55)
   };
+}
+
+function gamecastFieldingSpot(event) {
+  const key = normalizeFieldingPosition(event?.fieldingPosition);
+  const spots = {
+    P: { x: 60, y: 74 },
+    C: { x: 58, y: 92 },
+    "1B": { x: 87, y: 73 },
+    "2B": { x: 73, y: 62 },
+    "3B": { x: 31, y: 74 },
+    SS: { x: 46, y: 62 },
+    LF: { x: 30, y: 42 },
+    CF: { x: 60, y: 34 },
+    RF: { x: 91, y: 42 }
+  };
+  return spots[key] ?? null;
 }
 
 function gamecastEventNoise(event, salt = 0) {
