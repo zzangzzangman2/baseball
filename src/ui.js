@@ -182,10 +182,15 @@ function render(root, state) {
 
       <section class="dashboard">
         <header class="topbar" id="clubhouse">
-          <div class="headline">
-            <span class="eyebrow">프런트 데스크</span>
-            <h1>${escapeHtml(getTeamName(selectedTeam) ?? "KBO GM Manager")}</h1>
-            <p>${formatNumber(state.day)}일차 · ${formatNumber(state.gamesPlayed)} / 720경기 · ${escapeHtml(renderPhase(state.phase))}</p>
+          <div class="topbar-team">
+            <div class="team-logo-plate topbar-logo-plate" aria-hidden="true">
+              ${renderTeamLogo(selectedTeam, "team-logo topbar-logo")}
+            </div>
+            <div class="headline">
+              <span class="eyebrow">프런트 데스크</span>
+              <h1>${escapeHtml(getTeamName(selectedTeam) ?? "KBO GM Manager")}</h1>
+              <p>${formatNumber(state.day)}일차 · ${formatNumber(state.gamesPlayed)} / 720경기 · ${escapeHtml(renderPhase(state.phase))}</p>
+            </div>
           </div>
           <div class="topbar-controls topbar-identity">
             <label class="team-picker">
@@ -203,17 +208,6 @@ function render(root, state) {
           </div>
         </header>
 
-        <section class="hero-card">
-          <div>
-            <span class="mini-label">우리 구단</span>
-            <h2>${escapeHtml(getTeamName(selectedTeam) ?? "구단을 기다리는 중")}</h2>
-            <p>${escapeHtml(selectedTeam?.home ?? getTeamLocation(selectedTeam))} · ${escapeHtml(manager.name)} 감독 체제</p>
-          </div>
-          <div class="team-logo-plate" aria-hidden="true">
-            ${renderTeamLogo(selectedTeam, "team-logo hero-logo")}
-          </div>
-        </section>
-
         <section class="metric-grid" aria-label="Selected team metrics">
           ${renderMetricCard("성적", renderRecord(selectedTeam), `승률 ${formatPct(winningPct(selectedTeam))}`)}
           ${renderMetricCard("순위", selectedRank ? `${selectedRank}위` : "-", `${formatNumber(state.teams.length)}개 구단`)}
@@ -224,6 +218,7 @@ function render(root, state) {
 
         ${renderNextGamePanel(state, selectedTeam, nextGame)}
         ${renderManagerBriefingPanel(state, selectedTeam, manager)}
+        ${renderPreseasonDeskPanel(state, selectedTeam, manager)}
         ${renderOperationsBar()}
         ${renderFrontOfficePanels(frontOffice)}
         ${renderCommandCenterPanels(gmDesk)}
@@ -377,6 +372,67 @@ function renderManagerBriefingPanel(state, selectedTeam, manager) {
   `;
 }
 
+function renderPreseasonDeskPanel(state, selectedTeam, manager) {
+  if (state.phase !== "preseason") return "";
+
+  const logs = (state.logs ?? []).map((log) => normalizeLogItem(log, state));
+  const assistant =
+    logs.find((item) => item.type === "assistant") ??
+    buildFallbackAssistantBriefing(state, selectedTeam, manager);
+  const mediaItems = logs.filter((item) => item.type === "media").slice(0, 2);
+  const mediaCards = mediaItems.length
+    ? mediaItems
+    : [buildFallbackMediaBriefing(state, selectedTeam)];
+
+  return `
+    <section class="preseason-desk-panel" data-preseason-desk aria-label="프리시즌 뉴스와 비서 보고">
+      <article class="assistant-brief-card" data-news-type="assistant">
+        <span>${escapeHtml(assistant.tag)}</span>
+        <h2>${escapeHtml(assistant.headline)}</h2>
+        <p>${escapeHtml(assistant.body || assistant.text)}</p>
+        <small>${escapeHtml(assistant.date ?? state.currentDate ?? "")}</small>
+      </article>
+      <div class="media-brief-list" aria-label="언론 기사">
+        ${mediaCards.map(renderPreseasonMediaCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderPreseasonMediaCard(item) {
+  return `
+    <article class="media-brief-card" data-news-type="media">
+      <span>${escapeHtml(item.source ?? item.tag ?? "KBO 뉴스")}</span>
+      <strong>${escapeHtml(item.headline)}</strong>
+      <p>${escapeHtml(item.body || item.text)}</p>
+      <small>${escapeHtml(item.date ?? "")}</small>
+    </article>
+  `;
+}
+
+function buildFallbackAssistantBriefing(state, selectedTeam, manager) {
+  const teamName = getTeamShortName(selectedTeam) ?? "우리 팀";
+  return {
+    type: "assistant",
+    tag: "개인비서",
+    headline: "프리시즌 첫 보고",
+    body: `${manager.name} 감독님, ${teamName} 캠프 첫날입니다. 로스터 컨디션, 언론 반응, 개막 엔트리 이슈를 매일 정리해 올리겠습니다.`,
+    date: state.currentDate ?? ""
+  };
+}
+
+function buildFallbackMediaBriefing(state, selectedTeam) {
+  const teamName = getTeamShortName(selectedTeam) ?? "KBO 구단";
+  return {
+    type: "media",
+    tag: "뉴스룸",
+    source: "SBS · KBS · MBC · JTBC · MBN · SPOTV",
+    headline: `${teamName} 프리시즌 캠프 주목`,
+    body: "취임 첫날 분위기와 개막 전력 구상이 주요 방송사 스포츠 뉴스의 관심사로 떠올랐습니다.",
+    date: state.currentDate ?? ""
+  };
+}
+
 function renderOnboarding(root, state, screen) {
   const teams = state.teams ?? [];
   const selectedTeam = getSelectedTeam(state);
@@ -388,7 +444,7 @@ function renderOnboarding(root, state, screen) {
   ].filter(Boolean).join(" ");
   root.innerHTML = `
     <main class="start-shell">
-      <section class="start-hero ${screenClass}">
+      <section class="start-hero ${screenClass}" style="--team-color: ${escapeAttribute(getTeamColor(selectedTeam))}">
         <div class="start-copy">
           <div class="start-kicker">
             <span class="mini-label">KBO GM Manager</span>
@@ -516,21 +572,41 @@ function renderManagerSetupStage(state, selectedTeam) {
 
 function renderAppointmentStage(state, selectedTeam) {
   const manager = getManagerProfile(state);
+  const teamShortName = getTeamShortName(selectedTeam) ?? "KBO";
+  const teamName = getTeamName(selectedTeam) ?? "선택 구단";
+  const ballpark = selectedTeam?.home ?? getTeamLocation(selectedTeam) ?? "프리시즌 캠프";
 
   return `
     <div class="appointment-stage">
       <div class="appointment-card">
-        <div class="panel-head">
-          <div>
-            <span class="mini-label">취임식</span>
-            <h2>${escapeHtml(manager.name)} 감독 첫 인터뷰</h2>
+        <div class="appointment-card-backdrop" aria-hidden="true"></div>
+        <div class="appointment-card-head">
+          <div class="appointment-club-lockup">
+            ${renderTeamLogo(selectedTeam, "team-logo appointment-logo")}
+            <span>
+              <small>${escapeHtml(teamShortName)} Front Office</small>
+              <strong>${escapeHtml(teamName)}</strong>
+            </span>
           </div>
-          ${renderTeamLogo(selectedTeam, "team-logo appointment-logo")}
+          <div class="appointment-press-badge">
+            <span>LIVE</span>
+            <b>취임 기자회견</b>
+          </div>
+        </div>
+        <div class="appointment-title-block">
+          <span class="mini-label">Manager Appointment</span>
+          <h2>${escapeHtml(manager.name)} 감독 첫 인터뷰</h2>
+          <p>${escapeHtml(ballpark)} · ${formatNumber(manager.age)}세 · ${escapeHtml(managerStyleLabel(manager.style))}</p>
+        </div>
+        <div class="appointment-media-strip" aria-label="기자회견 정보">
+          <span><b>01</b><small>시즌 목표</small></span>
+          <span><b>02</b><small>선수단 메시지</small></span>
+          <span><b>03</b><small>프런트 원칙</small></span>
         </div>
         <form class="interview-form" data-appointment-form>
           ${INAUGURAL_QUESTIONS.map((question) => renderInterviewQuestion(question, manager)).join("")}
           <p class="onboarding-status" data-onboarding-status aria-live="polite"></p>
-          <div class="start-actions">
+          <div class="start-actions appointment-actions">
             <button class="button button-soft" data-action="back-to-manager-setup" type="button">프로필 수정</button>
             <button class="button button-primary" type="submit">클럽하우스로 입장</button>
           </div>
@@ -544,7 +620,9 @@ function renderInterviewQuestion(question, manager) {
   const savedAnswer = (manager.interviewAnswers ?? []).find((answer) => answer.id === question.id)?.value;
   return `
     <fieldset class="interview-question">
-      <legend>${escapeHtml(question.question)}</legend>
+      <legend>
+        <span>${escapeHtml(question.question)}</span>
+      </legend>
       <div class="interview-options">
         ${question.options.map((option, index) => `
           <label>
@@ -3279,15 +3357,41 @@ function renderLogs(state) {
   }
 
   return logs.slice(0, 8).map((log) => {
-    const item = typeof log === "string" ? { text: log } : log;
-    return `
-      <div class="news-item">
-        <span>${escapeHtml(item.tag ?? "note")}</span>
-        <strong>${escapeHtml(item.text ?? item.message ?? "새 소식")}</strong>
-        <small>${escapeHtml(item.date ?? state.currentDate ?? "")}</small>
-      </div>
-    `;
+    const item = normalizeLogItem(log, state);
+    return renderLogItem(item);
   }).join("");
+}
+
+function renderLogItem(item) {
+  const type = logTypeClass(item.type);
+  return `
+    <div class="news-item ${type ? `is-${escapeAttribute(type)}` : ""}" data-news-type="${escapeAttribute(item.type)}">
+      ${item.type === "kbo-official" ? `<i class="kbo-document-mark" aria-hidden="true">KBO</i>` : ""}
+      <span>${escapeHtml(item.source ?? item.tag ?? "note")}</span>
+      <strong>${escapeHtml(item.headline ?? item.text ?? "새 소식")}</strong>
+      ${item.body ? `<p>${escapeHtml(item.body)}</p>` : ""}
+      <small>${escapeHtml(item.date ?? "")}</small>
+    </div>
+  `;
+}
+
+function normalizeLogItem(log, state) {
+  const item = typeof log === "string" ? { text: log } : (log ?? {});
+  const headline = item.headline ?? item.title ?? item.text ?? item.message ?? "새 소식";
+  const body = item.headline || item.title ? (item.text ?? item.message ?? item.body ?? "") : (item.body ?? "");
+  return {
+    ...item,
+    type: item.type ?? "note",
+    tag: item.tag ?? item.source ?? "note",
+    headline,
+    body,
+    text: item.text ?? item.message ?? headline,
+    date: item.date ?? state.currentDate ?? ""
+  };
+}
+
+function logTypeClass(value) {
+  return String(value ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
 }
 
 function renderEmptyTableRow(message, colspan) {

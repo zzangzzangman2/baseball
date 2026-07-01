@@ -639,6 +639,28 @@ img {
     var(--panel);
 }
 
+.topbar-team {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+}
+
+.topbar-logo-plate {
+  width: clamp(76px, 8vw, 104px);
+  padding: 10px;
+}
+
+.topbar-logo {
+  --logo-size: clamp(58px, 6vw, 78px);
+  position: relative;
+  z-index: 1;
+  width: min(100%, var(--logo-size));
+  height: min(100%, var(--logo-size));
+  filter: drop-shadow(0 7px 10px rgba(72, 62, 54, 0.14));
+}
+
 .headline {
   min-width: 0;
 }
@@ -706,6 +728,78 @@ img {
   line-height: 1.3;
   overflow-wrap: anywhere;
   text-align: right;
+}
+
+.preseason-desk-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.assistant-brief-card,
+.media-brief-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.96);
+  box-shadow: var(--shadow-soft);
+}
+
+.assistant-brief-card {
+  border-left: 4px solid color-mix(in srgb, var(--team-color, var(--leaf)), #ffffff 18%);
+}
+
+.assistant-brief-card span,
+.media-brief-card span {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8f9f6;
+  color: color-mix(in srgb, var(--team-color, #2f343a), #3f464c 48%);
+  font-size: 0.72rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.assistant-brief-card h2 {
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.assistant-brief-card p,
+.media-brief-card p,
+.news-item p {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+}
+
+.assistant-brief-card small,
+.media-brief-card small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.media-brief-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.media-brief-card strong {
+  min-width: 0;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
 }
 
 .button {
@@ -2141,6 +2235,7 @@ img {
   min-width: 0;
   padding: 12px;
   border: 1px solid #eee5dd;
+  border-left: 3px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 26%);
   border-radius: 8px;
   background: linear-gradient(120deg, #fffaf4, #f2fbf6 58%, #f3f8ff);
 }
@@ -2162,6 +2257,61 @@ img {
 .news-item small {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.news-item.is-kbo-official {
+  position: relative;
+  border-left-color: #2f343a;
+  padding-top: 38px;
+  background: #fffefa;
+}
+
+.kbo-document-mark {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 42px;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid #cfcac0;
+  border-radius: 4px;
+  background: #f6f5ef;
+  color: #2f343a;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.news-item.is-kbo-official span {
+  border: 1px solid #d9d6ce;
+  background: #f5f5ef;
+  color: #2f343a;
+}
+
+.news-item.is-front-office,
+.news-item.is-compliance {
+  border-left-color: color-mix(in srgb, var(--team-color, #2f343a), #222 12%);
+  background: #fffefa;
+}
+
+.news-item.is-futures,
+.news-item.is-development {
+  border-left-color: #5f7568;
+  background: #fbfcf8;
+}
+
+.news-item.is-community {
+  border-left-color: #8a7468;
+  background: #fffdf8;
+}
+
+.news-item.is-ops,
+.news-item.is-assistant {
+  border-left-color: #607080;
+  background: #fbfcf8;
 }
 
 .empty-card,
@@ -3633,8 +3783,14 @@ body {
 }
 
 .topbar {
-  grid-template-columns: minmax(280px, 1fr) minmax(280px, 380px);
+  grid-template-columns: minmax(360px, 1fr) minmax(280px, 380px);
   background: rgba(255, 254, 250, 0.96);
+}
+
+.topbar-logo-plate {
+  border-color: var(--line);
+  background: #fff;
+  box-shadow: none;
 }
 
 .topbar-identity {
@@ -3651,6 +3807,15 @@ body {
 .manager-chip,
 .start-club-plate {
   border-left-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 20%);
+}
+
+.preseason-desk-panel {
+  align-items: stretch;
+}
+
+.assistant-brief-card,
+.media-brief-card {
+  background: #fffefa;
 }
 
 .operations-bar {
@@ -3758,10 +3923,461 @@ body {
   text-align: left;
 }
 
+.start-hero.is-manager-step,
+.start-hero.is-appointment-step {
+  grid-template-columns: minmax(280px, 0.78fr) minmax(420px, 0.92fr);
+  width: min(1240px, 100%);
+}
+
+.start-hero.is-appointment-step {
+  align-items: stretch;
+  min-height: min(760px, calc(100vh - 36px));
+  padding: clamp(20px, 3vw, 34px);
+  border: 1px solid rgba(40, 45, 48, 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(255, 254, 250, 0.95) 0%, rgba(255, 254, 250, 0.78) 36%, rgba(255, 254, 250, 0.18) 62%),
+    linear-gradient(180deg, rgba(28, 32, 36, 0.08), rgba(28, 32, 36, 0.18)),
+    url("../assets/ui/appointment-press-room.png") center / cover no-repeat;
+  box-shadow: 0 24px 54px rgba(28, 32, 36, 0.16);
+}
+
+.start-hero.is-appointment-step::before {
+  inset: 0;
+  height: auto;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 82% 22%, rgba(255, 255, 255, 0.3), transparent 26%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(26, 32, 34, 0.08));
+  opacity: 1;
+  pointer-events: none;
+}
+
+.start-hero.is-appointment-step::after {
+  content: "";
+  position: absolute;
+  inset: auto 18px 18px;
+  height: 96px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, transparent, rgba(18, 22, 24, 0.22));
+  pointer-events: none;
+}
+
+.start-hero.is-appointment-step .start-copy {
+  align-self: end;
+  max-width: 480px;
+  padding-bottom: clamp(8px, 2vw, 22px);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+.start-hero.is-appointment-step .start-copy h1 {
+  max-width: 9ch;
+  color: #22282c;
+  font-size: clamp(2.5rem, 5.3vw, 4.45rem);
+  line-height: 0.94;
+}
+
+.start-hero.is-appointment-step .start-copy p {
+  max-width: 30rem;
+  color: #444d51;
+  font-weight: 850;
+}
+
+.start-hero.is-appointment-step .start-date,
+.start-hero.is-appointment-step .mini-label {
+  background: rgba(255, 254, 250, 0.68);
+  box-shadow: 0 8px 20px rgba(28, 32, 36, 0.08);
+}
+
+.start-club-plate {
+  display: inline-grid;
+  grid-template-columns: 46px minmax(0, auto);
+  gap: 10px;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-left: 5px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 20%);
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.72);
+  box-shadow: 0 14px 28px rgba(28, 32, 36, 0.11);
+  backdrop-filter: blur(12px);
+}
+
+.start-club-plate span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.start-club-plate strong,
+.start-club-plate small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.start-club-logo,
+.appointment-logo {
+  --logo-size: 42px;
+  padding: 4px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(28, 32, 36, 0.12);
+}
+
+.manager-setup-stage,
+.appointment-stage {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.manager-setup-stage {
+  display: grid;
+  gap: 16px;
+  padding: clamp(16px, 2.6vw, 24px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.9);
+  box-shadow: var(--shadow-soft);
+}
+
+.manager-form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.manager-form > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.manager-style-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.manager-style-list span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.manager-style-list strong,
+.manager-style-list small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.manager-style-list small {
+  color: var(--muted);
+  font-weight: 760;
+}
+
+.appointment-stage {
+  display: grid;
+  align-self: center;
+}
+
+.appointment-card {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: clamp(16px, 2.4vw, 24px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.66);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 254, 250, 0.92), rgba(248, 249, 246, 0.82)),
+    rgba(255, 254, 250, 0.88);
+  box-shadow: 0 24px 46px rgba(28, 32, 36, 0.18);
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.appointment-card-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--team-color, #2f343a), transparent 82%), transparent 46%),
+    repeating-linear-gradient(90deg, rgba(28, 32, 36, 0.035) 0 1px, transparent 1px 12px);
+  pointer-events: none;
+}
+
+.appointment-card-head,
+.appointment-title-block,
+.appointment-media-strip,
+.interview-form {
+  position: relative;
+  z-index: 1;
+}
+
+.appointment-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.appointment-club-lockup {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.appointment-club-lockup span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.appointment-club-lockup small,
+.appointment-club-lockup strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.appointment-club-lockup small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.appointment-club-lockup strong {
+  color: #22282c;
+  font-size: 1.05rem;
+  font-weight: 950;
+}
+
+.appointment-press-badge {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  border-radius: 999px;
+  background: rgba(255, 254, 250, 0.74);
+  color: #2c3335;
+  font-size: 0.76rem;
+  font-weight: 950;
+  box-shadow: 0 10px 20px rgba(28, 32, 36, 0.08);
+}
+
+.appointment-press-badge span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 18%);
+  color: #fff;
+  line-height: 1;
+}
+
+.appointment-title-block {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.appointment-title-block h2 {
+  color: #20262a;
+  font-size: clamp(1.65rem, 3.1vw, 2.55rem);
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
+.appointment-title-block p {
+  color: #596268;
+  font-weight: 850;
+  line-height: 1.36;
+  overflow-wrap: anywhere;
+}
+
+.appointment-media-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.appointment-media-strip span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(232, 235, 229, 0.82);
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.7);
+}
+
+.appointment-media-strip b {
+  color: color-mix(in srgb, var(--team-color, #2f343a), #111820 20%);
+  font-size: 1.08rem;
+  line-height: 1;
+}
+
+.appointment-media-strip small {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 880;
+  line-height: 1.22;
+}
+
+.interview-form {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.interview-question {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.interview-question legend {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  color: #31383c;
+  font-size: 0.93rem;
+  font-weight: 950;
+}
+
+.interview-question legend span {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 28px;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(255, 254, 250, 0.72);
+  overflow-wrap: anywhere;
+}
+
+.interview-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.interview-question label {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 92px;
+  padding: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(232, 235, 229, 0.92);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(255, 254, 250, 0.96), rgba(248, 249, 246, 0.9)),
+    #fffefa;
+  box-shadow: 0 10px 22px rgba(28, 32, 36, 0.07);
+  cursor: pointer;
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+
+.interview-question label::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: transparent;
+}
+
+.interview-question label:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 42%);
+  box-shadow: 0 14px 26px rgba(28, 32, 36, 0.11);
+}
+
+.interview-question label:has(input:checked) {
+  border-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 28%);
+  background:
+    linear-gradient(145deg, rgba(255, 254, 250, 0.98), color-mix(in srgb, var(--team-color, #f8f9f6), #ffffff 88%)),
+    #fffefa;
+}
+
+.interview-question label:has(input:checked)::before {
+  background: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 16%);
+}
+
+.interview-question input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.interview-question label span {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.interview-question strong,
+.interview-question small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.interview-question strong {
+  color: #242a2e;
+  font-size: 0.98rem;
+  line-height: 1.18;
+}
+
+.interview-question small {
+  color: #697176;
+  font-size: 0.78rem;
+  font-weight: 760;
+  line-height: 1.32;
+}
+
+.appointment-actions {
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.appointment-actions .button {
+  min-width: 148px;
+}
+
 @media (max-width: 860px) {
   .start-hero.is-manager-step,
   .start-hero.is-appointment-step,
   .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .preseason-desk-panel {
     grid-template-columns: 1fr;
   }
 
@@ -3773,9 +4389,36 @@ body {
   .manager-briefing-quotes {
     grid-template-columns: 1fr;
   }
+
+  .start-hero.is-appointment-step {
+    min-height: auto;
+    background:
+      linear-gradient(180deg, rgba(255, 254, 250, 0.9) 0%, rgba(255, 254, 250, 0.72) 38%, rgba(255, 254, 250, 0.92) 100%),
+      url("../assets/ui/appointment-press-room.png") center top / cover no-repeat;
+  }
+
+  .appointment-stage {
+    align-self: stretch;
+  }
+
+  .appointment-card {
+    padding: 16px;
+  }
+
+  .appointment-media-strip {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 560px) {
+  .topbar-team {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-logo-plate {
+    width: 82px;
+  }
+
   .operation-group,
   .operation-group .button {
     flex-basis: 100%;
@@ -3783,5 +4426,22 @@ body {
 
   .manager-style-list {
     grid-template-columns: 1fr;
+  }
+
+  .start-hero.is-appointment-step {
+    padding: 16px 10px 10px;
+  }
+
+  .start-hero.is-appointment-step .start-copy h1 {
+    max-width: 10ch;
+  }
+
+  .appointment-card-head,
+  .appointment-actions {
+    justify-content: stretch;
+  }
+
+  .appointment-actions .button {
+    width: 100%;
   }
 }

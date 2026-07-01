@@ -10,6 +10,7 @@ const KEY_EVENT_LIMIT = 5;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const OPENING_DAY = "2026-03-28";
 const OPENING_DAY_MONTH_DAY = "03-28";
+const PRESEASON_MEDIA_OUTLETS = ["SBS 스포츠", "KBS 스포츠", "MBC 스포츠", "JTBC 스포츠", "MBN 스포츠", "SPOTV"];
 const POSTSEASON_RULE_SOURCE = "KBO 운영제도 v1: 와일드카드 4위 1승 어드밴티지, 준PO/PO 5전 3선승, 한국시리즈 7전 4선승";
 const DRAFT_RULE_SOURCE = "KBO 신인 드래프트 v1: 전면 드래프트 11라운드, 최대 110명 지명";
 const DRAFT_POOL_SIZE = 150;
@@ -286,7 +287,7 @@ export function simulateNextUserGame(state, options = {}) {
         state.phase = "regular";
         addLog(state, `${state.currentDate} 정규시즌 개막일입니다. 다음 경기부터 도트 중계를 볼 수 있어요.`);
       } else {
-        addLog(state, `${state.currentDate} 프리시즌 훈련일입니다. 개막전까지 이동합니다.`);
+        addPreseasonActivityLog(state, state.currentDate, weather);
       }
       continue;
     }
@@ -374,7 +375,7 @@ export function simulateDay(state) {
       state.phase = "regular";
       addLog(state, `${state.currentDate} 정규시즌 개막일입니다. 이제 하루 진행부터 경기가 열립니다.`);
     } else {
-      addLog(state, `${state.currentDate} 프리시즌 훈련일입니다. 정규시즌 개막까지 로스터를 점검하세요.`);
+      addPreseasonActivityLog(state, state.currentDate, weather);
     }
     return state;
   }
@@ -5317,6 +5318,234 @@ function openingDayForDateKey(dateKey) {
 function winningPct(team) {
   const decisions = safeNumber(team.wins) + safeNumber(team.losses);
   return decisions === 0 ? 0 : safeNumber(team.wins) / decisions;
+}
+
+function addPreseasonActivityLog(state, dateKey, weather) {
+  const team = findTeamById(state, state.selectedTeamId) ?? state.teams?.[0] ?? null;
+  if (!team) {
+    addLog(state, `${dateKey} 프리시즌 훈련일입니다. 정규시즌 개막까지 로스터를 점검하세요.`);
+    return;
+  }
+
+  const context = buildPreseasonContext(state, team, dateKey, weather);
+  addLog(state, buildPreseasonMediaLog(context));
+  addLog(state, buildPreseasonMailboxLog(context));
+  addLog(state, buildPreseasonAssistantLog(context));
+}
+
+function buildPreseasonContext(state, team, dateKey, weather) {
+  const roster = Array.isArray(team?.roster) ? team.roster : [];
+  const hitters = roster.filter((player) => player.role !== "pitcher");
+  const pitchers = roster.filter((player) => player.role === "pitcher");
+  const topHitter = selectPreseasonPlayer(hitters, (player) => hitterScore(player), dateKey) ?? roster[0] ?? {};
+  const topPitcher = selectPreseasonPlayer(pitchers, (player) => pitcherScore(player), dateKey) ?? roster[0] ?? {};
+  const prospect = selectPreseasonPlayer(roster, preseasonProspectScore, dateKey) ?? roster[0] ?? {};
+  const teamName = team.name ?? team.shortName ?? "KBO 구단";
+  const shortName = team.shortName ?? team.name ?? "우리 팀";
+  const daysToOpening = Math.max(0, Math.round((parseDate(openingDayForDateKey(dateKey)).getTime() - parseDate(dateKey).getTime()) / MS_PER_DAY));
+  const payrollRoom = roundNumber(safeNumber(team.budget) - safeNumber(team.payroll), 1);
+  const injured = roster.filter((player) => safeNumber(player.injuredDays) > 0);
+  const focus = selectPreseasonFocus(dateKey, team.id);
+  const managerName = state.manager?.name ? `${state.manager.name} 감독` : "감독";
+
+  return {
+    state,
+    team,
+    teamName,
+    shortName,
+    dateKey,
+    weather,
+    managerName,
+    daysToOpening,
+    payrollRoom,
+    injuredCount: injured.length,
+    topHitter,
+    topPitcher,
+    prospect,
+    focus,
+    mediaOutlet: PRESEASON_MEDIA_OUTLETS[hashParts(dateKey, team.id, "media") % PRESEASON_MEDIA_OUTLETS.length],
+    moodLabel: safeNumber(team.morale, 50) >= 62 ? "분위기는 밝은 편" : safeNumber(team.morale, 50) <= 43 ? "분위기 관리가 필요한 편" : "분위기는 안정권"
+  };
+}
+
+function buildPreseasonMediaLog(context) {
+  const topic = hashParts(context.dateKey, context.team.id, "topic") % 6;
+  const hitterName = context.topHitter?.name ?? "중심 타자";
+  const pitcherName = context.topPitcher?.name ?? "주요 투수";
+  const prospectName = context.prospect?.name ?? "젊은 선수";
+  const outlet = context.mediaOutlet;
+  const items = [
+    {
+      headline: `${context.shortName} 캠프, ${hitterName} 중심 타선 실험`,
+      text: `${outlet}는 ${context.teamName}이 개막 전 상위 타순 조합과 대타 카드 운용을 집중 점검하고 있다고 전했습니다.`
+    },
+    {
+      headline: `${context.shortName} 선발 경쟁, ${pitcherName} 컨디션에 시선`,
+      text: `${outlet}는 ${pitcherName}의 구위와 회복 속도가 개막 로테이션 구상의 첫 변수가 될 것으로 봤습니다.`
+    },
+    {
+      headline: `${context.shortName} 퓨처스 후보 ${prospectName}, 캠프 평가 상승`,
+      text: `${outlet}는 ${prospectName}이 백업 경쟁과 장기 육성 플랜에서 동시에 이름을 올리고 있다고 보도했습니다.`
+    },
+    {
+      headline: `${context.managerName} 취임 효과, 선수단 메시지 주목`,
+      text: `${outlet}는 새 코칭스태프가 훈련 강도보다 역할 정리와 소통을 먼저 잡는 흐름이라고 분석했습니다.`
+    },
+    {
+      headline: `${context.shortName}, 개막 전 역할 적응 리포트 강화`,
+      text: `${outlet}는 ${context.focus} 점검이 캠프 후반부 핵심 체크포인트가 될 것이라고 전망했습니다.`
+    },
+    {
+      headline: `${context.shortName} 팬심 예열, 개막까지 ${context.daysToOpening}일`,
+      text: `${outlet}는 ${context.weather?.label ?? "캠프"} 속에서도 구단이 팬 기대치와 현실적인 전력 평가 사이 균형을 찾고 있다고 전했습니다.`
+    }
+  ];
+
+  return {
+    date: context.dateKey,
+    type: "media",
+    tag: outlet,
+    source: outlet,
+    headline: items[topic].headline,
+    text: items[topic].text
+  };
+}
+
+function buildPreseasonMailboxLog(context) {
+  const topic = hashParts(context.dateKey, context.team.id, "mailbox") % 8;
+  const hitterName = context.topHitter?.name ?? "주전 타자";
+  const pitcherName = context.topPitcher?.name ?? "주요 투수";
+  const prospectName = context.prospect?.name ?? "유망주";
+  const salaryHint = estimatePreseasonPlayerValueKRW(context.prospect);
+  const items = [
+    {
+      type: "kbo-official",
+      tag: "한국야구위원회(KBO)",
+      source: "한국야구위원회(KBO)",
+      headline: "신인 드래프트 사전 스카우트 자료 접수",
+      text: `스카우트 팀장 보고: 고교·대학 후보군의 메디컬/멘탈 리포트가 업데이트됐습니다. ${prospectName} 유형의 원화 몸값 추정치는 ${formatMoneyForLog(salaryHint)} 수준입니다.`
+    },
+    {
+      type: "kbo-official",
+      tag: "한국야구위원회(KBO)",
+      source: "한국야구위원회(KBO)",
+      headline: "2차 드래프트 보호명단 사전 점검 안내",
+      text: `35인 보호명단 작성 시 ${prospectName} 같은 젊은 자원의 제외 여부를 별도 검토하십시오. 코치진은 타 구단 관심 가능성을 경고했습니다.`
+    },
+    {
+      type: "compliance",
+      tag: "규정/예산",
+      source: "프런트 예산팀",
+      headline: "외국인 선수 총액 제한 검토 필요",
+      text: `신규 외국인 계약은 계약금·연봉·옵션·이적료를 모두 원화 환산해 검토해야 합니다. 게임 기준 약 13억~14억 원 안팎의 총액 상한을 넘지 않도록 제안서를 분리 확인하십시오.`
+    },
+    {
+      type: "front-office",
+      tag: "단장 메일",
+      source: "단장실",
+      headline: "현장 기용 방향 질의",
+      text: `${context.managerName}님, 구단이 투자한 ${prospectName}의 캠프 활용 계획을 보고해 주십시오. 2군 고정인지, 개막 엔트리 경쟁인지 명확한 메시지가 필요합니다.`
+    },
+    {
+      type: "ops",
+      tag: "운영팀",
+      source: "원정/시설 보고",
+      headline: "지방 원정 및 구장 환경 점검",
+      text: `${context.shortName} 운영팀은 창원·대전·광주 원정 동선과 원정 락커룸 상태를 사전 점검 중입니다. 이동 지연 발생 시 선수단 피로도가 올라갈 수 있습니다.`
+    },
+    {
+      type: "community",
+      tag: "홍보팀",
+      source: "커뮤니티 모니터링",
+      headline: "야구 커뮤니티 여론 일일 보고",
+      text: `디시인사이드, 엠엘비파크 등에서 ${hitterName} 타순과 ${pitcherName} 기용을 두고 의견이 갈립니다. 개막 전 인터뷰 톤이 구단 신뢰도에 영향을 줄 수 있습니다.`
+    },
+    {
+      type: "futures",
+      tag: "퓨처스",
+      source: "2군 감독",
+      headline: "퓨처스리그 롱리포트",
+      text: `${prospectName}의 훈련 집중도와 회복 루틴이 양호합니다. 1군 콜업 후보로 유지하되, 멘탈 리포트는 다음 주까지 추가 관찰을 권합니다.`
+    },
+    {
+      type: "development",
+      tag: "교육리그",
+      source: "육성팀",
+      headline: "질롱/교육리그 파견 후보 검토",
+      text: `${prospectName}은 비시즌 교육리그 파견 시 성장 폭이 기대됩니다. 예상 체류/지원 비용은 원화 기준으로 별도 정산서가 필요합니다.`
+    }
+  ];
+
+  return {
+    date: context.dateKey,
+    ...items[topic]
+  };
+}
+
+function buildPreseasonAssistantLog(context) {
+  const concern = context.injuredCount > 0
+    ? `부상자 ${context.injuredCount}명 회복 계획을 먼저 확인해야 합니다`
+    : context.payrollRoom < 0
+      ? `예산이 ${Math.abs(context.payrollRoom)}억가량 초과라 개막 전 정리가 필요합니다`
+      : `${context.focus} 보고서를 코칭스태프에게 받아두면 좋겠습니다`;
+  const prompt = selectPreseasonPressPrompt(context);
+
+  return {
+    date: context.dateKey,
+    type: "assistant",
+    tag: "개인비서",
+    source: "개인비서",
+    headline: `${context.managerName}님, 개막까지 ${context.daysToOpening}일 전 보고입니다`,
+    text: `${context.moodLabel}입니다. 오늘 결정 안건은 ${concern}. 예상 언론 질문은 "${prompt}"입니다.`
+  };
+}
+
+function selectPreseasonFocus(dateKey, teamId) {
+  const focuses = [
+    "개막 엔트리 28인 압축",
+    "선발 로테이션 순서",
+    "필승조와 추격조 역할",
+    "상위 타순 출루 루트",
+    "백업 포수와 내야 멀티 포지션",
+    "주루/수비 디테일",
+    "외국인 선수 적응",
+    "퓨처스 콜업 후보"
+  ];
+  return focuses[hashParts(dateKey, teamId, "focus") % focuses.length];
+}
+
+function selectPreseasonPressPrompt(context) {
+  const prompts = [
+    `중심 타선 고정 후보가 ${context.topHitter?.name ?? "주전 타자"}인가요?`,
+    `${context.topPitcher?.name ?? "주요 투수"}의 개막 로테이션 위치는 정해졌나요?`,
+    `${context.prospect?.name ?? "유망주"}에게 1군 기회를 줄 생각이 있나요?`,
+    `개막 전까지 ${context.focus}에서 가장 중요한 기준은 무엇인가요?`,
+    `프리시즌 성적보다 선수단 분위기를 더 중시하나요?`
+  ];
+  return prompts[hashParts(context.dateKey, context.team.id, "prompt") % prompts.length];
+}
+
+function selectPreseasonPlayer(players, scoreFn, dateKey) {
+  return [...(players ?? [])]
+    .map((player) => ({ player, score: scoreFn(player) }))
+    .sort((a, b) => b.score - a.score || compareText(a.player?.name, b.player?.name) || hashParts(dateKey, a.player?.id) - hashParts(dateKey, b.player?.id))[0]?.player ?? null;
+}
+
+function preseasonProspectScore(player) {
+  const ovr = safeNumber(player?.ovr);
+  const pot = safeNumber(player?.pot, ovr);
+  const ageBonus = Math.max(0, 27 - safeNumber(player?.age, 27)) * 3;
+  const upside = Math.max(0, pot - ovr);
+  return ageBonus + upside + pot * 0.16;
+}
+
+function estimatePreseasonPlayerValueKRW(player) {
+  const ovr = safeNumber(player?.ovr, 100);
+  const pot = safeNumber(player?.pot, ovr);
+  const age = safeNumber(player?.age, 22);
+  const upside = Math.max(0, pot - ovr);
+  const ageBonus = Math.max(0, 25 - age) * 18_000_000;
+  return roundMarketMoney(clamp((ovr * 5_500_000) + (upside * 12_000_000) + ageBonus, 80_000_000, 2_800_000_000));
 }
 
 function addLog(state, message) {

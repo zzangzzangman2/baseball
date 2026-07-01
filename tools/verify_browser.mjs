@@ -370,6 +370,21 @@ async function checkViewport(viewport) {
   await evaluateInBrowser(`document.querySelector("[data-appointment-form]")?.requestSubmit(); true`);
   await waitForRenderedApp();
   await installGamecastRafProbe();
+  const headerProbe = await evaluateInBrowser(`
+    (() => {
+      const bodyText = document.body.innerText;
+      return {
+        hasTopbarLogo: Boolean(document.querySelector(".topbar .topbar-logo-plate img")),
+        hasDuplicateHero: Boolean(document.querySelector(".hero-card")),
+        hasPreseasonDesk: Boolean(document.querySelector("[data-preseason-desk]")),
+        hasAssistantBrief: Boolean(document.querySelector("[data-news-type='assistant']")),
+        hasMediaBrief: Boolean(document.querySelector("[data-news-type='media']")),
+        hasSpotv: bodyText.includes("SPOTV")
+      };
+    })()
+  `);
+  assert(headerProbe.hasTopbarLogo && !headerProbe.hasDuplicateHero, "상단 로고 이동 또는 중복 구단 히어로 제거가 확인되지 않았습니다.", "src/ui.js");
+  assert(headerProbe.hasPreseasonDesk && headerProbe.hasAssistantBrief && headerProbe.hasMediaBrief && headerProbe.hasSpotv, "프리시즌 데스크/비서/언론 피드가 확인되지 않았습니다.", "src/ui.js");
   const nextGameProbe = await evaluateInBrowser(`
     (() => {
       const panel = document.querySelector(".next-game-panel");
@@ -391,15 +406,20 @@ async function checkViewport(viewport) {
       const before = document.body.innerText;
       document.querySelector("[data-action='next-day']")?.click();
       const after = document.body.innerText;
+      const newsTypes = [...document.querySelectorAll("[data-news-type]")].map((node) => node.dataset.newsType);
       return {
         hadPreseason: before.includes("프리시즌"),
         dateAdvanced: after.includes("2026-03-02"),
         gamesStillZero: after.includes("0 / 720경기"),
-        boxscores: document.querySelectorAll(".boxscore-mini").length
+        boxscores: document.querySelectorAll(".boxscore-mini").length,
+        hasAssistantMail: newsTypes.includes("assistant"),
+        hasMediaMail: newsTypes.includes("media"),
+        hasKboStyleMail: newsTypes.some((type) => ["kbo-official", "front-office", "compliance", "ops", "community", "futures", "development"].includes(type))
       };
     })()
   `);
   assert(preseasonProbe.hadPreseason && preseasonProbe.dateAdvanced && preseasonProbe.gamesStillZero && preseasonProbe.boxscores === 0, "프리시즌 하루 진행이 경기 없이 날짜만 넘기지 않았습니다.", "src/ui.js");
+  assert(preseasonProbe.hasAssistantMail && preseasonProbe.hasMediaMail && preseasonProbe.hasKboStyleMail, "프리시즌 하루 진행 후 비서/언론/KBO식 메일이 쌓이지 않았습니다.", "src/ui.js");
   const weeklyProbe = await evaluateInBrowser(`
     (() => {
       document.querySelector("[data-action='week']")?.click();
@@ -530,6 +550,9 @@ async function checkViewport(viewport) {
         ".gamecast-feed small",
         ".gamecast-now strong",
         ".gamecast-now small",
+        ".assistant-brief-card p",
+        ".media-brief-card p",
+        ".news-item p",
         ".fa-offer-item small",
         ".market-ledger-item small",
         ".market-asset-pill",

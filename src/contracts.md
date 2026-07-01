@@ -605,5 +605,6 @@ The command updates both rosters and player ownership fields such as `player.tea
 - Do not introduce build tooling yet.
 - Do not edit files outside `C:\Users\godho\Downloads\baseball`.
 - `logs` is user-facing news/status text; `eventLog` is source-state history.
+- Preseason `logs` may be structured mail/news objects: `{ date, type, tag, source, headline, text }`. Current preseason types include `assistant`, `media`, `kbo-official`, `front-office`, `compliance`, `ops`, `community`, `futures`, and `development`.
 - `DRF-YYYY-###` and `FGN-YYYY-###` are code-based rights, not verified real named players.
 - Autonomous offseason v1 means one deterministic offseason-to-next-season loop. It does not claim full real-data coverage or complete multi-year league simulation.
