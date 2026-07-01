@@ -490,6 +490,8 @@ async function checkViewport(viewport) {
       const hasWeekFastButton = Boolean(document.querySelector("[data-action='week']"));
       const hasAutoOffseasonAction = Boolean(document.querySelector("[data-action='auto-offseason']"));
       const hasNextSeasonAction = Boolean(document.querySelector("[data-action='next-season']"));
+      const schedulePanel = document.querySelector("#schedule.schedule-calendar-panel");
+      const schedulePanelText = schedulePanel?.textContent ?? "";
       const optionNames = [...document.querySelectorAll("[data-action='select-team'] option")]
         .map((option) => option.textContent.trim())
         .filter(Boolean);
@@ -567,6 +569,10 @@ async function checkViewport(viewport) {
         ".decision-mail-copy p",
         ".decision-choice strong",
         ".decision-choice small",
+        ".schedule-month-chip",
+        ".schedule-day strong",
+        ".schedule-day small",
+        ".schedule-result",
         ".news-item p",
         ".fa-offer-item small",
         ".market-ledger-item small",
@@ -658,6 +664,12 @@ async function checkViewport(viewport) {
         hasWatchNextAction: Boolean(document.querySelector("[data-action='watch-next-game']")),
         hasSimNextAction: Boolean(document.querySelector("[data-action='simulate-next-game']")),
         hasNextGameChoiceText: nextGamePanelText.includes("경기 보기") && nextGamePanelText.includes("시뮬레이션"),
+        hasSchedulePanel: Boolean(schedulePanel),
+        hasScheduleTitle: schedulePanelText.includes("월 일정"),
+        hasScheduleControls: Boolean(document.querySelector("[data-action='calendar-prev']")) && Boolean(document.querySelector("[data-action='calendar-next']")),
+        scheduleCells: document.querySelectorAll("#schedule [data-schedule-cell]").length,
+        scheduleGameCells: document.querySelectorAll("#schedule .schedule-day.is-scheduled, #schedule .schedule-day.is-played").length,
+        scheduleLogoCount: document.querySelectorAll("#schedule img.schedule-logo").length,
         hasDailyReport: bodyText.includes("전력분석") && bodyText.includes("퓨처스"),
         hasSeasonFastButton,
         hasWeekFastButton,
@@ -718,6 +730,8 @@ async function checkViewport(viewport) {
   assert(result.hasTradeSupplementalAsset, "트레이드 보조 자산 표시를 찾지 못했습니다.", "src/ui.js");
   assert(!result.hasSeasonFastButton && result.hasWeekFastButton, "전체 시즌 버튼은 없어야 하고 빠른 주간 버튼은 있어야 합니다.", "src/ui.js");
   assert(result.hasNextGamePanel && result.hasWatchNextAction && result.hasSimNextAction && result.hasNextGameChoiceText, "다음 경기 보기/시뮬레이션 선택 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasSchedulePanel && result.hasScheduleTitle && result.hasScheduleControls, "월간 일정 캘린더 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.scheduleCells >= 28 && result.scheduleGameCells > 0 && result.scheduleLogoCount > 0, `월간 일정 셀/경기/로고가 부족합니다: cells=${result.scheduleCells}, games=${result.scheduleGameCells}, logos=${result.scheduleLogoCount}`, "src/ui.js");
   assert(result.hasAutoOffseasonAction && result.hasNextSeasonAction, "자동 스토브/다음 시즌 버튼을 찾지 못했습니다.", "src/ui.js");
   assert(result.hasGamecastPanel && result.hasGamecastScreen && result.hasGamecastCanvas && result.hasGamecastFeed && result.hasGamecastScore, "빠른 도트 게임캐스트 UI를 찾지 못했습니다.", "src/ui.js");
   assert(liveProbe.feedCount > 0 && liveProbe.liveCount <= 1, `게임캐스트 live 행 수가 비정상입니다: ${liveProbe.liveCount}/${liveProbe.feedCount}`, "src/ui.js");

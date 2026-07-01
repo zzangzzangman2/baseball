@@ -270,6 +270,60 @@ export function getNextGamePreview(state, teamId = state?.selectedTeamId) {
   return { ok: false, code: "not-found", message: "다음 경기를 찾지 못했습니다." };
 }
 
+export function getTeamMonthlySchedule(state, teamId = state?.selectedTeamId, monthOffset = 0) {
+  const teams = Array.isArray(state?.teams) ? state.teams : [];
+  const selectedTeam = findTeamById(state, teamId) ?? teams[0] ?? null;
+  const baseDate = parseDate(state?.currentDate ?? "2026-03-01");
+  const offset = clamp(Math.floor(safeNumber(monthOffset)), -12, 12);
+  const firstDate = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + offset, 1));
+  const lastDate = new Date(Date.UTC(firstDate.getUTCFullYear(), firstDate.getUTCMonth() + 1, 0));
+  const firstDateKey = formatDateKey(firstDate);
+  const lastDateKey = formatDateKey(lastDate);
+  const resultMap = buildMonthlyResultMap(state, selectedTeam?.id);
+  const futureMap = buildMonthlyFutureScheduleMap(state, selectedTeam?.id, firstDate, lastDate);
+  const days = [];
+
+  for (let day = 1; day <= lastDate.getUTCDate(); day += 1) {
+    const date = new Date(Date.UTC(firstDate.getUTCFullYear(), firstDate.getUTCMonth(), day));
+    const dateKey = formatDateKey(date);
+    const result = resultMap.get(dateKey);
+    const future = futureMap.get(dateKey);
+    const status = result?.status ??
+      future?.status ??
+      (date.getUTCDay() === 1
+        ? "rest"
+        : dateKey < String(state?.currentDate ?? "") && dateKey >= openingDayForDateKey(dateKey)
+          ? "past"
+          : "empty");
+    days.push({
+      date: dateKey,
+      day,
+      weekday: date.getUTCDay(),
+      isToday: dateKey === state?.currentDate,
+      isPast: dateKey < String(state?.currentDate ?? ""),
+      status,
+      game: result?.game ?? future?.game ?? null,
+      result: result?.result ?? null
+    });
+  }
+
+  return {
+    ok: Boolean(selectedTeam),
+    source: "team-monthly-schedule-v1",
+    teamId: selectedTeam?.id ?? "",
+    teamName: selectedTeam?.name ?? "",
+    teamShortName: selectedTeam?.shortName ?? selectedTeam?.name ?? "",
+    year: firstDate.getUTCFullYear(),
+    month: firstDate.getUTCMonth() + 1,
+    monthOffset: offset,
+    firstWeekday: firstDate.getUTCDay(),
+    firstDate: firstDateKey,
+    lastDate: lastDateKey,
+    currentDate: state?.currentDate ?? "",
+    days
+  };
+}
+
 export function simulateNextUserGame(state, options = {}) {
   if (!state || ["complete", "postseason", "offseason"].includes(state.phase)) {
     return { ok: false, code: "no-game", message: "진행 가능한 정규시즌 경기가 없습니다." };
@@ -3055,6 +3109,148 @@ function findGameForTeam(games, teamId) {
   const key = String(teamId ?? "");
   if (!key) return null;
   return (games ?? []).find((game) => String(game.awayTeamId) === key || String(game.homeTeamId) === key) ?? null;
+}
+
+function buildMonthlyResultMap(state, teamId) {
+  const key = String(teamId ?? "");
+  const resultMap = new Map();
+  if (!key) return resultMap;
+  for (const game of state?.lastGames ?? []) {
+    if (String(game?.awayTeamId ?? "") !== key && String(game?.homeTeamId ?? "") !== key) continue;
+    const userIsHome = String(game.homeTeamId ?? "") === key;
+    const teamScore = userIsHome ? safeNumber(game.homeScore ?? game.homeRuns) : safeNumber(game.awayScore ?? game.awayRuns);
+    const opponentScore = userIsHome ? safeNumber(game.awayScore ?? game.awayRuns) : safeNumber(game.homeScore ?? game.homeRuns);
+    const opponentTeamId = userIsHome ? game.awayTeamId : game.homeTeamId;
+    const opponentTeam = findTeamById(state, opponentTeamId);
+    resultMap.set(game.date, {
+      status: "played",
+      game: {
+        date: game.date,
+        awayTeamId: game.awayTeamId ?? "",
+        homeTeamId: game.homeTeamId ?? "",
+        opponentTeamId,
+        opponentName: opponentTeam?.name ?? (userIsHome ? game.away : game.home) ?? "",
+        opponentShortName: opponentTeam?.shortName ?? (userIsHome ? game.away : game.home) ?? "",
+        isHome: userIsHome,
+        ballpark: game.ballpark?.name ?? game.ballpark ?? "",
+        startTime: game.startTime ?? defaultKboStartTime(parseDate(game.date)),
+        teamScore,
+        opponentScore
+      },
+      result: {
+        code: teamScore > opponentScore ? "W" : teamScore < opponentScore ? "L" : "T",
+        teamScore,
+        opponentScore
+      }
+    });
+  }
+  return resultMap;
+}
+
+function buildMonthlyFutureScheduleMap(state, teamId, firstDate, lastDate) {
+  const scheduleMap = new Map();
+  if (!state || ["complete", "postseason", "offseason"].includes(state.phase)) return scheduleMap;
+  const teams = Array.isArray(state.teams) ? state.teams : [];
+  if (teams.length < KBO_TEAM_COUNT) return scheduleMap;
+
+  let phase = state.phase || "preseason";
+  let gamesPlayed = Math.max(0, Math.floor(safeNumber(state.gamesPlayed)));
+  let cursor = parseDate(state.currentDate);
+  const targetStart = cursor.getTime() > firstDate.getTime() ? cursor : new Date(firstDate.getTime());
+
+  while (cursor.getTime() < targetStart.getTime()) {
+    const projection = projectScheduleDay(state, { date: cursor, phase, gamesPlayed, teams, teamId, emit: false });
+    phase = projection.phase;
+    gamesPlayed = projection.gamesPlayed;
+    cursor = projection.nextDate;
+  }
+
+  while (cursor.getTime() <= lastDate.getTime()) {
+    const projection = projectScheduleDay(state, { date: cursor, phase, gamesPlayed, teams, teamId, emit: true });
+    if (projection.entry) {
+      scheduleMap.set(projection.entry.date, projection.entry);
+    }
+    phase = projection.phase;
+    gamesPlayed = projection.gamesPlayed;
+    cursor = projection.nextDate;
+  }
+
+  return scheduleMap;
+}
+
+function projectScheduleDay(state, { date, phase, gamesPlayed, teams, teamId, emit }) {
+  const dateKey = formatDateKey(date);
+  const nextDate = new Date(date.getTime() + MS_PER_DAY);
+  if (phase === "preseason") {
+    const nextPhase = formatDateKey(nextDate) >= openingDayForDateKey(formatDateKey(nextDate)) ? "regular" : "preseason";
+    return {
+      phase: nextPhase,
+      gamesPlayed,
+      nextDate,
+      entry: emit ? { date: dateKey, status: "preseason" } : null
+    };
+  }
+
+  if (gamesPlayed >= REGULAR_SEASON_GAMES) {
+    return {
+      phase,
+      gamesPlayed,
+      nextDate,
+      entry: emit ? { date: dateKey, status: "season-complete" } : null
+    };
+  }
+
+  if (date.getUTCDay() === 1) {
+    return {
+      phase,
+      gamesPlayed,
+      nextDate,
+      entry: emit ? { date: dateKey, status: "rest" } : null
+    };
+  }
+
+  const matchups = buildMatchups(teams, Math.floor(gamesPlayed / DAILY_GAME_COUNT));
+  const gamesToPlay = Math.min(matchups.length, REGULAR_SEASON_GAMES - gamesPlayed);
+  const playable = matchups.slice(0, gamesToPlay);
+  const matchup = findMatchupForTeam(playable, teamId);
+  return {
+    phase,
+    gamesPlayed: gamesPlayed + gamesToPlay,
+    nextDate,
+    entry: emit && matchup
+      ? {
+          date: dateKey,
+          status: "scheduled",
+          game: buildScheduleGameFromMatchup(matchup, date, teamId)
+        }
+      : emit
+        ? { date: dateKey, status: "empty" }
+        : null
+  };
+}
+
+function buildScheduleGameFromMatchup(matchup, date, teamId) {
+  const dateKey = formatDateKey(date);
+  const userIsHome = String(matchup.home?.id ?? "") === String(teamId ?? "");
+  const opponent = userIsHome ? matchup.away : matchup.home;
+  return {
+    date: dateKey,
+    awayTeamId: matchup.away?.id ?? "",
+    homeTeamId: matchup.home?.id ?? "",
+    opponentTeamId: opponent?.id ?? "",
+    opponentName: opponent?.name ?? "",
+    opponentShortName: opponent?.shortName ?? opponent?.name ?? "",
+    isHome: userIsHome,
+    ballpark: matchup.home?.home ?? "",
+    startTime: defaultKboStartTime(date)
+  };
+}
+
+function defaultKboStartTime(date) {
+  const weekday = date.getUTCDay();
+  if (weekday === 0) return "14:00 KST";
+  if (weekday === 6) return "17:00 KST";
+  return "18:30 KST";
 }
 
 function makePostseasonGameId(dateKey, options, awayTeamId, homeTeamId) {

@@ -7,6 +7,7 @@ import {
   commitTradeProposal,
   getSelectedTeam,
   getNextGamePreview,
+  getTeamMonthlySchedule,
   getStandings,
   initializeDraft,
   initializeFreeAgency,
@@ -102,6 +103,8 @@ const POSITION_GROUP_LABELS = {
   utility: "지명",
   other: "기타"
 };
+const KBO_CALENDAR_MONTHS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+const KOREAN_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 const GAMECAST_PIXEL_W = 160;
 const GAMECAST_PIXEL_H = 144;
@@ -129,6 +132,8 @@ function render(root, state) {
   const standings = getStandings(state);
   const selectedTeam = getSelectedTeam(state);
   const nextGame = getNextGamePreview(state, selectedTeam?.id ?? state.selectedTeamId);
+  const calendarMonthOffset = normalizeCalendarMonthOffset(state?.ui?.calendarMonthOffset);
+  const monthlySchedule = getTeamMonthlySchedule(state, selectedTeam?.id ?? state.selectedTeamId, calendarMonthOffset);
   const selectedRank = getTeamRank(standings, selectedTeam);
   const manager = getManagerProfile(state);
   const lineup = buildLineup(selectedTeam);
@@ -165,6 +170,7 @@ function render(root, state) {
         </a>
         <nav class="nav-list" aria-label="Dashboard sections">
           <a class="nav-item is-active" href="#clubhouse">클럽하우스</a>
+          <a class="nav-item" href="#schedule">일정</a>
           <a class="nav-item" href="#standings">순위표</a>
           <a class="nav-item" href="#contracts">계약</a>
           <a class="nav-item" href="#free-agency">FA시장</a>
@@ -219,6 +225,7 @@ function render(root, state) {
         </section>
 
         ${renderNextGamePanel(state, selectedTeam, nextGame)}
+        ${renderScheduleCalendarPanel(state, selectedTeam, monthlySchedule)}
         ${renderManagerBriefingPanel(state, selectedTeam, manager)}
         ${renderPreseasonDeskPanel(state, selectedTeam, manager)}
         ${renderPendingMailDecisionPanel(state)}
@@ -1271,6 +1278,40 @@ function bindActions(root, state) {
     render(root, state);
   });
 
+  root.querySelector("[data-action='calendar-prev']")?.addEventListener("click", () => {
+    state.ui = {
+      ...(state.ui ?? {}),
+      calendarMonthOffset: normalizeCalendarMonthOffset((state.ui?.calendarMonthOffset ?? 0) - 1)
+    };
+    render(root, state);
+  });
+
+  root.querySelector("[data-action='calendar-next']")?.addEventListener("click", () => {
+    state.ui = {
+      ...(state.ui ?? {}),
+      calendarMonthOffset: normalizeCalendarMonthOffset((state.ui?.calendarMonthOffset ?? 0) + 1)
+    };
+    render(root, state);
+  });
+
+  root.querySelector("[data-action='calendar-today']")?.addEventListener("click", () => {
+    state.ui = {
+      ...(state.ui ?? {}),
+      calendarMonthOffset: 0
+    };
+    render(root, state);
+  });
+
+  root.querySelectorAll("[data-action='calendar-month']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui = {
+        ...(state.ui ?? {}),
+        calendarMonthOffset: normalizeCalendarMonthOffset(button.dataset.calendarOffset)
+      };
+      render(root, state);
+    });
+  });
+
   root.querySelectorAll("[data-action='resolve-mail-decision']").forEach((button) => {
     button.addEventListener("click", () => {
       const result = resolveMailDecision(state, button.dataset.decisionAction || "acknowledge");
@@ -1555,6 +1596,17 @@ function replaceState(target, source) {
   Object.assign(target, source);
 }
 
+function normalizeCalendarMonthOffset(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.min(12, Math.max(-12, Math.trunc(numeric)));
+}
+
+function parseUiDate(value) {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? new Date("2026-03-01T00:00:00.000Z") : parsed;
+}
+
 function stopForBlockingMail(root, state) {
   const decision = state?.pendingMailDecision;
   if (!decision || decision.status !== "open" || !decision.blocking) return false;
@@ -1649,6 +1701,115 @@ function renderNextGamePanel(state, selectedTeam, nextGame) {
       </div>
     </section>
   `;
+}
+
+function renderScheduleCalendarPanel(state, selectedTeam, schedule) {
+  const leadingBlanks = Array.from({ length: schedule?.firstWeekday ?? 0 }, (_, index) => ({ blank: true, key: `blank-start-${index}` }));
+  const dayCells = (schedule?.days ?? []).map((day) => ({ ...day, key: day.date }));
+  const trailingCount = Math.max(0, Math.ceil((leadingBlanks.length + dayCells.length) / 7) * 7 - leadingBlanks.length - dayCells.length);
+  const trailingBlanks = Array.from({ length: trailingCount }, (_, index) => ({ blank: true, key: `blank-end-${index}` }));
+  const cells = [...leadingBlanks, ...dayCells, ...trailingBlanks];
+  const gameCount = (schedule?.days ?? []).filter((day) => ["scheduled", "played"].includes(day.status)).length;
+
+  return `
+    <section class="schedule-calendar-panel" id="schedule" aria-label="월간 경기 일정">
+      <div class="schedule-calendar-head">
+        <div>
+          <span class="mini-label">시즌 일정</span>
+          <h2>${formatNumber(schedule?.month)}월 일정</h2>
+          <p>${escapeHtml(getTeamShortName(selectedTeam) ?? "우리 팀")} · ${formatNumber(gameCount)}경기 · ${escapeHtml(schedule?.firstDate ?? "")} ~ ${escapeHtml(schedule?.lastDate ?? "")}</p>
+        </div>
+        <div class="schedule-calendar-tools" aria-label="일정 월 이동">
+          <button class="button button-soft" data-action="calendar-prev" type="button">이전 달</button>
+          <button class="button button-soft" data-action="calendar-today" type="button">이번 달</button>
+          <button class="button button-soft" data-action="calendar-next" type="button">다음 달</button>
+        </div>
+      </div>
+      <div class="schedule-month-strip" aria-label="월 선택">
+        ${renderScheduleMonthStrip(state, schedule)}
+      </div>
+      <div class="schedule-calendar-scroll">
+        <div class="schedule-calendar-grid" data-schedule-calendar>
+          ${KOREAN_WEEKDAYS.map((weekday) => `<span class="schedule-weekday">${weekday}요일</span>`).join("")}
+          ${cells.map((cell) => cell.blank ? `<div class="schedule-day is-empty" aria-hidden="true"></div>` : renderScheduleDayCell(cell, state, selectedTeam)).join("")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderScheduleMonthStrip(state, schedule) {
+  const baseDate = parseUiDate(state?.currentDate ?? schedule?.firstDate ?? "2026-03-01");
+  return KBO_CALENDAR_MONTHS.map((month) => {
+    const offset = ((schedule?.year ?? baseDate.getUTCFullYear()) - baseDate.getUTCFullYear()) * 12 + (month - 1 - baseDate.getUTCMonth());
+    const active = month === schedule?.month ? "is-active" : "";
+    return `<button class="schedule-month-chip ${active}" data-action="calendar-month" data-calendar-offset="${escapeAttribute(offset)}" type="button">${formatNumber(month)}월</button>`;
+  }).join("");
+}
+
+function renderScheduleDayCell(day, state, selectedTeam) {
+  const game = day.game ?? null;
+  const opponent = game ? normalizeGameTeam(game.opponentTeamId, state) : null;
+  const classes = [
+    "schedule-day",
+    day.isToday ? "is-today" : "",
+    day.isPast ? "is-past" : "",
+    day.status ? `is-${logTypeClass(day.status)}` : "",
+    game?.isHome ? "is-home" : "",
+    game && !game.isHome ? "is-away" : ""
+  ].filter(Boolean).join(" ");
+  const dayLabel = `${formatNumber(day.day)}일`;
+  const opponentLabel = getTeamShortName(opponent) ?? game?.opponentShortName ?? "상대";
+
+  if (day.status === "scheduled" || day.status === "played") {
+    return `
+      <article class="${classes}" data-schedule-cell="${escapeAttribute(day.date)}">
+        <span class="schedule-day-number">${formatNumber(day.day)}</span>
+        <div class="schedule-game-logo">
+          ${renderTeamLogo(opponent, "team-logo schedule-logo")}
+        </div>
+        <strong>${escapeHtml(game.isHome ? `vs ${opponentLabel}` : `@ ${opponentLabel}`)}</strong>
+        <small>${escapeHtml(game.startTime ?? "")}</small>
+        ${renderScheduleResult(day)}
+      </article>
+    `;
+  }
+
+  return `
+    <article class="${classes}" data-schedule-cell="${escapeAttribute(day.date)}">
+      <span class="schedule-day-number">${formatNumber(day.day)}</span>
+      <div class="schedule-off-copy">
+        <strong>${escapeHtml(scheduleStatusTitle(day.status))}</strong>
+        <small>${escapeHtml(scheduleStatusDetail(day.status, dayLabel))}</small>
+      </div>
+    </article>
+  `;
+}
+
+function renderScheduleResult(day) {
+  if (!day.result) return "";
+  const resultClass = logTypeClass(day.result.code);
+  return `
+    <span class="schedule-result is-${escapeAttribute(resultClass)}">
+      ${escapeHtml(day.result.code)} ${formatNumber(day.result.teamScore)}-${formatNumber(day.result.opponentScore)}
+    </span>
+  `;
+}
+
+function scheduleStatusTitle(status) {
+  if (status === "rest") return "휴식";
+  if (status === "preseason") return "캠프";
+  if (status === "season-complete") return "종료";
+  if (status === "past") return "지난 일정";
+  return "";
+}
+
+function scheduleStatusDetail(status, dayLabel) {
+  if (status === "rest") return "이동/회복일";
+  if (status === "preseason") return "프리시즌";
+  if (status === "season-complete") return "정규시즌 완료";
+  if (status === "past") return "최근 기록 없음";
+  return dayLabel;
 }
 
 function renderFrontOfficePanels(frontOffice) {
@@ -2707,6 +2868,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     if (frame.done) {
       state.done = true;
       stop();
+      syncGamecastSpeedControls(state, speedControls, skipControls);
       return;
     }
     state.animationFrame = window.requestAnimationFrame(loop);
