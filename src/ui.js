@@ -4099,6 +4099,8 @@ function drawGamecastFrame(ctx, state, frame) {
   drawPixelAction(ctx, palette, frame);
   if (frame.scoreFlash) drawPixelScoreBurst(ctx, palette, frame);
   drawPixelCameraFx(ctx, palette, frame);
+  drawPixelBaseCallout(ctx, palette, frame.baseCallout);
+  drawPixelInningSlate(ctx, palette, frame.inningSlate);
   drawPixelBroadcastBug(ctx, palette, frame);
 }
 
@@ -4531,6 +4533,7 @@ function drawPixelAction(ctx, palette, frame) {
 function drawPixelAtmosphere(ctx, palette, frame) {
   const progress = Number(frame.progress ?? 0);
   drawPixelCrowdWave(ctx, palette, frame, progress);
+  drawPixelDugoutReaction(ctx, palette, frame, progress);
   if (frame.event?.outcome === "homeRun" && progress >= 0.66) {
     const t = Math.max(0, Math.min(1, (progress - 0.66) / 0.3));
     drawPixelFirework(ctx, palette, gamecastX(26), gamecastY(19), t);
@@ -4541,6 +4544,33 @@ function drawPixelAtmosphere(ctx, palette, frame) {
     for (let x = gamecastX(18); x < gamecastX(103); x += gamecastSize(8)) {
       ctx.fillRect(x, gamecastY(25), gamecastSize(2), gamecastSize(1));
     }
+  }
+}
+
+function drawPixelDugoutReaction(ctx, palette, frame, progress) {
+  const event = frame.event;
+  if (!event || progress < 0.42 || progress > 0.9) return;
+  const bigPlay = event.outcome === "homeRun" || frame.scoreFlash || ["double", "triple"].includes(event.outcome);
+  if (!bigPlay) return;
+  const heat = event.outcome === "homeRun" ? 1 : frame.scoreFlash ? 0.76 : 0.48;
+  const pulse = Math.floor(progress * 18);
+  const y = gamecastY(92);
+  const isHome = event.side === "home";
+  const startX = isHome ? gamecastX(95) : gamecastX(15);
+  const jersey = event.teamJerseyColor ?? palette.uniform;
+  const accent = event.teamColor ?? palette.runner;
+  for (let index = 0; index < 4; index += 1) {
+    const x = startX + gamecastSize(index * 4);
+    const bob = (pulse + index) % 2 ? -1 : 0;
+    ctx.fillStyle = palette.outline;
+    ctx.fillRect(x, y + bob, gamecastSize(2), gamecastSize(1));
+    ctx.fillStyle = jersey;
+    ctx.fillRect(x, y + gamecastSize(1) + bob, gamecastSize(2), gamecastSize(3));
+    ctx.fillStyle = accent;
+    ctx.fillRect(x, y + gamecastSize(3) + bob, gamecastSize(2), gamecastSize(1));
+    ctx.fillStyle = palette.crowdSkin;
+    ctx.fillRect(x - gamecastSize(1), y + gamecastSize(1) + bob - Math.round(heat), gamecastSize(1), gamecastSize(1));
+    ctx.fillRect(x + gamecastSize(2), y + gamecastSize(1) + bob - Math.round(heat), gamecastSize(1), gamecastSize(1));
   }
 }
 
@@ -4683,6 +4713,73 @@ function drawPixelCameraFx(ctx, palette, frame) {
   }
 }
 
+function drawPixelBaseCallout(ctx, palette, callout) {
+  if (!callout?.text) return;
+  const previousAlpha = ctx.globalAlpha;
+  const alpha = Math.max(0, Math.min(1, Number(callout.opacity ?? 1)));
+  const scale = gamecastSize(callout.scale ?? 2);
+  const width = blockLettersWidth(callout.text, scale);
+  const height = scale * 5;
+  const x = Math.round(callout.x - width / 2);
+  const y = Math.round(callout.y - gamecastSize(17) - callout.pop * gamecastSize(2));
+  const color = callout.type === "safe" ? palette.hit : callout.type === "change" ? palette.spark : palette.out;
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x - scale * 2, y - scale * 2, width + scale * 4, height + scale * 4);
+  ctx.fillStyle = callout.type === "safe" ? "#e9fff4" : callout.type === "out" ? "#f2f0ec" : "#fff5c2";
+  ctx.fillRect(x - scale, y - scale, width + scale * 2, height + scale * 2);
+  drawPixelLine(ctx, Math.round(callout.x), y + height + scale * 3, Math.round(callout.x), Math.round(callout.y - gamecastSize(3)), palette.outline, gamecastSize(1));
+  drawPixelBlockLetters(ctx, palette, callout.text, x, y, scale, color, palette.outline, 1);
+  drawPixelBaseUmpire(ctx, palette, callout);
+  ctx.globalAlpha = previousAlpha;
+}
+
+function drawPixelBaseUmpire(ctx, palette, callout) {
+  if (!callout?.umpire) return;
+  const x = Math.round(callout.x + gamecastSize(callout.x < gamecastX(60) ? -10 : 10));
+  const y = Math.round(callout.y + gamecastSize(6));
+  const ox = x - 3;
+  const oy = y - 10;
+  const cells = [
+    [2, 0, "#111820"], [3, 0, "#111820"], [4, 0, "#111820"],
+    [1, 1, "#111820"], [2, 1, "#111820"], [3, 1, "#111820"], [4, 1, "#111820"], [5, 1, "#111820"],
+    [2, 2, palette.skin], [3, 2, palette.skin], [4, 2, palette.skin],
+    [2, 3, palette.outline], [4, 3, palette.outline],
+    [2, 4, "#242a2e"], [3, 4, "#242a2e"], [4, 4, "#242a2e"],
+    [1, 5, "#242a2e"], [2, 5, "#242a2e"], [3, 5, palette.base], [4, 5, "#242a2e"], [5, 5, "#242a2e"],
+    [2, 6, "#242a2e"], [3, 6, "#242a2e"], [4, 6, "#242a2e"],
+    [2, 7, palette.legs], [4, 7, palette.legs],
+    [2, 8, palette.legs], [4, 8, palette.legs],
+    [1, 9, palette.legs], [5, 9, palette.legs]
+  ];
+  if (callout.type === "safe") {
+    cells.push([0, 4, palette.skin], [6, 4, palette.skin], [-1, 4, palette.skin], [7, 4, palette.skin]);
+  } else {
+    cells.push([0, 2, palette.skin], [0, 1, palette.skin], [0, 0, palette.skin], [1, 4, palette.skin], [6, 5, palette.skin]);
+  }
+  ctx.fillStyle = palette.shadow;
+  ctx.fillRect(ox + 1, oy + 11, 7, 1);
+  drawPixelSprite(ctx, palette, ox, oy, cells);
+}
+
+function drawPixelInningSlate(ctx, palette, slate) {
+  if (!slate?.text) return;
+  const previousAlpha = ctx.globalAlpha;
+  const alpha = Math.max(0, Math.min(1, Number(slate.opacity ?? 1)));
+  const scale = gamecastSize(2);
+  const textWidth = blockLettersWidth(slate.text, scale);
+  const x = Math.round((GAMECAST_PIXEL_W - textWidth) / 2);
+  const y = gamecastY(24);
+  ctx.globalAlpha = alpha * 0.92;
+  ctx.fillStyle = "rgba(18, 33, 27, 0.92)";
+  ctx.fillRect(gamecastX(28), y - gamecastSize(5), gamecastX(64), gamecastSize(17));
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(gamecastX(28), y - gamecastSize(5), gamecastX(64), gamecastSize(1));
+  ctx.fillRect(gamecastX(28), y + gamecastSize(11), gamecastX(64), gamecastSize(1));
+  drawPixelBlockLetters(ctx, palette, slate.text, x, y, scale, palette.sparkL, palette.outline, 1);
+  ctx.globalAlpha = previousAlpha;
+}
+
 function drawPixelUmpire(ctx, palette, frame) {
   const bases = gamecastBasePositions();
   const progress = Number(frame.progress ?? 0);
@@ -4768,10 +4865,23 @@ function drawPixelBlockLetters(ctx, palette, text, x, y, scale, color, shadowCol
 
 function drawPixelBlockLettersRaw(ctx, text, x, y, scale, color) {
   const maps = {
+    A: ["0110", "1001", "1111", "1001", "1001"],
     B: ["1110", "1001", "1110", "1001", "1110"],
+    C: ["1111", "1000", "1000", "1000", "1111"],
     D: ["1110", "1001", "1001", "1001", "1110"],
+    E: ["1111", "1000", "1110", "1000", "1111"],
+    F: ["1111", "1000", "1110", "1000", "1000"],
+    G: ["1111", "1000", "1011", "1001", "1111"],
+    H: ["1001", "1001", "1111", "1001", "1001"],
+    I: ["111", "010", "010", "010", "111"],
     K: ["1001", "1010", "1100", "1010", "1001"],
-    P: ["1110", "1001", "1110", "1000", "1000"]
+    N: ["1001", "1101", "1011", "1001", "1001"],
+    O: ["1111", "1001", "1001", "1001", "1111"],
+    P: ["1110", "1001", "1110", "1000", "1000"],
+    R: ["1110", "1001", "1110", "1010", "1001"],
+    S: ["1111", "1000", "1111", "0001", "1111"],
+    T: ["111", "010", "010", "010", "010"],
+    U: ["1001", "1001", "1001", "1001", "1111"]
   };
   ctx.fillStyle = color;
   let cursor = x;
@@ -4788,6 +4898,13 @@ function drawPixelBlockLettersRaw(ctx, text, x, y, scale, color) {
     });
     cursor += scale * 5;
   }
+}
+
+function blockLettersWidth(text, scale) {
+  return String(text ?? "").toUpperCase().split("").reduce((width, letter) => {
+    if (letter === " ") return width + scale * 3;
+    return width + scale * 5;
+  }, 0);
 }
 
 function drawPixelFielders(ctx, palette, frame) {
@@ -4878,7 +4995,9 @@ function buildGamecastFrameState(state, forceFinal = false) {
       throwLines: [],
       ballShadow: null,
       contactBurst: null,
-      actionBurst: null
+      actionBurst: null,
+      baseCallout: null,
+      inningSlate: null
     };
   }
 
@@ -4908,6 +5027,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
       ballShadow: null,
       contactBurst: null,
       actionBurst: null,
+      baseCallout: null,
+      inningSlate: null,
       progress: 1
     };
   }
@@ -4943,6 +5064,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
     ballColor: state.palette.base,
     playerLabel: buildGamecastPlayerLabel(event, progress, runners),
     actionBurst: buildGamecastActionBurst(event, progress),
+    baseCallout: buildGamecastBaseCallout(event, progress),
+    inningSlate: buildGamecastInningSlate(event, progress),
     scoreFlash: event.runs > 0 && progress >= 0.62 && progress <= 0.84,
     flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
     offenseColor: event.teamColor ?? state.palette.runner,
@@ -4954,6 +5077,54 @@ function buildGamecastFrameState(state, forceFinal = false) {
     defenseJerseyShadow: event.defenseJerseyShadow ?? state.palette.uniformSh,
     defenseAccentColor: event.defenseAccentColor ?? event.defenseColor ?? state.palette.defender,
     progress
+  };
+}
+
+function buildGamecastBaseCallout(event, progress) {
+  if (!event) return null;
+  const isSafeOutcome = ["single", "double", "triple", "walk", "error"].includes(event.outcome);
+  const isOutOutcome = event.outcome === "out" || event.doublePlay;
+  const start = isSafeOutcome ? 0.6 : 0.56;
+  const end = isSafeOutcome ? 0.9 : 0.84;
+  if ((!isSafeOutcome && !isOutOutcome) || progress < start || progress > end) return null;
+  const t = Math.max(0, Math.min(1, (progress - start) / Math.max(0.01, end - start)));
+  const anchor = gamecastCalloutAnchor(event);
+  return {
+    text: isSafeOutcome ? "SAFE" : event.doublePlay ? "OUT" : "OUT",
+    type: isSafeOutcome ? "safe" : "out",
+    x: anchor.x,
+    y: anchor.y,
+    opacity: Math.max(0, Math.min(1, t < 0.16 ? t / 0.16 : (1 - t) / 0.22)),
+    pop: Math.sin(Math.min(1, t * 1.15) * Math.PI),
+    scale: isSafeOutcome ? 2 : 2,
+    umpire: true
+  };
+}
+
+function gamecastCalloutAnchor(event) {
+  const bases = gamecastBasePositions();
+  if (event?.doublePlay) return bases.second;
+  if (event?.outcome === "out") {
+    const fieldingKey = normalizeFieldingPosition(event.fieldingPosition);
+    const battedType = String(event.battedBallType ?? "");
+    if (["LF", "CF", "RF"].includes(fieldingKey) || battedType === "flyBall" || battedType === "lineDrive") {
+      return battedBallGroundPoint(event, 1);
+    }
+    return bases.first;
+  }
+  const targetBase = Math.min(4, gamecastAdvanceCount(event?.outcome));
+  if (targetBase === 1) return bases.first;
+  if (targetBase === 2) return bases.second;
+  if (targetBase === 3) return bases.third;
+  return bases.home;
+}
+
+function buildGamecastInningSlate(event, progress) {
+  if (!event?.inningEnded || progress < 0.78 || progress > 0.98) return null;
+  const t = Math.max(0, Math.min(1, (progress - 0.78) / 0.2));
+  return {
+    text: "CHANGE",
+    opacity: Math.sin(t * Math.PI)
   };
 }
 

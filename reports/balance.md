@@ -1,6 +1,6 @@
 # KBO Balance Verification
 
-- 실행 시각: 2026-07-01T07:34:25.165Z
+- 실행 시각: 2026-07-01T07:40:03.827Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 기준 출처: 2024 KBO league summary, MyKBO Stats (https://mykbostats.com/stats)
 - 시뮬레이션: 3회, 각 720/720경기 완료
