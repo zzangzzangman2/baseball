@@ -6026,6 +6026,248 @@ body {
   background: color-mix(in srgb, var(--team-color, #b54764), #14191b 8%);
 }
 
+.start-shell {
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(28, 33, 36, 0.98), rgba(46, 47, 43, 0.98) 56%, rgba(34, 24, 31, 0.98)),
+    var(--bg);
+}
+
+.start-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 78px),
+    linear-gradient(0deg, rgba(255, 255, 255, 0.026) 0 1px, transparent 1px 64px);
+}
+
+.start-hero,
+.start-hero.is-team-select,
+.start-hero.is-manager-step {
+  gap: clamp(18px, 3vw, 34px);
+  width: min(1220px, 100%);
+  min-height: min(720px, calc(100vh - 34px));
+  padding: clamp(16px, 2vw, 24px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 254, 250, 0.07), rgba(255, 254, 250, 0.035)),
+    linear-gradient(135deg, rgba(28, 32, 35, 0.96), rgba(42, 43, 40, 0.94) 58%, color-mix(in srgb, var(--team-color, #2f343a), #231c22 72%));
+  box-shadow: 0 30px 70px rgba(9, 12, 14, 0.34);
+}
+
+.start-hero.is-team-select {
+  grid-template-columns: minmax(250px, 0.56fr) minmax(0, 1.44fr);
+}
+
+.start-hero::before {
+  inset: 0;
+  height: auto;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.11), transparent 26%),
+    radial-gradient(circle at 90% 12%, color-mix(in srgb, var(--team-color, #6f2338), transparent 42%), transparent 36%);
+  opacity: 1;
+  pointer-events: none;
+}
+
+.start-hero::after {
+  content: "";
+  position: absolute;
+  inset: auto 18px 18px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.24), transparent);
+  pointer-events: none;
+}
+
+.start-copy {
+  align-self: center;
+}
+
+.start-kicker .mini-label,
+.start-copy .mini-label {
+  color: color-mix(in srgb, var(--team-color, #c6a268), #ffffff 54%);
+}
+
+.start-date {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 248, 236, 0.78);
+}
+
+.start-copy h1 {
+  color: #fff8ec;
+  text-shadow: 0 18px 34px rgba(0, 0, 0, 0.22);
+}
+
+.start-copy p {
+  color: rgba(255, 248, 236, 0.74);
+}
+
+.start-logo-strip {
+  max-width: 610px;
+}
+
+.start-logo-chip {
+  border-color: rgba(255, 255, 255, 0.13);
+  border-left-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 18%);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+.start-logo-chip small {
+  color: rgba(255, 248, 236, 0.84);
+}
+
+.start-chip-logo {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.start-preview,
+.team-select-stage,
+.manager-setup-stage {
+  border-color: rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 254, 250, 0.98), rgba(248, 249, 246, 0.96)),
+    #fffefa;
+  box-shadow: 0 20px 42px rgba(9, 12, 14, 0.22);
+}
+
+.start-preview {
+  min-height: 330px;
+}
+
+.start-preview::before,
+.start-preview::after {
+  display: none;
+}
+
+.start-ticket span {
+  color: color-mix(in srgb, var(--team-color, #7b243f), #3f464c 28%);
+}
+
+.start-ticket strong {
+  color: #20262a;
+}
+
+.start-preview-grid span {
+  border-color: #e5ded5;
+  background: #f8f9f6;
+}
+
+.start-diamond {
+  justify-self: start;
+  border-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 36%);
+  background:
+    linear-gradient(135deg, rgba(255, 254, 250, 0.92), rgba(244, 247, 243, 0.88)),
+    #fffefa;
+}
+
+.team-select-stage .panel-head,
+.manager-setup-stage .panel-head {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e5ded5;
+}
+
+.team-select-stage .panel-head h2,
+.manager-setup-stage .panel-head h2 {
+  color: #20262a;
+}
+
+.start-team-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 214px), 1fr));
+}
+
+.start-team-card {
+  min-height: 82px;
+  border-color: #e2dacf;
+  border-top-width: 0;
+  border-left: 4px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 12%);
+  background:
+    linear-gradient(180deg, #fffefa, #f8f9f6);
+  box-shadow: 0 10px 22px rgba(9, 12, 14, 0.08);
+}
+
+.start-team-card:hover {
+  border-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 30%);
+  border-left-color: color-mix(in srgb, var(--team-color, #2f343a), #111820 8%);
+  box-shadow: 0 18px 32px rgba(9, 12, 14, 0.16);
+}
+
+.start-team-card .team-logo {
+  --logo-size: 38px;
+  padding: 4px;
+  border: 1px solid #eee7dc;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.start-team-card strong {
+  color: #20262a;
+}
+
+.start-team-card small {
+  color: #687078;
+}
+
+.manager-setup-stage {
+  align-self: center;
+}
+
+.manager-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.manager-form > label {
+  color: #5b625f;
+}
+
+.manager-form > label:nth-child(3),
+.manager-style-list,
+.manager-form .onboarding-status,
+.manager-form .start-actions {
+  grid-column: 1 / -1;
+}
+
+.manager-form input,
+.manager-form select {
+  min-height: 44px;
+  border-color: #d9d4cb;
+  background: #fffefa;
+}
+
+.manager-style-list span {
+  border-color: #e2dacf;
+  border-left: 3px solid transparent;
+  background: #f8f9f6;
+}
+
+.manager-style-list span.is-selected {
+  border-left-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 12%);
+  background: #fffefa;
+}
+
+.start-club-plate {
+  border-color: rgba(255, 255, 255, 0.14);
+  border-left-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 18%);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+.start-club-plate strong {
+  color: #fff8ec;
+}
+
+.start-club-plate small {
+  color: rgba(255, 248, 236, 0.68);
+}
+
+.start-club-logo {
+  background: rgba(255, 255, 255, 0.96);
+}
+
 .clubhouse-dashboard {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(330px, 0.72fr);
@@ -6974,11 +7216,66 @@ body {
   min-width: 148px;
 }
 
+.start-hero.is-appointment-step {
+  border-color: rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(90deg, rgba(27, 31, 34, 0.9) 0%, rgba(27, 31, 34, 0.62) 34%, rgba(27, 31, 34, 0.2) 68%),
+    linear-gradient(180deg, rgba(27, 31, 34, 0.1), rgba(27, 31, 34, 0.42)),
+    url("../assets/ui/appointment-press-room.png") center / cover no-repeat;
+}
+
+.start-hero.is-appointment-step::before {
+  background:
+    radial-gradient(circle at 82% 22%, rgba(255, 255, 255, 0.14), transparent 26%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(26, 32, 34, 0.18));
+}
+
+.start-hero.is-appointment-step .start-copy {
+  text-shadow: 0 14px 28px rgba(0, 0, 0, 0.24);
+}
+
+.start-hero.is-appointment-step .start-copy h1 {
+  color: #fff8ec;
+}
+
+.start-hero.is-appointment-step .start-copy p {
+  color: rgba(255, 248, 236, 0.78);
+}
+
+.start-hero.is-appointment-step .start-date,
+.start-hero.is-appointment-step .mini-label {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 248, 236, 0.86);
+  box-shadow: none;
+}
+
+.appointment-card {
+  border-color: rgba(255, 255, 255, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 254, 250, 0.95), rgba(248, 249, 246, 0.9)),
+    rgba(255, 254, 250, 0.88);
+}
+
 @media (max-width: 860px) {
+  .start-hero,
+  .start-hero.is-team-select,
   .start-hero.is-manager-step,
   .start-hero.is-appointment-step,
   .topbar {
     grid-template-columns: 1fr;
+  }
+
+  .start-hero,
+  .start-hero.is-team-select,
+  .start-hero.is-manager-step {
+    width: min(100%, 640px);
+    min-height: auto;
+  }
+
+  .team-select-stage,
+  .manager-setup-stage {
+    align-self: stretch;
   }
 
   .news-inbox-grid,
@@ -7019,7 +7316,7 @@ body {
   .start-hero.is-appointment-step {
     min-height: auto;
     background:
-      linear-gradient(180deg, rgba(255, 254, 250, 0.9) 0%, rgba(255, 254, 250, 0.72) 38%, rgba(255, 254, 250, 0.92) 100%),
+      linear-gradient(180deg, rgba(27, 31, 34, 0.9) 0%, rgba(27, 31, 34, 0.58) 42%, rgba(27, 31, 34, 0.82) 100%),
       url("../assets/ui/appointment-press-room.png") center top / cover no-repeat;
   }
 
