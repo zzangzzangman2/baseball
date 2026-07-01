@@ -524,6 +524,7 @@ export function initializeDraft(state) {
   };
   state.phase = "offseason";
   addLog(state, `${state.currentDate} ${draftYear} 신인 드래프트 보드 생성: 익명 후보 코드 ${DRAFT_POOL_SIZE}명, ${DRAFT_ROUNDS}라운드.`);
+  addLog(state, buildDraftScoutingOfficialLog(state));
   return state;
 }
 
@@ -622,6 +623,7 @@ export function initializeSecondaryDraft(state) {
   };
   state.phase = "offseason";
   addLog(state, `${state.currentDate} ${state.secondaryDraft.year} 2차 드래프트 보호명단 확정: 구단별 최대 ${SECONDARY_DRAFT_PROTECTED_COUNT}명 보호.`);
+  addLog(state, buildSecondaryProtectionOfficialLog(state));
   return state;
 }
 
@@ -730,6 +732,7 @@ export function initializeFreeAgency(state) {
   };
   state.phase = "offseason";
   addLog(state, `${state.currentDate} ${year} FA/외국인 시장 오픈: FA 후보 ${faCandidates.length}명, 외국인 코드 후보 ${foreignMarket.candidates.length}명.`);
+  addLog(state, buildFreeAgencyOfficialLog(state));
   return state;
 }
 
@@ -5320,6 +5323,67 @@ function winningPct(team) {
   return decisions === 0 ? 0 : safeNumber(team.wins) / decisions;
 }
 
+function buildDraftScoutingOfficialLog(state) {
+  const draft = state.draft ?? {};
+  const topProspect = draft.prospects?.[0] ?? null;
+  const value = estimateDraftProspectValueKRW(topProspect);
+  const medical = draftRiskLabel(topProspect?.risk);
+  const mental = draftMentalLabel(topProspect?.certainty);
+  return buildKboOfficialLog({
+    date: state.currentDate,
+    headline: `${draft.year ?? draftYearForState(state)} 신인 드래프트 스카우트 리포트 접수`,
+    text: topProspect
+      ? `${topProspect.displayCode} (${topProspect.classType} ${topProspect.profile}) 메디컬 ${medical}, 멘탈 ${mental}, 원화 몸값 추정 ${formatMoneyForLog(value)}. 1~${DRAFT_ROUNDS}라운드 전면 드래프트 보드에 반영하십시오.`
+      : `신인 드래프트 후보군이 아직 비어 있습니다. 1~${DRAFT_ROUNDS}라운드 보드 생성 상태를 확인하십시오.`
+  });
+}
+
+function buildSecondaryProtectionOfficialLog(state) {
+  const draft = state.secondaryDraft ?? {};
+  const protections = draft.protections ?? {};
+  const userProtection = protections[state.selectedTeamId] ?? Object.values(protections)[0] ?? null;
+  const exposedRisk = [...(userProtection?.exposed ?? [])]
+    .sort((a, b) => safeNumber(b.protectionScore) - safeNumber(a.protectionScore) || safeNumber(b.pot) - safeNumber(a.pot))[0] ?? null;
+  return buildKboOfficialLog({
+    date: state.currentDate,
+    headline: `${draft.year ?? draftYearForState(state)} 2차 드래프트 35인 보호명단 제출 안내`,
+    text: exposedRisk
+      ? `${userProtection.teamShortName ?? userProtection.teamName} 보호 ${userProtection.protectedCount}명, 비보호 ${userProtection.exposedCount}명입니다. 코치진은 비보호 ${exposedRisk.name}(${exposedRisk.position}, OVR ${safeNumber(exposedRisk.ovr)}/POT ${safeNumber(exposedRisk.pot)})에 대한 타 구단 관심 가능성을 경고했습니다.`
+      : `구단별 최대 ${SECONDARY_DRAFT_PROTECTED_COUNT}명 보호 원칙에 따라 명단을 제출하십시오. 비보호 유망주 경고 대상은 현재 없습니다.`
+  });
+}
+
+function buildFreeAgencyOfficialLog(state) {
+  const market = state.freeAgency ?? {};
+  const candidates = market.faCandidates ?? [];
+  const userCandidate = candidates.find((candidate) => String(candidate.fromTeamId) === String(state.selectedTeamId)) ?? candidates[0] ?? null;
+  const grade = userCandidate?.compensationGrade ?? "none";
+  const rule = userCandidate?.compensation ?? faCompensationRule(grade, userCandidate?.previousSalaryKRW ?? 0);
+  const protectionText = rule.requiresProtectedList
+    ? `${rule.protectedListSize}인 보호선수 외 보상선수+보상금 선택 대상`
+    : rule.grade === "C"
+      ? "보상금 선택 대상"
+      : "보상 규정 확인 대상";
+  return buildKboOfficialLog({
+    date: state.currentDate,
+    headline: `${market.year ?? draftYearForState(state)} FA 자격 취득 및 승인 공시`,
+    text: userCandidate
+      ? `${userCandidate.fromTeamShortName} ${userCandidate.name} 선수가 FA 자격 승인 명단에 포함됐습니다. 보상 등급 ${grade}, ${protectionText}, 기준 보상금 ${formatMoneyForLog(rule.cashOnlyKRW || rule.playerPlusCashKRW)}.`
+      : `귀 구단의 FA 승인 대상자는 현재 없습니다. 타 구단 FA 후보와 외국인 권리 시장만 검토하십시오.`
+  });
+}
+
+function buildKboOfficialLog({ date, headline, text }) {
+  return {
+    date,
+    type: "kbo-official",
+    tag: "한국야구위원회(KBO)",
+    source: "한국야구위원회(KBO)",
+    headline,
+    text
+  };
+}
+
 function addPreseasonActivityLog(state, dateKey, weather) {
   const team = findTeamById(state, state.selectedTeamId) ?? state.teams?.[0] ?? null;
   if (!team) {
@@ -5546,6 +5610,28 @@ function estimatePreseasonPlayerValueKRW(player) {
   const upside = Math.max(0, pot - ovr);
   const ageBonus = Math.max(0, 25 - age) * 18_000_000;
   return roundMarketMoney(clamp((ovr * 5_500_000) + (upside * 12_000_000) + ageBonus, 80_000_000, 2_800_000_000));
+}
+
+function estimateDraftProspectValueKRW(prospect) {
+  const present = safeNumber(prospect?.presentGrade, 45);
+  const future = safeNumber(prospect?.futureGrade, present + 10);
+  const certainty = safeNumber(prospect?.certainty, 50);
+  const risk = safeNumber(prospect?.risk, 50);
+  return roundMarketMoney(clamp((present * 8_000_000) + (future * 12_000_000) + (certainty * 4_000_000) - (risk * 3_000_000), 50_000_000, 3_500_000_000));
+}
+
+function draftRiskLabel(value) {
+  const risk = safeNumber(value, 50);
+  if (risk >= 64) return "고위험";
+  if (risk >= 46) return "보통";
+  return "양호";
+}
+
+function draftMentalLabel(value) {
+  const certainty = safeNumber(value, 50);
+  if (certainty >= 64) return "우수";
+  if (certainty >= 44) return "관찰";
+  return "추가 면담";
 }
 
 function addLog(state, message) {
