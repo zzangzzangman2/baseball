@@ -3570,6 +3570,10 @@ function normalizeGamecastEvent(event, state) {
   const defenseTeam = normalizeGameTeam(event?.defenseTeamId, state);
   const teamColor = normalizeHexColor(getTeamColor(offenseTeam), side === "home" ? "#c64b74" : "#315288");
   const defenseColor = normalizeHexColor(getTeamColor(defenseTeam), side === "home" ? "#315288" : "#c64b74");
+  const teamJerseyColor = side === "home" ? "#fffefb" : "#d9d3ca";
+  const teamJerseyShadow = side === "home" ? "#e8ded0" : "#c9bcab";
+  const defenseJerseyColor = side === "home" ? "#d9d3ca" : "#fffefb";
+  const defenseJerseyShadow = side === "home" ? "#c9bcab" : "#e8ded0";
 
   return {
     id: `${event?.gameId ?? "game"}-${side}-${inning}-${sequence}-${event?.outcome ?? "idle"}`,
@@ -3598,13 +3602,25 @@ function normalizeGamecastEvent(event, state) {
     scoredRunnerCount: scoredRunners.length,
     inningEnded,
     teamColor,
-    teamJerseyColor: side === "home" ? "#fffefb" : "#d9d3ca",
-    teamJerseyShadow: side === "home" ? "#e8ded0" : "#c9bcab",
+    teamJerseyColor,
+    teamJerseyShadow,
+    teamAccentColor: mixHexColors(teamColor, "#23202a", 0.08),
+    hitterUniformNumber: gamecastUniformNumber(event?.hitterName, event?.hitterId ?? event?.batterId),
     defenseColor,
-    defenseJerseyColor: side === "home" ? "#d9d3ca" : "#fffefb",
-    defenseJerseyShadow: side === "home" ? "#c9bcab" : "#e8ded0",
+    defenseJerseyColor,
+    defenseJerseyShadow,
+    defenseAccentColor: mixHexColors(defenseColor, "#23202a", 0.08),
     teamTrailColor: mixHexColors(teamColor, "#fffefb", 0.42)
   };
+}
+
+function gamecastUniformNumber(name, id = "") {
+  const text = `${name ?? ""}|${id ?? ""}`;
+  let hash = 17;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 33 + text.charCodeAt(index)) >>> 0;
+  }
+  return hash % 10;
 }
 
 function normalizeScoredRunners(value, runs) {
@@ -4133,6 +4149,10 @@ function drawPixelCrowd(ctx, palette, fx, fy, wallRadius) {
     for (let x = gamecastX(2) + (row % 2 ? gamecastSize(2) : 0); x < GAMECAST_PIXEL_W - gamecastX(3); x += stepX) {
       const distance = Math.hypot(x - fx, y - fy);
       if (distance <= wallRadius + gamecastSize(1)) continue;
+      if ((row * 11 + x) % 37 === 0) {
+        drawPixelFanSign(ctx, palette, x - 1, y + 1, shirts[(row + x + 1) % shirts.length]);
+        continue;
+      }
       drawPixelFan(ctx, palette, x, y, shirts[(row + x) % shirts.length]);
     }
   }
@@ -4140,15 +4160,35 @@ function drawPixelCrowd(ctx, palette, fx, fy, wallRadius) {
 
 function drawPixelFan(ctx, palette, x, y, shirt) {
   ctx.fillStyle = palette.crowdHair;
+  ctx.fillRect(x, y, 4, 1);
+  ctx.fillStyle = shirt;
   ctx.fillRect(x + 1, y, 2, 1);
   ctx.fillStyle = palette.crowdSkin;
   ctx.fillRect(x + 1, y + 1, 2, 1);
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(x + 1, y + 2, 1, 1);
+  ctx.fillRect(x + 1, y + 1, 1, 1);
+  ctx.fillRect(x + 2, y + 1, 1, 1);
   ctx.fillStyle = shirt;
-  ctx.fillRect(x, y + 3, 4, 2);
+  ctx.fillRect(x, y + 2, 4, 3);
+  ctx.fillStyle = palette.crowdSkin;
+  ctx.fillRect(x - 1, y + 3, 1, 1);
+  ctx.fillRect(x + 4, y + 2, 1, 1);
   ctx.fillStyle = palette.stand;
   ctx.fillRect(x, y + 5, 4, 1);
+}
+
+function drawPixelFanSign(ctx, palette, x, y, color) {
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x, y, 6, 4);
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(x + 1, y + 1, 4, 2);
+  ctx.fillStyle = color;
+  ctx.fillRect(x + 2, y + 1, 2, 1);
+  ctx.fillRect(x + 1, y + 2, 1, 1);
+  ctx.fillRect(x + 4, y + 2, 1, 1);
+  ctx.fillStyle = palette.crowdSkin;
+  ctx.fillRect(x, y + 4, 1, 1);
+  ctx.fillRect(x + 5, y + 4, 1, 1);
 }
 
 function drawBallparkInfield(ctx, palette) {
@@ -4215,9 +4255,12 @@ function drawGamecastBaseRunners(ctx, palette, baseState, frame = {}) {
   const bases = gamecastBasePositions();
   const color = frame.offenseColor ?? palette.runner;
   const jerseyColor = frame.offenseJerseyColor ?? palette.uniform;
-  if (baseState?.[0]) drawPixelRunner(ctx, palette, bases.first, false, color, 2, { jerseyColor, pose: "idle" });
-  if (baseState?.[1]) drawPixelRunner(ctx, palette, bases.second, false, color, 2, { jerseyColor, pose: "idle" });
-  if (baseState?.[2]) drawPixelRunner(ctx, palette, bases.third, false, color, 2, { jerseyColor, pose: "idle" });
+  const jerseyShadow = frame.offenseJerseyShadow ?? palette.uniformSh;
+  const accentColor = frame.offenseAccentColor ?? color;
+  const options = { jerseyColor, jerseyShadow, accentColor, pose: "idle" };
+  if (baseState?.[0]) drawPixelRunner(ctx, palette, bases.first, false, color, 2, options);
+  if (baseState?.[1]) drawPixelRunner(ctx, palette, bases.second, false, color, 2, options);
+  if (baseState?.[2]) drawPixelRunner(ctx, palette, bases.third, false, color, 2, options);
 }
 
 function drawPixel(ctx, x, y, color) {
@@ -4348,7 +4391,11 @@ function drawPixelAction(ctx, palette, frame) {
   for (const defender of frame.defenseSprites ?? []) {
     drawPixelRunner(ctx, palette, defender.position, defender.squash, defender.color, defender.runFrame, {
       jerseyColor: defender.jerseyColor,
-      pose: defender.pose
+      jerseyShadow: defender.jerseyShadow,
+      accentColor: defender.accentColor,
+      pose: defender.pose,
+      fieldingKey: defender.fieldingKey,
+      uniformNumber: defender.uniformNumber
     });
   }
   for (const runner of frame.runners ?? []) {
@@ -4358,14 +4405,20 @@ function drawPixelAction(ctx, palette, frame) {
   if (frame.batter) {
     drawPixelRunner(ctx, palette, frame.batter.position, false, frame.batter.color, frame.batter.runFrame ?? 2, {
       pose: frame.batter.pose ?? "stance",
-      jerseyColor: frame.batter.jerseyColor
+      jerseyColor: frame.batter.jerseyColor,
+      jerseyShadow: frame.batter.jerseyShadow,
+      accentColor: frame.batter.accentColor,
+      uniformNumber: frame.batter.uniformNumber
     });
   }
   if (frame.ball) drawPixelBall(ctx, palette, frame.ball, frame.ballColor ?? palette.base);
   for (const runner of frame.runners ?? []) {
     drawPixelRunner(ctx, palette, runner.position, runner.squash, runner.color, runner.runFrame, {
       jerseyColor: runner.jerseyColor,
-      pose: runner.pose
+      jerseyShadow: runner.jerseyShadow,
+      accentColor: runner.accentColor,
+      pose: runner.pose,
+      uniformNumber: runner.uniformNumber
     });
   }
 }
@@ -4420,6 +4473,9 @@ function drawPixelContactBurst(ctx, palette, burst) {
   const x = Math.round(burst.x);
   const y = Math.round(burst.y);
   const size = Math.max(1, Math.round(burst.size ?? gamecastSize(5)));
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x - size - 1, y, size * 2 + 3, 1);
+  ctx.fillRect(x, y - size - 1, 1, size * 2 + 3);
   ctx.fillStyle = palette.spark;
   ctx.fillRect(x - size, y, size * 2 + 1, 1);
   ctx.fillRect(x, y - size, 1, size * 2 + 1);
@@ -4428,6 +4484,9 @@ function drawPixelContactBurst(ctx, palette, burst) {
   ctx.fillRect(x + size - 1, y - size + 1, 1, 1);
   ctx.fillRect(x - size + 1, y + size - 1, 1, 1);
   ctx.fillRect(x + size - 1, y + size - 1, 1, 1);
+  ctx.fillStyle = palette.homerL;
+  ctx.fillRect(x + size + 2, y - 1, 2, 1);
+  ctx.fillRect(x - size - 3, y + 1, 2, 1);
 }
 
 function drawPixelFielders(ctx, palette, frame) {
@@ -4436,13 +4495,16 @@ function drawPixelFielders(ctx, palette, frame) {
   const defenderColor = frame.defenseColor ?? (frame.side === "home" ? palette.defender : "#575160");
   const jerseyColor = frame.defenseJerseyColor ?? palette.defenderL;
   const activeProgress = Number(frame.progress ?? 0);
+  const pitchingNow = frame.event && activeProgress < gamecastPitchEnd(frame.event) + 0.04;
 
   for (const fielder of positions) {
     const isActive = activePosition && fielder.key === activePosition && activeProgress >= 0.28 && activeProgress <= 0.82;
-    if (isActive) continue;
+    if (isActive || (pitchingNow && fielder.key === "P")) continue;
     const pose = fielder.key === "C" ? "catcher" : activePosition === fielder.key && activeProgress > 0.82 ? "catch" : "field";
     drawPixelRunner(ctx, palette, fielder.position, false, defenderColor, fielder.frame, {
       jerseyColor,
+      jerseyShadow: frame.defenseJerseyShadow ?? palette.uniformSh,
+      accentColor: frame.defenseAccentColor ?? defenderColor,
       pose,
       fieldingKey: fielder.key
     });
@@ -4505,8 +4567,12 @@ function buildGamecastFrameState(state, forceFinal = false) {
       runners: [],
       offenseColor: state.palette.runner,
       offenseJerseyColor: state.palette.uniform,
+      offenseJerseyShadow: state.palette.uniformSh,
+      offenseAccentColor: state.palette.runner,
       defenseColor: state.palette.defender,
       defenseJerseyColor: state.palette.defenderL,
+      defenseJerseyShadow: state.palette.uniformSh,
+      defenseAccentColor: state.palette.defender,
       defenseSprites: [],
       throwLines: [],
       ballShadow: null,
@@ -4530,8 +4596,12 @@ function buildGamecastFrameState(state, forceFinal = false) {
       runners: [],
       offenseColor: last.teamColor ?? state.palette.runner,
       offenseJerseyColor: last.teamJerseyColor ?? state.palette.uniform,
+      offenseJerseyShadow: last.teamJerseyShadow ?? state.palette.uniformSh,
+      offenseAccentColor: last.teamAccentColor ?? last.teamColor ?? state.palette.runner,
       defenseColor: last.defenseColor ?? state.palette.defender,
       defenseJerseyColor: last.defenseJerseyColor ?? state.palette.defenderL,
+      defenseJerseyShadow: last.defenseJerseyShadow ?? state.palette.uniformSh,
+      defenseAccentColor: last.defenseAccentColor ?? last.defenseColor ?? state.palette.defender,
       defenseSprites: [],
       throwLines: [],
       ballShadow: null,
@@ -4576,8 +4646,12 @@ function buildGamecastFrameState(state, forceFinal = false) {
     flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
     offenseColor: event.teamColor ?? state.palette.runner,
     offenseJerseyColor: event.teamJerseyColor ?? state.palette.uniform,
+    offenseJerseyShadow: event.teamJerseyShadow ?? state.palette.uniformSh,
+    offenseAccentColor: event.teamAccentColor ?? event.teamColor ?? state.palette.runner,
     defenseColor: event.defenseColor ?? state.palette.defender,
     defenseJerseyColor: event.defenseJerseyColor ?? state.palette.defenderL,
+    defenseJerseyShadow: event.defenseJerseyShadow ?? state.palette.uniformSh,
+    defenseAccentColor: event.defenseAccentColor ?? event.defenseColor ?? state.palette.defender,
     progress
   };
 }
@@ -4585,7 +4659,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
 function buildGamecastActionBurst(event, progress) {
   if (!event) return null;
   const start = gamecastPitchEnd(event) + 0.02;
-  const end = event.outcome === "homeRun" ? 0.88 : 0.72;
+  const end = event.outcome === "homeRun" ? 0.94 : event.outcome === "strikeout" ? 0.82 : 0.8;
   if (progress < start || progress > end) return null;
 
   const t = Math.max(0, Math.min(1, (progress - start) / Math.max(0.01, end - start)));
@@ -4597,10 +4671,10 @@ function buildGamecastActionBurst(event, progress) {
     text,
     className: gamecastBurstClass(event.outcome),
     x: event.outcome === "homeRun" ? 50 : event.outcome === "strikeout" ? 52 : 58,
-    y: event.outcome === "homeRun" ? 30 : event.outcome === "strikeout" ? 42 : 38,
-    opacity: Math.max(0, Math.min(1, t < 0.18 ? t / 0.18 : (1 - t) / 0.28)),
-    scale: 0.72 + pop * (event.outcome === "homeRun" ? 0.78 : 0.48),
-    shake: Math.round(Math.sin(t * Math.PI * 10) * (event.outcome === "homeRun" ? 5 : 3))
+    y: event.outcome === "homeRun" ? 28 : event.outcome === "strikeout" ? 42 : 36,
+    opacity: Math.max(0, Math.min(1, t < 0.16 ? t / 0.16 : (1 - t) / 0.34)),
+    scale: 0.82 + pop * (event.outcome === "homeRun" ? 0.95 : 0.62),
+    shake: Math.round(Math.sin(t * Math.PI * 12) * (event.outcome === "homeRun" ? 7 : 4))
   };
 }
 
@@ -4646,6 +4720,9 @@ function buildBatterSprite(event, progress, palette) {
     },
     color: event.teamColor ?? palette.runner,
     jerseyColor: event.teamJerseyColor ?? palette.uniform,
+    jerseyShadow: event.teamJerseyShadow ?? palette.uniformSh,
+    accentColor: event.teamAccentColor ?? event.teamColor ?? palette.runner,
+    uniformNumber: event.hitterUniformNumber,
     pose,
     runFrame: 2
   };
@@ -4654,6 +4731,27 @@ function buildBatterSprite(event, progress, palette) {
 function buildGamecastPlayerLabel(event, progress, runners) {
   if (!event || progress >= 0.96) {
     return { visible: false, text: "", x: 50, y: 50, scoring: false };
+  }
+  const showFielder = event.defenderName && isBattedBallOutcome(event.outcome) && progress >= 0.48 && progress < 0.84;
+  if (showFielder) {
+    const pitchEnd = gamecastPitchEnd(event);
+    const fieldT = Math.max(0, Math.min(1, (progress - pitchEnd - 0.12) / 0.46));
+    const target = battedBallGroundPoint(event, 1);
+    const start = gamecastDefenderStartForTarget(target, event);
+    const eased = easeOutCubic(fieldT);
+    const position = {
+      x: Math.round(lerp(start.x, target.x, eased)),
+      y: Math.round(lerp(start.y, target.y, eased))
+    };
+    const fadeOut = progress > 0.76 ? Math.max(0, (0.84 - progress) / 0.08) : 1;
+    return {
+      visible: fadeOut > 0.08,
+      text: shortenGamecastPlayerName(event.defenderName),
+      x: Math.max(gamecastX(10), Math.min(gamecastX(110), position.x)),
+      y: Math.max(gamecastY(10), Math.min(gamecastY(98), position.y - gamecastSize(14))),
+      opacity: fadeOut,
+      scoring: false
+    };
   }
   const bases = gamecastBasePositions();
   const batterRunner = runners.find((runner) => runner.role === "batter") ?? null;
@@ -4725,6 +4823,9 @@ function buildRunnerSprites(event, progress, palette) {
   const runnerColor = event.teamColor ?? palette.runner;
   const trailColor = event.teamTrailColor ?? palette.runnerL;
   const jerseyColor = event.teamJerseyColor ?? palette.uniform;
+  const jerseyShadow = event.teamJerseyShadow ?? palette.uniformSh;
+  const accentColor = event.teamAccentColor ?? runnerColor;
+  const uniformNumber = event.hitterUniformNumber;
 
   if (advance > 0) {
     event.basesBefore.forEach((occupied, index) => {
@@ -4733,6 +4834,8 @@ function buildRunnerSprites(event, progress, palette) {
       const targetBase = Math.min(4, startBase + advance);
       runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, runnerColor, trailColor, moveT, "runner", {
         jerseyColor,
+        jerseyShadow,
+        accentColor,
         pose: walking ? "walk" : "run",
         trail: !walking
       }));
@@ -4740,6 +4843,9 @@ function buildRunnerSprites(event, progress, palette) {
     const batterTarget = Math.min(4, advance);
     runners.push(makeRunnerSprite(gamecastPathBetween(0, batterTarget), eased, runnerColor, trailColor, moveT, "batter", {
       jerseyColor,
+      jerseyShadow,
+      accentColor,
+      uniformNumber,
       pose: walking ? "walk" : "run",
       trail: !walking
     }));
@@ -4756,6 +4862,9 @@ function buildRunnerSprites(event, progress, palette) {
     trail: [],
     color: runnerColor,
     jerseyColor,
+    jerseyShadow,
+    accentColor,
+    uniformNumber,
     runFrame: Math.floor(moveT * 8) % 2,
     squash: progress > 0.55,
     role: "batter",
@@ -4766,6 +4875,9 @@ function buildRunnerSprites(event, progress, palette) {
 
 function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner", options = {}) {
   const position = positionAlongPath(path, eased);
+  const stride = Math.floor(moveT * (options.pose === "walk" ? 4 : 8));
+  const bob = options.pose === "walk" ? (stride % 2 ? 0 : -1) : (stride % 2 ? -1 : 0);
+  position.y += bob;
   return {
     position,
     trail: options.trail === false
@@ -4776,8 +4888,11 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner"
         ],
     color,
     jerseyColor: options.jerseyColor,
+    jerseyShadow: options.jerseyShadow,
+    accentColor: options.accentColor,
+    uniformNumber: options.uniformNumber,
     trailColor,
-    runFrame: moveT > 0.92 ? 2 : Math.floor(moveT * (options.pose === "walk" ? 4 : 8)) % 2,
+    runFrame: moveT > 0.92 ? 2 : stride % 2,
     squash: options.pose === "walk" ? false : moveT > 0.92,
     pose: options.pose ?? "run",
     role
@@ -4839,9 +4954,26 @@ function buildGamecastContactBurst(event, progress) {
 }
 
 function buildGamecastDefenseSprites(event, progress, palette) {
-  if (!isBattedBallOutcome(event?.outcome)) return [];
   const pitchEnd = gamecastPitchEnd(event);
-  if (progress < pitchEnd + 0.12 || progress > 0.88) return [];
+  const sprites = [];
+  if (progress < pitchEnd + 0.04) {
+    const bases = gamecastBasePositions();
+    const windT = Math.max(0, Math.min(1, progress / Math.max(0.01, pitchEnd)));
+    sprites.push({
+      position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(2) - (windT > 0.48 && windT < 0.72 ? 1 : 0) },
+      color: event.defenseColor ?? palette.defender,
+      jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
+      jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
+      accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
+      fieldingKey: "P",
+      uniformNumber: gamecastUniformNumber(event.pitcherName, "P"),
+      runFrame: windT > 0.72 ? 1 : 2,
+      squash: false,
+      pose: windT < 0.48 ? "windup" : "pitch"
+    });
+  }
+  if (!isBattedBallOutcome(event?.outcome)) return sprites;
+  if (progress < pitchEnd + 0.12 || progress > 0.88) return sprites;
 
   const t = Math.max(0, Math.min(1, (progress - pitchEnd - 0.12) / 0.46));
   const target = battedBallGroundPoint(event, 1);
@@ -4857,20 +4989,28 @@ function buildGamecastDefenseSprites(event, progress, palette) {
       ? "catch"
       : "field";
 
-  const sprites = [{
+  sprites.push({
     position,
     color: event.defenseColor ?? palette.defender,
     jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
+    jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
+    accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
+    fieldingKey: normalizeFieldingPosition(event.fieldingPosition),
+    uniformNumber: gamecastUniformNumber(event.defenderName, event.fieldingPosition),
     runFrame: Math.floor(t * 8) % 2,
     squash: t > 0.88,
     pose: impactPose
-  }];
+  });
 
   if (event.outcome === "homeRun" && progress > 0.64) {
     sprites.push({
       position: { x: Math.round(target.x), y: Math.round(target.y + gamecastSize(7)) },
       color: event.defenseColor ?? palette.defenderSh,
       jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
+      jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
+      accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
+      fieldingKey: normalizeFieldingPosition(event.fieldingPosition),
+      uniformNumber: gamecastUniformNumber(event.defenderName, event.fieldingPosition),
       runFrame: 2,
       squash: false,
       pose: "lookUp"
@@ -5137,8 +5277,10 @@ function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, op
   const S = palette.skin;
   const L = palette.legs;
   const U = options.jerseyColor ?? palette.uniform;
-  const US = palette.uniformSh;
+  const US = options.jerseyShadow ?? palette.uniformSh;
   const trim = normalizeHexColor(color, palette.runner);
+  const accent = normalizeHexColor(options.accentColor ?? color, trim);
+  const ink = options.uniformNumber === undefined ? palette.uniformInk : mixHexColors(palette.uniformInk, accent, 0.18);
   const ox = Math.round(position.x) - 4;
   const oy = Math.round(position.y) - (squash ? 12 : 13);
   const pose = options.pose ?? "run";
@@ -5157,33 +5299,46 @@ function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, op
   ];
   cells.push(
     [3, 0, palette.uniformHi],
+    [0, 2, accent],
+    [7, 1, accent],
+    [7, 2, accent],
+    [1, 6, accent],
+    [6, 6, accent],
     [2, 5, palette.uniformHi],
     [5, 5, palette.uniformHi],
+    [2, 7, US],
+    [5, 7, US],
     [4, 6, palette.uniformInk],
     [3, 8, palette.uniformInk],
     [4, 8, palette.uniformInk]
   );
+  cells.push(...gamecastTinyUniformNumberCells(options.uniformNumber, 3, 5, ink));
+  cells.push(...gamecastFieldingBadgeCells(options.fieldingKey, accent, palette.base, 1, 8));
   if (pose === "stance" || pose === "load") {
-    cells.push([7, 2, palette.bat], [7, 3, palette.bat], [6, 4, palette.bat], [1, 5, S], [6, 6, S], [7, 6, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
-    if (pose === "load") cells.push([6, 2, palette.bat], [5, 3, palette.bat], [6, 5, S]);
+    cells.push([7, 2, palette.bat], [7, 3, palette.bat], [6, 4, palette.bat], [8, 1, palette.bat], [8, 2, palette.bat], [1, 5, S], [6, 6, S], [7, 6, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
+    if (pose === "load") cells.push([6, 2, palette.bat], [5, 3, palette.bat], [6, 5, S], [8, 0, palette.bat]);
   } else if (pose === "swing") {
-    cells.push([0, 4, palette.bat], [1, 4, palette.bat], [6, 4, palette.bat], [7, 4, palette.bat], [8, 4, palette.bat], [1, 5, S], [6, 5, S], [7, 5, S], [2, 10, L], [5, 10, L], [1, 11, L], [6, 11, L], [1, 12, L], [7, 12, L]);
+    cells.push([0, 4, palette.bat], [1, 4, palette.bat], [2, 4, palette.bat], [6, 4, palette.bat], [7, 4, palette.bat], [8, 4, palette.bat], [9, 4, palette.bat], [1, 5, S], [6, 5, S], [7, 5, S], [2, 10, L], [5, 10, L], [1, 11, L], [6, 11, L], [1, 12, L], [7, 12, L], [8, 11, accent]);
   } else if (pose === "follow") {
-    cells.push([0, 2, palette.bat], [1, 3, palette.bat], [2, 4, palette.bat], [1, 5, S], [6, 5, S], [7, 6, S], [2, 10, L], [5, 10, L], [1, 11, L], [6, 11, L], [1, 12, L], [7, 12, L]);
+    cells.push([0, 2, palette.bat], [1, 3, palette.bat], [2, 4, palette.bat], [3, 5, palette.bat], [1, 5, S], [6, 5, S], [7, 6, S], [2, 10, L], [5, 10, L], [1, 11, L], [6, 11, L], [1, 12, L], [7, 12, L]);
   } else if (pose === "miss") {
-    cells.push([6, 1, palette.bat], [7, 2, palette.bat], [7, 3, palette.bat], [0, 5, S], [6, 5, S], [2, 10, L], [5, 10, L], [2, 11, L], [5, 11, L], [2, 12, L], [6, 12, L]);
+    cells.push([6, 1, palette.bat], [7, 2, palette.bat], [7, 3, palette.bat], [8, 4, palette.bat], [0, 5, S], [6, 5, S], [2, 10, L], [5, 10, L], [2, 11, L], [5, 11, L], [2, 12, L], [6, 12, L]);
   } else if (pose === "take") {
     cells.push([0, 5, S], [1, 5, S], [6, 5, S], [7, 5, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
+  } else if (pose === "windup") {
+    cells.push([0, 2, palette.glove], [1, 2, palette.glove], [6, 1, S], [7, 0, S], [7, 1, palette.ballGlow], [1, 5, S], [6, 5, S], [2, 10, L], [5, 9, L], [2, 11, L], [6, 10, L], [1, 12, L], [6, 11, L]);
+  } else if (pose === "pitch") {
+    cells.push([0, 5, palette.glove], [1, 5, S], [7, 3, S], [8, 3, palette.ballGlow], [9, 3, palette.ballGlow], [2, 10, L], [5, 10, L], [1, 11, L], [6, 11, L], [0, 12, L], [7, 12, L]);
   } else if (pose === "walk") {
     cells.push([1, 5, S], [7, 6, S], [2, 10, L], [5, 10, L], [runFrame === 1 ? 1 : 2, 11, L], [runFrame === 1 ? 6 : 5, 11, L], [runFrame === 1 ? 1 : 2, 12, L], [runFrame === 1 ? 7 : 6, 12, L]);
   } else if (pose === "bat") {
     cells.push([0, 5, palette.bat], [0, 6, palette.bat], [1, 7, palette.bat], [1, 5, S], [6, 6, S], [7, 6, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
   } else if (pose === "catcher") {
-    cells.push([1, 5, trim], [6, 5, trim], [1, 9, L], [6, 9, L], [1, 10, L], [6, 10, L], [0, 11, L], [7, 11, L], [0, 12, L], [7, 12, L]);
+    cells.push([1, 2, palette.outline], [6, 2, palette.outline], [1, 5, accent], [6, 5, accent], [2, 6, accent], [3, 6, accent], [4, 6, accent], [5, 6, accent], [1, 9, L], [6, 9, L], [1, 10, L], [6, 10, L], [0, 11, L], [7, 11, L], [0, 12, L], [7, 12, L]);
   } else if (pose === "field") {
-    cells.push([0, 5, palette.glove], [1, 5, S], [6, 5, S], [7, 5, palette.glove], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [2, 12, L], [6, 12, L]);
+    cells.push([0, 5, palette.glove], [0, 6, palette.glove], [1, 5, S], [6, 5, S], [7, 5, palette.glove], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [2, 12, L], [6, 12, L]);
   } else if (pose === "catch") {
-    cells.push([0, 2, palette.glove], [1, 3, palette.glove], [1, 5, S], [6, 5, S], [7, 5, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [2, 12, L], [6, 12, L]);
+    cells.push([0, 1, palette.glove], [0, 2, palette.glove], [1, 3, palette.glove], [1, 5, S], [6, 5, S], [7, 5, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [2, 12, L], [6, 12, L]);
   } else if (pose === "dive") {
     cells.push([0, 4, palette.glove], [1, 4, S], [7, 5, S], [8, 5, palette.glove], [1, 10, L], [2, 10, L], [6, 10, L], [7, 10, L], [0, 11, L], [8, 11, L], [0, 12, L], [8, 12, L]);
   } else if (pose === "lookUp") {
@@ -5199,27 +5354,72 @@ function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, op
   }
   if (options.scaleShadow !== false) {
     ctx.fillStyle = palette.shadow;
-    ctx.fillRect(ox + 1, oy + 14, 7, 1);
+    ctx.fillRect(ox, oy + 14, 9, 1);
+    ctx.fillRect(ox + 2, oy + 15, 5, 1);
   }
   drawPixelSprite(ctx, palette, ox, oy, cells);
+}
+
+function gamecastTinyUniformNumberCells(number, ox, oy, color) {
+  if (number === undefined || number === null || number === "") return [];
+  const digit = String(Math.abs(Math.floor(Number(number) || 0)) % 10);
+  const map = {
+    "0": ["11", "11", "11"],
+    "1": ["01", "01", "01"],
+    "2": ["11", "01", "11"],
+    "3": ["11", "01", "11"],
+    "4": ["10", "11", "01"],
+    "5": ["11", "10", "11"],
+    "6": ["10", "11", "11"],
+    "7": ["11", "01", "01"],
+    "8": ["11", "11", "11"],
+    "9": ["11", "11", "01"]
+  }[digit] ?? ["11", "11", "11"];
+  const cells = [];
+  map.forEach((row, rowIndex) => {
+    [...row].forEach((cell, colIndex) => {
+      if (cell === "1") cells.push([ox + colIndex, oy + rowIndex, color]);
+    });
+  });
+  return cells;
+}
+
+function gamecastFieldingBadgeCells(fieldingKey, accent, light, ox, oy) {
+  const key = normalizeFieldingPosition(fieldingKey);
+  if (!key) return [];
+  const mark = key === "P" ? [[1, 0], [0, 1], [1, 1], [0, 2]] :
+    key === "C" ? [[0, 0], [1, 0], [0, 1], [0, 2], [1, 2]] :
+      key.includes("B") ? [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2], [1, 2]] :
+        key.includes("F") ? [[0, 0], [1, 0], [0, 1], [0, 2]] :
+          [[0, 0], [1, 1], [0, 2], [1, 2]];
+  return mark.map(([x, y], index) => [ox + x, oy + y, index === 1 ? light : accent]);
 }
 
 function drawPixelBall(ctx, palette, position, color) {
   const x = Math.round(position.x);
   const y = Math.round(position.y);
+  ctx.fillStyle = palette.ballGlow;
+  ctx.fillRect(x - 2, y - 1, 7, 3);
+  ctx.fillRect(x - 1, y - 2, 5, 5);
   ctx.fillStyle = palette.outline;
   ctx.fillRect(x - 1, y - 1, 5, 5);
   ctx.fillStyle = color;
   ctx.fillRect(x, y, 3, 3);
-  ctx.fillStyle = palette.ballSeam;
+  ctx.fillStyle = palette.uniformHi;
   ctx.fillRect(x, y, 1, 1);
+  ctx.fillStyle = palette.ballSeam;
   ctx.fillRect(x + 2, y + 2, 1, 1);
+  ctx.fillRect(x, y + 2, 1, 1);
 }
 
 function drawTrail(ctx, color, trail) {
-  ctx.fillStyle = color;
   for (const point of trail ?? []) {
-    ctx.fillRect(Math.round(point.x), Math.round(point.y), gamecastSize(2), gamecastSize(2));
+    const x = Math.round(point.x);
+    const y = Math.round(point.y);
+    ctx.fillStyle = "#fffefb";
+    ctx.fillRect(x, y, gamecastSize(1), gamecastSize(1));
+    ctx.fillStyle = color;
+    ctx.fillRect(x + 1, y + 1, gamecastSize(1), gamecastSize(1));
   }
 }
 
