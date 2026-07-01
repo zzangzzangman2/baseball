@@ -1132,6 +1132,21 @@ function renderAppointmentStage(state, selectedTeam) {
           <h2>${escapeHtml(manager.name)} 감독 첫 인터뷰</h2>
           <p>${escapeHtml(ballpark)} · ${formatNumber(manager.age)}세 · ${escapeHtml(managerStyleLabel(manager.style))}</p>
         </div>
+        <div class="appointment-broadcast-frame" aria-label="취임 기자회견 방송 화면">
+          <div class="appointment-camera-deck" aria-hidden="true">
+            <i></i><i></i><i></i>
+          </div>
+          <div class="appointment-sponsor-wall" aria-hidden="true">
+            ${Array.from({ length: 4 }, (_, index) => `
+              <span>${escapeHtml(index % 3 === 0 ? teamShortName : index % 3 === 1 ? "KBO" : "LIVE")}</span>
+            `).join("")}
+          </div>
+          <div class="appointment-lower-third">
+            <span>ON AIR</span>
+            <strong>${escapeHtml(teamName)} ${escapeHtml(manager.name)} 감독</strong>
+            <small>${escapeHtml(ballpark)} 공동취재</small>
+          </div>
+        </div>
         <div class="appointment-ceremony-banner">
           <span>취임식</span>
           <strong>${escapeHtml(teamName)} ${escapeHtml(manager.name)} 감독 선임</strong>
@@ -3855,7 +3870,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     state.lastTimestamp = timestamp;
     state.elapsedMs += delta * state.playbackRate;
     const frame = renderCurrentFrame(false);
-    if (frame.event?.outcome === "homeRun" && !state.prefersReducedMotion && state.shakenEventId !== frame.event.id) {
+    if (shouldTriggerGamecastImpactShake(frame) && !state.prefersReducedMotion && state.shakenEventId !== frame.event.id) {
       triggerGamecastShake(screen, state);
       state.shakenEventId = frame.event.id;
     }
@@ -3971,6 +3986,16 @@ function sanitizeGamecastSpeed(value) {
   return GAMECAST_SPEED_OPTIONS.includes(speed) ? speed : 1;
 }
 
+function shouldTriggerGamecastImpactShake(frame) {
+  const event = frame.event;
+  if (!event || frame.done) return false;
+  const progress = Number(frame.progress ?? 0);
+  if (event.outcome === "homeRun" && progress >= 0.68) return true;
+  if (Number(event.runs ?? 0) > 0 && progress >= 0.64) return true;
+  if (["double", "triple", "strikeout"].includes(event.outcome) && progress >= 0.36) return true;
+  return false;
+}
+
 function syncGamecastSpeedControls(state, speedControls, skipControls) {
   for (const button of speedControls ?? []) {
     const speed = sanitizeGamecastSpeed(button.dataset?.gamecastSpeed);
@@ -4026,6 +4051,7 @@ function drawGamecastFrame(ctx, state, frame) {
   drawPixelSideIcon(ctx, palette, frame);
   drawPixelAction(ctx, palette, frame);
   if (frame.scoreFlash) drawPixelScoreBurst(ctx, palette, frame);
+  drawPixelCameraFx(ctx, palette, frame);
   drawPixelBroadcastBug(ctx, palette, frame);
 }
 
@@ -4400,6 +4426,7 @@ function drawPixelAction(ctx, palette, frame) {
   }
   for (const runner of frame.runners ?? []) {
     drawTrail(ctx, runner.trailColor ?? palette.runnerL, runner.trail);
+    drawPixelRunnerDust(ctx, palette, runner.dust);
   }
   if (frame.contactBurst) drawPixelContactBurst(ctx, palette, frame.contactBurst);
   if (frame.batter) {
@@ -4425,6 +4452,7 @@ function drawPixelAction(ctx, palette, frame) {
 
 function drawPixelAtmosphere(ctx, palette, frame) {
   const progress = Number(frame.progress ?? 0);
+  drawPixelCrowdWave(ctx, palette, frame, progress);
   if (frame.event?.outcome === "homeRun" && progress >= 0.66) {
     const t = Math.max(0, Math.min(1, (progress - 0.66) / 0.3));
     drawPixelFirework(ctx, palette, gamecastX(26), gamecastY(19), t);
@@ -4434,6 +4462,27 @@ function drawPixelAtmosphere(ctx, palette, frame) {
     ctx.fillStyle = palette.sparkL;
     for (let x = gamecastX(18); x < gamecastX(103); x += gamecastSize(8)) {
       ctx.fillRect(x, gamecastY(25), gamecastSize(2), gamecastSize(1));
+    }
+  }
+}
+
+function drawPixelCrowdWave(ctx, palette, frame, progress) {
+  const event = frame.event;
+  if (!event || progress <= 0.18) return;
+  const heat = event.outcome === "homeRun" ? 1 : frame.scoreFlash ? 0.82 : ["double", "triple", "strikeout"].includes(event.outcome) ? 0.48 : 0.24;
+  if (heat <= 0.25 && progress > 0.7) return;
+  const phase = Math.floor(progress * 20);
+  const top = gamecastY(16);
+  const bottom = gamecastY(38);
+  for (let y = top; y < bottom; y += gamecastSize(6)) {
+    const row = Math.floor((y - top) / Math.max(1, gamecastSize(6)));
+    for (let x = gamecastX(5) + (row % 2 ? gamecastSize(3) : 0); x < GAMECAST_PIXEL_W - gamecastX(5); x += gamecastSize(8)) {
+      if ((x + row * 13 + phase) % 5 > Math.ceil(heat * 4)) continue;
+      const bob = ((x + phase + row) % 3) - 1;
+      ctx.fillStyle = (x + row) % 2 ? palette.sparkL : palette.crowdB;
+      ctx.fillRect(x, y + bob, gamecastSize(3), gamecastSize(1));
+      ctx.fillStyle = palette.crowdSkin;
+      ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1) + bob, gamecastSize(1), gamecastSize(1));
     }
   }
 }
@@ -4487,6 +4536,106 @@ function drawPixelContactBurst(ctx, palette, burst) {
   ctx.fillStyle = palette.homerL;
   ctx.fillRect(x + size + 2, y - 1, 2, 1);
   ctx.fillRect(x - size - 3, y + 1, 2, 1);
+}
+
+function drawPixelCameraFx(ctx, palette, frame) {
+  const event = frame.event;
+  if (!event || frame.done) return;
+  const progress = Number(frame.progress ?? 0);
+  const pitchEnd = gamecastPitchEnd(event);
+  if (progress < pitchEnd) drawPixelPitchTunnel(ctx, palette, event, progress, pitchEnd);
+
+  if (isBattedBallOutcome(event.outcome) && progress >= pitchEnd + 0.06 && progress <= 0.84) {
+    const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, 0.76 - pitchEnd)));
+    const point = frame.ball ?? battedBallPoint(event, Math.min(1, t));
+    drawPixelTrackingReticle(ctx, palette, point, progress, event);
+  }
+
+  if (event.outcome === "strikeout" && progress >= 0.34 && progress <= 0.78) {
+    const fade = Math.sin(Math.max(0, Math.min(1, (progress - 0.34) / 0.44)) * Math.PI);
+    drawPixelBlockLetters(ctx, palette, "K", gamecastX(19), gamecastY(63), 3, palette.out, palette.base, fade);
+  } else if (event.outcome === "walk" && progress >= 0.42 && progress <= 0.78) {
+    const fade = Math.sin(Math.max(0, Math.min(1, (progress - 0.42) / 0.36)) * Math.PI);
+    drawPixelBlockLetters(ctx, palette, "BB", gamecastX(17), gamecastY(63), 2, palette.walk, palette.outline, fade);
+  } else if (event.doublePlay && progress >= 0.56 && progress <= 0.86) {
+    const fade = Math.sin(Math.max(0, Math.min(1, (progress - 0.56) / 0.3)) * Math.PI);
+    drawPixelBlockLetters(ctx, palette, "DP", gamecastX(15), gamecastY(62), 2, palette.spark, palette.outline, fade);
+  }
+}
+
+function drawPixelPitchTunnel(ctx, palette, event, progress, pitchEnd) {
+  const bases = gamecastBasePositions();
+  const target = pitchTargetForEvent(event, bases);
+  const t = Math.max(0, Math.min(1, progress / Math.max(0.01, pitchEnd)));
+  for (let index = 0; index < 7; index += 1) {
+    const p = Math.max(0, t - index * 0.09);
+    if (p <= 0) continue;
+    const x = Math.round(lerp(bases.mound.x, target.x, easeOutCubic(p)));
+    const y = Math.round(lerp(bases.mound.y, target.y, easeOutCubic(p)));
+    ctx.fillStyle = index < 2 ? palette.ballGlow : (index % 2 ? palette.throw : palette.baseSh);
+    ctx.fillRect(x - Math.max(0, 2 - index), y, gamecastSize(1), gamecastSize(1));
+  }
+}
+
+function drawPixelTrackingReticle(ctx, palette, point, progress, event) {
+  if (!point) return;
+  const x = Math.round(point.x);
+  const y = Math.round(point.y);
+  const pulse = Math.round(Math.sin(progress * Math.PI * 8) * 2);
+  const radius = gamecastSize(event.outcome === "homeRun" ? 8 : 6) + pulse;
+  const color = event.outcome === "homeRun" ? palette.homerL : event.outcome === "out" ? palette.throw : palette.spark;
+  ctx.fillStyle = palette.outline;
+  drawPixelReticleCorners(ctx, x, y, radius + 1, gamecastSize(4), palette.outline);
+  drawPixelReticleCorners(ctx, x, y, radius, gamecastSize(4), color);
+}
+
+function drawPixelReticleCorners(ctx, x, y, radius, length, color) {
+  ctx.fillStyle = color;
+  const r = Math.max(3, Math.round(radius));
+  const l = Math.max(2, Math.round(length));
+  ctx.fillRect(x - r, y - r, l, 1);
+  ctx.fillRect(x - r, y - r, 1, l);
+  ctx.fillRect(x + r - l, y - r, l, 1);
+  ctx.fillRect(x + r, y - r, 1, l);
+  ctx.fillRect(x - r, y + r, l, 1);
+  ctx.fillRect(x - r, y + r - l, 1, l);
+  ctx.fillRect(x + r - l, y + r, l, 1);
+  ctx.fillRect(x + r, y + r - l, 1, l);
+}
+
+function drawPixelBlockLetters(ctx, palette, text, x, y, scale, color, shadowColor, opacity = 1) {
+  const alpha = Math.max(0, Math.min(1, Number(opacity ?? 1)));
+  if (alpha <= 0.05) return;
+  const previousAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = alpha * 0.86;
+  drawPixelBlockLettersRaw(ctx, text, x + scale, y + scale, scale, shadowColor);
+  ctx.globalAlpha = alpha;
+  drawPixelBlockLettersRaw(ctx, text, x, y, scale, color);
+  ctx.globalAlpha = previousAlpha;
+}
+
+function drawPixelBlockLettersRaw(ctx, text, x, y, scale, color) {
+  const maps = {
+    B: ["1110", "1001", "1110", "1001", "1110"],
+    D: ["1110", "1001", "1001", "1001", "1110"],
+    K: ["1001", "1010", "1100", "1010", "1001"],
+    P: ["1110", "1001", "1110", "1000", "1000"]
+  };
+  ctx.fillStyle = color;
+  let cursor = x;
+  for (const letter of String(text ?? "").toUpperCase()) {
+    const map = maps[letter];
+    if (!map) {
+      cursor += scale * 3;
+      continue;
+    }
+    map.forEach((row, rowIndex) => {
+      [...row].forEach((cell, colIndex) => {
+        if (cell === "1") ctx.fillRect(cursor + colIndex * scale, y + rowIndex * scale, scale, scale);
+      });
+    });
+    cursor += scale * 5;
+  }
 }
 
 function drawPixelFielders(ctx, palette, frame) {
@@ -4880,6 +5029,12 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner"
   position.y += bob;
   return {
     position,
+    dust: options.pose === "walk" || options.trail === false
+      ? []
+      : [
+          positionAlongPath(path, Math.max(0, eased - 0.07)),
+          positionAlongPath(path, Math.max(0, eased - 0.15))
+        ],
     trail: options.trail === false
       ? []
       : [
@@ -5420,6 +5575,17 @@ function drawTrail(ctx, color, trail) {
     ctx.fillRect(x, y, gamecastSize(1), gamecastSize(1));
     ctx.fillStyle = color;
     ctx.fillRect(x + 1, y + 1, gamecastSize(1), gamecastSize(1));
+  }
+}
+
+function drawPixelRunnerDust(ctx, palette, dust) {
+  for (const [index, point] of (dust ?? []).entries()) {
+    const x = Math.round(point.x - gamecastSize(2 + index));
+    const y = Math.round(point.y + gamecastSize(2 + index));
+    ctx.fillStyle = index % 2 ? palette.dirtL : palette.dirtM;
+    ctx.fillRect(x, y, gamecastSize(2), gamecastSize(1));
+    ctx.fillStyle = palette.baseSh;
+    ctx.fillRect(x + gamecastSize(2), y + gamecastSize(1), gamecastSize(1), gamecastSize(1));
   }
 }
 

@@ -5484,12 +5484,12 @@ body {
 .start-hero.is-appointment-step {
   align-items: stretch;
   min-height: min(760px, calc(100vh - 36px));
-  padding: clamp(20px, 3vw, 34px);
+  padding: clamp(18px, 2.4vw, 28px);
   border: 1px solid rgba(40, 45, 48, 0.18);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, rgba(255, 254, 250, 0.95) 0%, rgba(255, 254, 250, 0.78) 36%, rgba(255, 254, 250, 0.18) 62%),
-    linear-gradient(180deg, rgba(28, 32, 36, 0.08), rgba(28, 32, 36, 0.18)),
+    linear-gradient(90deg, rgba(255, 254, 250, 0.88) 0%, rgba(255, 254, 250, 0.58) 34%, rgba(255, 254, 250, 0.08) 66%),
+    linear-gradient(180deg, rgba(28, 32, 36, 0.02), rgba(28, 32, 36, 0.15)),
     url("../assets/ui/appointment-press-room.png") center / cover no-repeat;
   box-shadow: 0 24px 54px rgba(28, 32, 36, 0.16);
 }
@@ -5647,17 +5647,17 @@ body {
 .appointment-card {
   position: relative;
   display: grid;
-  gap: 14px;
+  gap: 8px;
   min-width: 0;
-  padding: clamp(16px, 2.4vw, 24px);
+  padding: clamp(14px, 2vw, 20px);
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.66);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(255, 254, 250, 0.92), rgba(248, 249, 246, 0.82)),
-    rgba(255, 254, 250, 0.88);
+    linear-gradient(180deg, rgba(255, 254, 250, 0.86), rgba(248, 249, 246, 0.72)),
+    rgba(255, 254, 250, 0.72);
   box-shadow: 0 24px 46px rgba(28, 32, 36, 0.18);
-  backdrop-filter: blur(18px) saturate(1.08);
+  backdrop-filter: blur(14px) saturate(1.12);
 }
 
 .appointment-card-backdrop {
@@ -5665,6 +5665,8 @@ body {
   inset: 0;
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--team-color, #2f343a), transparent 82%), transparent 46%),
+    radial-gradient(circle at 88% 8%, rgba(255, 255, 255, 0.92) 0 2px, transparent 3px 100%),
+    radial-gradient(circle at 76% 14%, rgba(255, 246, 199, 0.7) 0 2px, transparent 3px 100%),
     repeating-linear-gradient(90deg, rgba(28, 32, 36, 0.035) 0 1px, transparent 1px 12px);
   pointer-events: none;
 }
@@ -5754,7 +5756,7 @@ body {
 
 .appointment-title-block h2 {
   color: #20262a;
-  font-size: clamp(1.65rem, 3.1vw, 2.55rem);
+  font-size: clamp(1.55rem, 2.85vw, 2.32rem);
   line-height: 1.14;
   overflow-wrap: anywhere;
   word-break: keep-all;
@@ -5767,11 +5769,155 @@ body {
   overflow-wrap: anywhere;
 }
 
-.appointment-ceremony-banner {
+.appointment-broadcast-frame {
+  position: relative;
   display: grid;
+  grid-template-columns: minmax(92px, 0.46fr) minmax(0, 1fr);
+  grid-template-areas:
+    "camera sponsors"
+    "lower lower";
   gap: 6px;
   min-width: 0;
-  padding: 13px;
+  padding: 7px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(31, 36, 39, 0.18), rgba(255, 254, 250, 0.52)),
+    rgba(255, 254, 250, 0.38);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.74),
+    0 14px 28px rgba(28, 32, 36, 0.1);
+}
+
+.appointment-broadcast-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.14) 0 1px, transparent 1px 22px),
+    linear-gradient(0deg, rgba(255, 255, 255, 0.12) 0 1px, transparent 1px 18px);
+  pointer-events: none;
+}
+
+.appointment-camera-deck,
+.appointment-sponsor-wall,
+.appointment-lower-third {
+  position: relative;
+  z-index: 1;
+}
+
+.appointment-camera-deck {
+  grid-area: camera;
+  display: flex;
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
+  min-height: 43px;
+  padding: 5px;
+}
+
+.appointment-camera-deck i {
+  position: relative;
+  width: 24px;
+  aspect-ratio: 1;
+  border: 2px solid #242a2e;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, #23343c 0 30%, #b9d9f7 31% 42%, #242a2e 43% 58%, #fffefa 59% 100%);
+  box-shadow: 0 9px 0 -5px rgba(36, 42, 46, 0.92);
+}
+
+.appointment-camera-deck i:nth-child(2) {
+  width: 30px;
+  transform: translateY(-4px);
+}
+
+.appointment-camera-deck i:nth-child(3) {
+  transform: translateY(-2px);
+}
+
+.appointment-sponsor-wall {
+  grid-area: sponsors;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 0;
+}
+
+.appointment-sponsor-wall span {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 22px;
+  padding: 3px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: 6px;
+  background: rgba(255, 254, 250, 0.58);
+  color: color-mix(in srgb, var(--team-color, #2f343a), #20262a 42%);
+  font-size: 0.68rem;
+  font-weight: 950;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appointment-lower-third {
+  grid-area: lower;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 9px;
+  border-left: 4px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 18%);
+  border-radius: 7px;
+  background:
+    linear-gradient(90deg, rgba(31, 36, 39, 0.92), rgba(31, 36, 39, 0.72)),
+    color-mix(in srgb, var(--team-color, #2f343a), #101418 72%);
+  color: #fffefa;
+  box-shadow: 0 10px 22px rgba(28, 32, 36, 0.16);
+}
+
+.appointment-lower-third span {
+  grid-row: span 2;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #d94f75;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.appointment-lower-third strong,
+.appointment-lower-third small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appointment-lower-third strong {
+  font-size: 0.94rem;
+  font-weight: 950;
+}
+
+.appointment-lower-third small {
+  color: rgba(255, 254, 250, 0.72);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.appointment-ceremony-banner {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
   border: 1px solid rgba(230, 223, 213, 0.92);
   border-left: 4px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 14%);
   border-radius: 8px;
@@ -5820,7 +5966,7 @@ body {
   display: grid;
   gap: 3px;
   min-width: 0;
-  padding: 9px;
+  padding: 7px 8px;
   border: 1px solid rgba(232, 235, 229, 0.82);
   border-radius: 8px;
   background: rgba(255, 254, 250, 0.7);
@@ -5841,13 +5987,13 @@ body {
 
 .interview-form {
   display: grid;
-  gap: 10px;
+  gap: 7px;
   min-width: 0;
 }
 
 .interview-question {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -5867,9 +6013,9 @@ body {
 .interview-question legend span {
   display: inline-flex;
   max-width: 100%;
-  min-height: 28px;
+  min-height: 24px;
   align-items: center;
-  padding: 5px 9px;
+  padding: 4px 8px;
   border-radius: 999px;
   background: rgba(255, 254, 250, 0.72);
   overflow-wrap: anywhere;
@@ -5886,8 +6032,8 @@ body {
   position: relative;
   display: grid;
   min-width: 0;
-  min-height: 98px;
-  padding: 13px 14px;
+  min-height: 66px;
+  padding: 8px 10px;
   overflow: visible;
   border: 1px solid rgba(232, 235, 229, 0.92);
   border-radius: 8px;
@@ -5932,7 +6078,7 @@ body {
 
 .interview-question label span {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   align-content: center;
   min-width: 0;
   width: 100%;
@@ -5949,13 +6095,13 @@ body {
 
 .interview-question strong {
   color: #242a2e;
-  font-size: 0.98rem;
+  font-size: 0.91rem;
   line-height: 1.24;
 }
 
 .interview-question small {
   color: #697176;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 760;
   line-height: 1.4;
 }
@@ -6007,6 +6153,32 @@ body {
 
   .appointment-media-strip {
     grid-template-columns: 1fr;
+  }
+
+  .appointment-broadcast-frame {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "camera"
+      "sponsors"
+      "lower";
+  }
+
+  .appointment-camera-deck {
+    min-height: 42px;
+    padding: 4px;
+  }
+
+  .appointment-sponsor-wall {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .appointment-lower-third {
+    grid-template-columns: 1fr;
+  }
+
+  .appointment-lower-third span {
+    grid-row: auto;
+    width: fit-content;
   }
 }
 
