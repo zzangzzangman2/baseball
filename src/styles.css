@@ -1604,7 +1604,7 @@ img {
 
 .gamecast-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 0.95fr) minmax(0, 1.05fr);
+  grid-template-columns: 1fr;
   gap: 14px;
   min-width: 0;
 }
@@ -1655,8 +1655,8 @@ img {
   position: relative;
   display: grid;
   place-items: center;
-  width: min(178px, 100%);
-  aspect-ratio: 1;
+  width: min(300px, 100%);
+  aspect-ratio: 120 / 108;
   justify-self: center;
   margin: 2px 0;
   padding: 8px;
@@ -1683,8 +1683,8 @@ img {
 
 .gamecast-pixel-canvas {
   display: block;
-  width: 160px;
-  height: 160px;
+  width: 240px;
+  height: 216px;
   box-sizing: content-box;
   max-width: 100%;
   max-height: 100%;
@@ -3135,7 +3135,7 @@ img {
   }
 
   .gamecast-screen {
-    width: min(144px, 100%);
+    width: min(300px, 100%);
     padding: 6px;
   }
 

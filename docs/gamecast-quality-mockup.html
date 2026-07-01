@@ -1,0 +1,157 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Gamecast 픽셀 퀄리티 목업 v2</title>
+<style>
+  body{margin:0;background:#fbf8f3;color:#302d35;font:14px/1.5 "Malgun Gothic",sans-serif;padding:18px}
+  h1{font-size:16px;margin:0 0 12px}
+  .row{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+  .card{background:#fffefb;border:1px solid #e8dfd5;border-radius:10px;padding:12px}
+  .card h2{font-size:13px;margin:0 0 8px;color:#706b76}
+  canvas{image-rendering:pixelated;display:block;border-radius:6px}
+  .big{width:600px;height:540px}
+  .small{width:320px;height:320px}
+  small{color:#706b76}
+</style>
+<h1>KBO Gamecast — 도트 퀄리티 목업 v2 (외야 크게 + 뚜렷)</h1>
+<div class="row">
+  <div class="card">
+    <h2>제안 — 120×108 내부해상도, ×5 · 큰 외야 + 진한 외곽선</h2>
+    <canvas id="up" class="big" width="120" height="108"></canvas>
+    <small>넓은 외야(동심원 잔디)·담장·워닝트랙·원형 마운드 + 외곽선 있는 사람 주자(2프레임)</small>
+  </div>
+  <div class="card">
+    <h2>현재 (짝대기 + 흙마름모)</h2>
+    <canvas id="cur" class="small" width="80" height="80"></canvas>
+    <small>1~3px 네모 주자 · 담장/외야 없음</small>
+  </div>
+</div>
+<script>
+const P={
+  outline:"#23202a",
+  grassLo:"#4f8a73", grassHi:"#8fd0b4", grassEdge:"#3f7361",
+  dirtD:"#c78a3e", dirtM:"#e8b866", dirtL:"#ffe39a",
+  base:"#fffefb", baseSh:"#c9bcab",
+  runner:"#c64b74", runnerL:"#e57a9b",
+  homer:"#ff8f83", walk:"#b9d9f7",
+  legs:"#3a3550", skin:"#f2c79a",
+  wall:"#24483a", wallCap:"#1b3a2e", track:"#caa25f",
+  stand:"#6f6874", standD:"#575160", crowdA:"#c64b74", crowdB:"#b9d9f7", crowdC:"#ffe39a",
+  pole:"#ffd23f", out:"#77717a"
+};
+const W=120,H=108;
+const HOME={x:60,y:96}, FIRST={x:86,y:76}, SECOND={x:60,y:56}, THIRD={x:34,y:76}, MOUND={x:60,y:76};
+const FX=60, FY=104, WALLR=90;
+
+function rect(c,x,y,w,h,col){c.fillStyle=col;c.fillRect(x|0,y|0,w,h);}
+function px(c,x,y,col){c.fillStyle=col;c.fillRect(x|0,y|0,1,1);}
+function lerp(a,b,t){return a+(b-a)*t;}
+function ease(t){return 1-Math.pow(1-t,2);}
+function dist(x,y){return Math.hypot(x-FX,y-FY);}
+
+// outlined sprite: cells=[[x,y,color]...], adds 1px dark border around silhouette
+function sprite(c,ox,oy,cells){
+  const set=new Set(cells.map(p=>p[0]+","+p[1]));
+  c.fillStyle=P.outline;
+  for(const [x,y] of cells){for(const [ax,ay] of [[1,0],[-1,0],[0,1],[0,-1]]){if(!set.has((x+ax)+","+(y+ay)))c.fillRect(ox+x+ax,oy+y+ay,1,1);}}
+  for(const [x,y,col] of cells){c.fillStyle=col;c.fillRect(ox+x,oy+y,1,1);}
+}
+
+function fillCircle(c,cx,cy,r,col){c.fillStyle=col;for(let y=-r;y<=r;y++)for(let x=-r;x<=r;x++)if(x*x+y*y<=r*r)c.fillRect(cx+x,cy+y,1,1);}
+function line(c,x0,y0,x1,y1,col,size){size=size||1;x0=Math.round(x0);y0=Math.round(y0);x1=Math.round(x1);y1=Math.round(y1);let dx=Math.abs(x1-x0),dy=-Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,e=dx+dy;c.fillStyle=col;while(true){c.fillRect(x0,y0,size,size);if(x0===x1&&y0===y1)break;let e2=2*e;if(e2>=dy){e+=dy;x0+=sx;}if(e2<=dx){e+=dx;y0+=sy;}}}
+
+function drawField(c,t){
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const d=dist(x,y);
+    if(d>WALLR){ // stands (thin, muted)
+      let col=((x*5+y*3)%9===0)?[P.crowdA,P.crowdB,P.crowdC][(x+y)%3]:(((x+y)%2)?P.stand:P.standD);
+      px(c,x,y,col);
+    } else if(d>WALLR-2){ px(c,x,y,y<30?P.wallCap:P.wall); }   // wall
+    else if(d>WALLR-5){ px(c,x,y,P.track); }                    // warning track (wider)
+    else { px(c,x, y, (Math.floor(d/6)%2)?P.grassLo:P.grassHi); } // big outfield, high-contrast rings
+  }
+  // scoreboard
+  rect(c,48,4,24,8,P.outline); rect(c,49,5,22,6,"#12211b");
+  for(let i=0;i<6;i++)px(c,51+i*3,8,(i+((t/500)|0))%2?P.crowdC:P.grassHi);
+  // foul poles + lines
+  for(let y=30;y<48;y++){px(c,15,y,P.pole);px(c,105,y,P.pole);}
+  line(c,HOME.x,HOME.y,16,46,P.base); line(c,HOME.x,HOME.y,104,46,P.base);
+}
+
+function drawInfield(c){
+  // basepaths (thick dirt)
+  line(c,HOME.x,HOME.y,FIRST.x,FIRST.y,P.dirtM,3);
+  line(c,FIRST.x,FIRST.y,SECOND.x,SECOND.y,P.dirtM,3);
+  line(c,SECOND.x,SECOND.y,THIRD.x,THIRD.y,P.dirtM,3);
+  line(c,THIRD.x,THIRD.y,HOME.x,HOME.y,P.dirtM,3);
+  // base cutouts + home dirt
+  for(const b of [FIRST,SECOND,THIRD]) fillCircle(c,b.x,b.y,5,P.dirtM);
+  fillCircle(c,HOME.x,HOME.y,6,P.dirtM);
+  // mound
+  fillCircle(c,MOUND.x,MOUND.y,6,P.dirtL); fillCircle(c,MOUND.x,MOUND.y,4,P.dirtM);
+  rect(c,MOUND.x-1,MOUND.y-1,3,1,P.base);
+  // batter boxes
+  rect(c,HOME.x-8,HOME.y-5,3,7,P.dirtL); rect(c,HOME.x+6,HOME.y-5,3,7,P.dirtL);
+  // home plate (outlined)
+  sprite(c,HOME.x-2,HOME.y-2,[[0,0,P.base],[1,0,P.base],[2,0,P.base],[1,1,P.base]]);
+}
+
+function base(c,b,occ){ sprite(c,b.x-2,b.y-1,[[0,0,P.base],[1,0,P.base],[2,0,P.base],[3,0,P.base],[0,1,P.base],[1,1,P.base],[2,1,P.base],[3,1,P.base]]); }
+
+// 5x8 outlined running person
+function runner(c,cx,cy,frame,helmet){
+  const ox=Math.round(cx)-2, oy=Math.round(cy)-8;
+  const J=P.base, S=P.skin, L=P.legs, He=helmet;
+  const cells=[
+    [1,0,He],[2,0,He],[3,0,He],           // helmet
+    [1,1,S],[2,1,S],[3,1,S],              // face
+    [1,2,J],[2,2,J],[3,2,J],              // shoulders
+    [2,3,J],[3,3,J],[1,3,J],             // torso
+    [1,4,J],[2,4,J],[3,4,J],
+  ];
+  if(frame===0){ cells.push([0,3,S],[4,2,S],[1,5,L],[3,5,L],[0,6,L],[3,6,L],[0,7,L],[4,7,L]); }
+  else if(frame===1){ cells.push([4,3,S],[0,2,S],[1,5,L],[3,5,L],[1,6,L],[4,6,L],[0,7,L],[4,7,L]); }
+  else { cells.push([0,3,S],[4,3,S],[1,5,L],[3,5,L],[1,6,L],[3,6,L],[1,7,L],[3,7,L]); } // stand
+  // shadow
+  rect(c,ox+1,oy+8,3,1,P.grassEdge);
+  sprite(c,ox,oy,cells);
+}
+
+function pips(c,x,y,outs){for(let i=0;i<3;i++){rect(c,x+i*7,y,6,6,P.outline);rect(c,x+1+i*7,y+1,4,4,i<outs?P.out:P.baseSh);}}
+function half(c,x,y,side){c.fillStyle=P.outline;if(side==="home"){rect(c,x+2,y,3,1,P.outline);rect(c,x+1,y+1,5,1,P.outline);rect(c,x,y+2,7,1,P.outline);}else{rect(c,x,y,7,1,P.outline);rect(c,x+1,y+1,5,1,P.outline);rect(c,x+2,y+2,3,1,P.outline);}}
+
+// static field+infield+bases rendered ONCE to an offscreen (perf pattern for real impl too)
+const bg=document.createElement("canvas"); bg.width=W; bg.height=H;
+const bgc=bg.getContext("2d"); bgc.imageSmoothingEnabled=false;
+rect(bgc,0,0,W,H,P.grassHi); drawField(bgc,0); drawInfield(bgc);
+base(bgc,FIRST,true); base(bgc,SECOND,false); base(bgc,THIRD,true);
+
+function drawUp(c,t){
+  c.drawImage(bg,0,0);
+  runner(c,FIRST.x,FIRST.y,2,P.runner);
+  runner(c,THIRD.x,THIRD.y,2,P.walk);
+  const path=[HOME,FIRST,SECOND]; const seg=(t/950)%(path.length-1);
+  const i=Math.min(path.length-2,Math.floor(seg)); const f=seg-i;
+  const rx=lerp(path[i].x,path[i+1].x,ease(f)), ry=lerp(path[i].y,path[i+1].y,ease(f));
+  runner(c,rx,ry,((t/110)|0)%2,P.homer);
+  half(c,8,8,"home"); pips(c,96,98,1);
+}
+
+// ---- current approx ----
+function drawCur(c,t){
+  rect(c,0,0,80,80,P.grassHi);
+  c.fillStyle=P.grassLo;for(let y=0;y<80;y+=8)c.fillRect(0,y,80,4);
+  const fd=(cx,cy,rx,ry,col)=>{c.fillStyle=col;for(let y=-ry;y<=ry;y++){const w=Math.max(1,Math.round((1-Math.abs(y)/ry)*rx));c.fillRect(cx-w,cy+y,w*2+1,1);}};
+  fd(40,48,27,24,P.outline);fd(40,48,25,22,P.dirtM);fd(40,48,18,16,P.dirtL);fd(40,48,12,10,P.dirtM);
+  line(c,40,66,6,24,P.base);line(c,40,66,74,24,P.base);
+  for(const b of [[62,48],[40,28],[18,48]]){rect(c,b[0]-1,b[1]-1,3,3,P.base);rect(c,b[0],b[1]-3,1,2,P.runner);}
+  const seg=(t/900)%2,i=Math.floor(seg),f=seg-i,pts=[[40,66],[62,48],[40,28]];
+  const rx=Math.round(lerp(pts[i][0],pts[i+1][0],f)),ry=Math.round(lerp(pts[i][1],pts[i+1][1],f));
+  rect(c,rx-2,ry-2,5,5,P.outline);rect(c,rx-1,ry-1,3,3,P.runner);
+}
+
+const up=document.getElementById("up").getContext("2d");
+const cur=document.getElementById("cur").getContext("2d");
+up.imageSmoothingEnabled=false;cur.imageSmoothingEnabled=false;
+function frame(t){up.clearRect(0,0,W,H);cur.clearRect(0,0,80,80);drawUp(up,t);drawCur(cur,t);requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+</script>

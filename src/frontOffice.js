@@ -555,7 +555,7 @@ function buildTradeTargets(state, buyerTeam, needs, buyerStrategy) {
 }
 
 function buildTradeProposals(state, buyerTeam, targets, outgoingPool) {
-  return targets.slice(0, MAX_TRADE_PROPOSALS).map((target, index) => {
+  return targets.slice(0, Math.max(MAX_TRADE_PROPOSALS * 3, MAX_TRADE_TARGETS)).map((target, index) => {
     const playerAssets = selectOutgoingPackage(state, target, outgoingPool, index);
     const targetValue = safeNumber(target.valueScore);
     const supplementalAssets = buildSupplementalTradeAssets(state, buyerTeam, target, playerAssets, targetValue, index);
@@ -597,7 +597,20 @@ function buildTradeProposals(state, buyerTeam, targets, outgoingPool) {
       needsFollowUp,
       summary: `${buyerTeam.shortName ?? buyerTeam.name} 영입: ${target.player.name}; ${target.teamShortName} 수령: ${formatTradeAssetSummary(outgoing)}`
     };
-  });
+  })
+    .sort(compareTradeProposals)
+    .slice(0, MAX_TRADE_PROPOSALS);
+}
+
+function compareTradeProposals(a, b) {
+  const statusRank = { viable: 0, needs_sweetener: 1, needs_assets: 2, unlikely: 3 };
+  const rankDiff = (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9);
+  if (rankDiff !== 0) return rankDiff;
+  const blockerDiff = safeNumber(a.executionGate?.blockers?.length) - safeNumber(b.executionGate?.blockers?.length);
+  if (blockerDiff !== 0) return blockerDiff;
+  const acceptanceDiff = safeNumber(b.acceptanceScore) - safeNumber(a.acceptanceScore);
+  if (acceptanceDiff !== 0) return acceptanceDiff;
+  return safeNumber(b.target?.marketScore) - safeNumber(a.target?.marketScore);
 }
 
 function selectOutgoingPackage(state, target, outgoingPool, proposalIndex) {
@@ -615,17 +628,7 @@ function selectOutgoingPackage(state, target, outgoingPool, proposalIndex) {
 
   if (candidates.length === 0) return [];
 
-  const packageAssets = [stripPackageScore(candidates[0])];
-  const firstValue = safeNumber(candidates[0].valueScore);
-
-  if (firstValue < targetValue * 0.82) {
-    const second = candidates
-      .slice(1)
-      .find((asset) => asset.player.id !== candidates[0].player.id && firstValue + safeNumber(asset.valueScore) <= targetValue * 1.35);
-    if (second) packageAssets.push(stripPackageScore(second));
-  }
-
-  return packageAssets;
+  return [stripPackageScore(candidates[0])];
 }
 
 function buildSupplementalTradeAssets(state, buyerTeam, target, playerAssets, targetValue, proposalIndex) {
@@ -772,8 +775,9 @@ function targetFitScore(player, need, buyerStrategy) {
   const needBonus = need ? 18 + needSeverity * 0.7 + safeNumber(need.countGap) * 6 : 0;
   const contenderBonus = buyerStrategy.mode === "contend" ? rating100(player.ovr) * 0.35 : rating100(player.pot) * 0.3;
   const youthBonus = buyerStrategy.mode === "develop" ? Math.max(0, 28 - player.age) * 1.8 + rating100(player.upside) * 3 : rating100(player.upside) * 1.5;
+  const anonymousPenalty = isAnonymousDraftPlayer(player) ? 28 : 0;
 
-  return round(rating100(player.ovr) * 0.9 + rating100(player.pot) * 0.35 + needBonus + contenderBonus + youthBonus);
+  return round(rating100(player.ovr) * 0.9 + rating100(player.pot) * 0.35 + needBonus + contenderBonus + youthBonus - anonymousPenalty);
 }
 
 function targetAvailabilityScore(player, sellerStrategy, sellerPayroll, onTradeBlock) {
@@ -783,6 +787,7 @@ function targetAvailabilityScore(player, sellerStrategy, sellerPayroll, onTradeB
   if (sellerStrategy.mode === "contend" && rating100(player.ovr) >= 65) score -= 18;
   if (["critical", "high"].includes(sellerPayroll.level)) score += 12;
   if (player.status === "candidate") score -= 8;
+  if (isAnonymousDraftPlayer(player)) score -= 18;
   if (player.injuredDays > 0) score += 5;
 
   return clamp(score, 0, 100);
@@ -1041,8 +1046,11 @@ function normalizePlayer(player, index, team) {
     injuredDays: safeNumber(player?.injuredDays),
     status: String(player?.status ?? "registered"),
     source: String(player?.source ?? ""),
+    sourceKind: String(player?.sourceKind ?? ""),
     sourceUrls: Array.isArray(player?.sourceUrls) ? player.sourceUrls : [],
-    ratingSource: String(player?.ratingSource ?? ""),
+    ratingSource: typeof player?.ratingSource === "object"
+      ? String(player.ratingSource?.label ?? player.ratingSource?.kind ?? "")
+      : String(player?.ratingSource ?? ""),
     jerseyNumber: player?.jerseyNumber ?? ""
   };
 }
@@ -1066,6 +1074,7 @@ function toPlayerCard(player, state, team) {
     fatigue: player.fatigue,
     injuredDays: player.injuredDays,
     status: player.status,
+    sourceKind: player.sourceKind,
     sourceConfidence: sourceConfidence(player),
     ratingSource: player.ratingSource,
     gameValue: round(tradeValueScore(player)),
@@ -1133,6 +1142,7 @@ function buildPlayerRiskFlags(player) {
 function tradeValueScore(player) {
   const youth = Math.max(0, 28 - safeNumber(player.age));
   const durabilityPenalty = safeNumber(player.injuredDays) * 1.4 + Math.max(0, safeNumber(player.fatigue) - 55) * 0.12;
+  const anonymousPenalty = isAnonymousDraftPlayer(player) ? 18 : 0;
   return Math.max(
     0,
     rating100(player.ovr) * 0.95 +
@@ -1140,15 +1150,23 @@ function tradeValueScore(player) {
       rating100(player.upside) * 1.7 +
       youth * 0.85 +
       safeNumber(player.form, 50) * 0.08 -
-      durabilityPenalty
+      durabilityPenalty -
+      anonymousPenalty
   );
 }
 
 function sourceConfidence(player) {
+  if (isAnonymousDraftPlayer(player)) return "medium";
   if (player.status === "registered" || player.status === "futures") return "high";
   if (Array.isArray(player.sourceUrls) && player.sourceUrls.length > 0) return "medium";
   if (player.source || player.playerId) return "medium";
   return "low";
+}
+
+function isAnonymousDraftPlayer(player) {
+  return String(player?.sourceKind ?? "") === "anonymous-draft-rookie-v1" ||
+    String(player?.id ?? "").startsWith("rookie-draft-") ||
+    /^DRF-\d{4}-\d{3}$/.test(String(player?.name ?? ""));
 }
 
 function stripPackageScore(asset) {

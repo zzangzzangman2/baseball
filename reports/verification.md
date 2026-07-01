@@ -1,6 +1,6 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-01T02:39:01.136Z
+- 실행 시각: 2026-07-01T04:22:26.440Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Users\godho\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe (v24.14.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
@@ -29,13 +29,13 @@
 | 로테이션/불펜 운용 snapshot | PASS | 7일 선발 40명, 등판 투수 87명, W-L 28-28, SV 15, HLD 18 | - |
 | simulateDays 실행 | PASS | 7일 진행 후 day=35, gamesPlayed=30 | - |
 | simulateRegularSeason 종료 상태 | PASS | 정규시즌 종료: 720/720경기, day=196, phase=complete | - |
-| 포스트시즌/시상식 자동 생성 | PASS | 한화 이글스 우승, PS 16경기, MVP 올러, GG 10명 | - |
-| 신인 드래프트 v1 | PASS | 2027 드래프트 150명 풀, 110픽, 팀당 11명, 코드형 신인 110명 roster 반영 | - |
+| 포스트시즌/시상식 자동 생성 | PASS | KT 위즈 우승, PS 18경기, MVP 오스틴, GG 10명 | - |
+| 신인 드래프트 v1 | PASS | 2027 드래프트 150명 풀, 110픽, 팀당 11명, 보류권 110명, 코드형 신인 54명 roster 반영 | - |
 | 2차 드래프트 v1 | PASS | 2027 2차 드래프트 보호 35명x10팀, 비보호 128명, 36/36픽, 36명 실제 이동 | - |
-| 트레이드 v2 command | PASS | KIA 타이거즈 조세익 영입, 삼성 라이온즈 박헌 영입, 자산 player+cash+conditional, 자산타입 player/cash/draftPick/conditional/ptbnl, 조건부/현금/PTBNL ledger | - |
+| 트레이드 v2 command | PASS | LG 트윈스 이용현 영입, KT 위즈 서영준 영입, 자산 player+cash+conditional+ptbnl, 자산타입 player/cash/draftPick/conditional/ptbnl, 조건부/현금/PTBNL ledger | - |
 | 트레이드 안전 게이트 23케이스 | PASS | 23개 reject 케이스 + 1개 성공 케이스 | - |
 | FA/외국인 시장 command | PASS | FA 30명/오퍼 30건, 외국인 코드 30명, roster 531명 유지 | - |
-| 자동 오프시즌/시즌 롤오버 | PASS | 자동 스토브 roster +110, FA 30건, CPU 트레이드 4건, 2027 프리시즌 롤오버 | - |
+| 자동 오프시즌/시즌 롤오버 | PASS | 자동 스토브 roster +54, 신인입단 54/보류권 110, FA 30건, CPU 트레이드 4건, 2027 프리시즌 롤오버 | - |
 | 프런트오피스 selector 실행 | PASS | LG 트윈스 요약 55명, 스카우트 후보 24명 | - |
 | GM 데스크 데이터 실행 | PASS | LG 트윈스 시장 후보 42명, 제안 10건, 업무 6개, 알림 6건 | - |
 | JSON 저장 roundtrip | PASS | roundtrip 10팀/531명, kbo-gm-2026-03-01-day1-lg.json | - |

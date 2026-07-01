@@ -592,6 +592,8 @@ async function checkViewport(viewport) {
         gamecastCanvasHeight: gamecastCanvas?.height ?? 0,
         gamecastCanvasCssWidth: gamecastCanvasRect?.width ?? 0,
         gamecastCanvasCssHeight: gamecastCanvasRect?.height ?? 0,
+        gamecastCanvasPixelW: Number(gamecastCanvas?.dataset.pixelW ?? 0),
+        gamecastCanvasPixelH: Number(gamecastCanvas?.dataset.pixelH ?? 0),
         gamecastCanvasImageRendering: gamecastCanvasStyle?.imageRendering ?? "",
         gamecastCanvasPixelUnique: gamecastCanvasPixels.unique,
         gamecastCanvasAlphaSamples: gamecastCanvasPixels.alpha,
@@ -644,7 +646,10 @@ async function checkViewport(viewport) {
   assert(playbackProbe.rafRequested > 0 && playbackProbe.rafActive === 0, `게임캐스트 rAF 정지 실패: active=${playbackProbe.rafActive}, requested=${playbackProbe.rafRequested}`, "src/ui.js");
   assert(playbackProbe.scoreMatchesGameCard, `게임캐스트 최종 점수 불일치: gamecast=${playbackProbe.scoreline}, card=${playbackProbe.gameScore}`, "src/ui.js");
   assert(liveProbe.feedCount <= 1 || liveProbe.nowText !== playbackProbe.nowText || liveProbe.score !== playbackProbe.scoreline, "게임캐스트 재생 중 현재 타석/스코어 동기화 변화가 감지되지 않았습니다.", "src/ui.js");
-  assert(result.gamecastCanvasCssWidth % 80 === 0 && result.gamecastCanvasCssHeight % 80 === 0, `픽셀 캔버스 CSS 크기가 80의 정수 배율이 아닙니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
+  assert(result.gamecastCanvasPixelW === 120 && result.gamecastCanvasPixelH === 108, `게임캐스트 내부 해상도가 120x108이 아닙니다: ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/ui.js");
+  assert(result.gamecastCanvasCssWidth % 120 === 0 && result.gamecastCanvasCssHeight % 108 === 0, `픽셀 캔버스 CSS 크기가 120x108의 정수 배율이 아닙니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
+  assert(result.gamecastCanvasCssWidth >= 240 && result.gamecastCanvasCssHeight >= 216, `게임캐스트 표시 배율이 2x 미만입니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/styles.css");
+  assert(result.gamecastCanvasCssWidth / 120 === result.gamecastCanvasCssHeight / 108, `게임캐스트 표시 비율이 120:108과 다릅니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/styles.css");
   assert(result.gamecastCanvasWidth >= result.gamecastCanvasCssWidth && result.gamecastCanvasHeight >= result.gamecastCanvasCssHeight, `픽셀 캔버스 버퍼가 CSS 표시 크기보다 작습니다: buffer ${result.gamecastCanvasWidth}x${result.gamecastCanvasHeight}, css ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
   assert(/pixelated|crisp-edges/i.test(result.gamecastCanvasImageRendering), `픽셀 캔버스 image-rendering=${result.gamecastCanvasImageRendering}`, "src/styles.css");
   assert(result.gamecastCanvasPixelUnique >= 6 && result.gamecastCanvasAlphaSamples > 0, `픽셀 캔버스가 비었거나 팔레트가 너무 단조롭습니다: unique=${result.gamecastCanvasPixelUnique}, alpha=${result.gamecastCanvasAlphaSamples}`, "src/ui.js");

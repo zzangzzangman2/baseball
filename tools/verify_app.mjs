@@ -1203,13 +1203,16 @@ function checkDraftSystem() {
   assert(pickedProspects.length === 110, `picked 후보 ${pickedProspects.length}/110`, MODULE_PATHS.engine);
   assert(unpickedProspects.length === 40, `미지명 후보 ${unpickedProspects.length}/40`, MODULE_PATHS.engine);
   assert(draft.order[0]?.teamId === standings.at(-1)?.id, "드래프트 1순위가 정규시즌 역순 꼴찌팀이 아닙니다.", MODULE_PATHS.engine);
-  assert(rosterPlayers.length === initialRosterCount + 110, `드래프트 후 roster ${rosterPlayers.length}/${initialRosterCount + 110}`, MODULE_PATHS.engine);
-  assert((draft.rosterLedger ?? []).length === 110, `드래프트 rosterLedger ${draft.rosterLedger?.length ?? 0}/110`, MODULE_PATHS.engine);
-  assert(rookiePlayers.length === 110, `코드형 신인 로스터 ${rookiePlayers.length}/110`, MODULE_PATHS.engine);
-  assert(rookieCodes.size === 110, `코드형 신인 코드 고유값 ${rookieCodes.size}/110`, MODULE_PATHS.engine);
+  const rosterLedgerCount = (draft.rosterLedger ?? []).length;
+  const rightsLedgerCount = (draft.rightsLedger ?? []).length;
+  assert(rightsLedgerCount === 110, `드래프트 rightsLedger ${rightsLedgerCount}/110`, MODULE_PATHS.engine);
+  assert(rosterLedgerCount > 0 && rosterLedgerCount < 110, `드래프트 rosterLedger 제한 입단 ${rosterLedgerCount}`, MODULE_PATHS.engine);
+  assert(rosterPlayers.length === initialRosterCount + rosterLedgerCount, `드래프트 후 roster ${rosterPlayers.length}/${initialRosterCount + rosterLedgerCount}`, MODULE_PATHS.engine);
+  assert(rookiePlayers.length === rosterLedgerCount, `코드형 신인 로스터 ${rookiePlayers.length}/${rosterLedgerCount}`, MODULE_PATHS.engine);
+  assert(rookieCodes.size === rosterLedgerCount, `코드형 신인 코드 고유값 ${rookieCodes.size}/${rosterLedgerCount}`, MODULE_PATHS.engine);
   assert(problems.length === 0, `드래프트 후보 schema 오류 ${problems.length}건. 예: ${problems.slice(0, 6).join(" / ")}`, MODULE_PATHS.engine);
 
-  return `${draft.year} 드래프트 ${draft.prospects.length}명 풀, ${draft.picks.length}픽, 팀당 ${teamPickCounts[0]}명, 코드형 신인 ${rookiePlayers.length}명 roster 반영`;
+  return `${draft.year} 드래프트 ${draft.prospects.length}명 풀, ${draft.picks.length}픽, 팀당 ${teamPickCounts[0]}명, 보류권 ${rightsLedgerCount}명, 코드형 신인 ${rookiePlayers.length}명 roster 반영`;
 }
 
 function checkSecondaryDraftSystem() {
@@ -1508,28 +1511,30 @@ function checkAutonomousOffseasonRollover() {
   engineModule.simulatePostseason(state);
 
   const postseasonCompleteDate = state.currentDate;
-  const beforeRolloverPlayer = allPlayers(state)[0]?.player;
-  const beforeRolloverPlayerId = beforeRolloverPlayer?.id;
-  const beforeRolloverAge = Number(beforeRolloverPlayer?.age ?? 0);
   const offseason = engineModule.runAutonomousOffseason(state);
   const afterOffseasonRosterCount = allPlayers(state).length;
+  const beforeAgeByPlayerId = new Map(allPlayers(state).map(({ player }) => [String(player.id), Number(player.age ?? 0)]));
   const importedOffseason = saveModule.importGameState(saveModule.exportGameState(state));
+  const rosterLedgerCount = state.draft?.rosterLedger?.length ?? 0;
+  const rightsLedgerCount = state.draft?.rightsLedger?.length ?? 0;
 
   assert(offseason.ok === true, `자동 오프시즌 실패: ${offseason.message}`, MODULE_PATHS.engine);
   assert(state.phase === "offseason", `자동 오프시즌 phase=${state.phase}`, MODULE_PATHS.engine);
-  assert(afterOffseasonRosterCount === initialRosterCount + 110, `자동 오프시즌 roster ${afterOffseasonRosterCount}/${initialRosterCount + 110}`, MODULE_PATHS.engine);
-  assert((state.draft?.rosterLedger ?? []).length === 110, `자동 오프시즌 신인 ledger ${state.draft?.rosterLedger?.length ?? 0}/110`, MODULE_PATHS.engine);
+  assert(rightsLedgerCount === 110, `자동 오프시즌 신인 rights ledger ${rightsLedgerCount}/110`, MODULE_PATHS.engine);
+  assert(rosterLedgerCount > 0 && rosterLedgerCount < 110, `자동 오프시즌 제한 입단 ledger ${rosterLedgerCount}`, MODULE_PATHS.engine);
+  assert(afterOffseasonRosterCount === initialRosterCount + rosterLedgerCount, `자동 오프시즌 roster ${afterOffseasonRosterCount}/${initialRosterCount + rosterLedgerCount}`, MODULE_PATHS.engine);
   assert((state.secondaryDraft?.transferLedger ?? []).length === state.secondaryDraft?.picks?.length, "자동 오프시즌 2차 드래프트 이동 ledger가 픽 수와 다릅니다.", MODULE_PATHS.engine);
   assert((state.freeAgency?.signings ?? []).length >= 25, `자동 FA 계약 ${state.freeAgency?.signings?.length ?? 0}/25`, MODULE_PATHS.engine);
   assert((state.freeAgency?.foreignSignings ?? []).length === 10, `자동 외국인 권리 ${state.freeAgency?.foreignSignings?.length ?? 0}/10`, MODULE_PATHS.engine);
   assert((state.aiTradeMarket?.completed ?? []).length >= 1, `CPU 트레이드 ${state.aiTradeMarket?.completed?.length ?? 0}/1`, MODULE_PATHS.engine);
   assert(state.eventLog.some((event) => event.type === "offseason.autonomous.complete"), "offseason.autonomous.complete 이벤트가 없습니다.", MODULE_PATHS.engine);
-  assert((importedOffseason.draft?.rosterLedger ?? []).length === 110, "저장 roundtrip 후 신인 ledger가 사라졌습니다.", MODULE_PATHS.save);
+  assert((importedOffseason.draft?.rightsLedger ?? []).length === 110, "저장 roundtrip 후 신인 rights ledger가 사라졌습니다.", MODULE_PATHS.save);
+  assert((importedOffseason.draft?.rosterLedger ?? []).length === rosterLedgerCount, "저장 roundtrip 후 신인 roster ledger가 사라졌습니다.", MODULE_PATHS.save);
   assert((importedOffseason.freeAgency?.foreignSignings ?? []).length === 10, "저장 roundtrip 후 외국인 권리 ledger가 사라졌습니다.", MODULE_PATHS.save);
 
   const rollover = engineModule.advanceSeason(state);
   const afterRolloverPlayers = allPlayers(state);
-  const rolledPlayer = afterRolloverPlayers.find(({ player }) => player.id === beforeRolloverPlayerId)?.player;
+  const rolledPlayerEntry = afterRolloverPlayers.find(({ player }) => beforeAgeByPlayerId.has(String(player.id)));
   const rosterProblems = [];
   for (const { team, player } of afterRolloverPlayers) {
     if (player.teamId !== team.id || player.contract?.teamId !== team.id) {
@@ -1551,8 +1556,11 @@ function checkAutonomousOffseasonRollover() {
   assert(state.phase === "preseason", `롤오버 phase=${state.phase}`, MODULE_PATHS.engine);
   assert(state.gamesPlayed === 0, `롤오버 gamesPlayed=${state.gamesPlayed}`, MODULE_PATHS.engine);
   assert(state.teams.every((team) => team.wins === 0 && team.losses === 0 && team.ties === 0 && team.runsFor === 0 && team.runsAgainst === 0), "팀 성적이 리셋되지 않았습니다.", MODULE_PATHS.engine);
-  assert(afterRolloverPlayers.length === afterOffseasonRosterCount, `롤오버 roster 보존 ${afterRolloverPlayers.length}/${afterOffseasonRosterCount}`, MODULE_PATHS.engine);
-  assert(rolledPlayer?.age === beforeRolloverAge + 1, `나이 롤오버 ${rolledPlayer?.age}/${beforeRolloverAge + 1}`, MODULE_PATHS.engine);
+  assert(afterRolloverPlayers.length <= afterOffseasonRosterCount, `롤오버 roster 정리 후 수가 증가했습니다 ${afterRolloverPlayers.length}/${afterOffseasonRosterCount}`, MODULE_PATHS.engine);
+  assert(afterRolloverPlayers.length >= initialRosterCount, `롤오버 roster가 초기보다 과도하게 줄었습니다 ${afterRolloverPlayers.length}/${initialRosterCount}`, MODULE_PATHS.engine);
+  assert(rolledPlayerEntry?.player?.age === beforeAgeByPlayerId.get(String(rolledPlayerEntry?.player?.id)) + 1, `나이 롤오버 ${rolledPlayerEntry?.player?.age}`, MODULE_PATHS.engine);
+  assert(state.teams.every((team) => (team.roster ?? []).filter((player) => player.status === "active" && player.role === "pitcher").length >= 12), "롤오버 후 active 투수 12명 미만 팀이 있습니다.", MODULE_PATHS.engine);
+  assert(state.teams.every((team) => (team.roster ?? []).filter((player) => player.status === "active" && player.role !== "pitcher").length >= 9), "롤오버 후 active 타자 9명 미만 팀이 있습니다.", MODULE_PATHS.engine);
   assert((state.seasonHistory ?? []).length >= 1 && state.seasonHistory[0].closedAt === postseasonCompleteDate, "seasonHistory에 종료 시즌 스냅샷이 없습니다.", MODULE_PATHS.engine);
   assert(state.draft === null && state.secondaryDraft === null && state.freeAgency === null, "다음 시즌 전환 후 오프시즌 작업 상태가 초기화되지 않았습니다.", MODULE_PATHS.engine);
   assert(rosterProblems.length === 0, `롤오버 roster schema 오류 ${rosterProblems.length}건. 예: ${rosterProblems.slice(0, 6).join(" / ")}`, MODULE_PATHS.engine);
@@ -1562,7 +1570,7 @@ function checkAutonomousOffseasonRollover() {
   assert(state.phase === "regular", `2027 개막 phase=${state.phase}`, MODULE_PATHS.engine);
   assert(state.gamesPlayed === 0, `2027 개막 전 gamesPlayed=${state.gamesPlayed}`, MODULE_PATHS.engine);
 
-  return `자동 스토브 roster +${afterOffseasonRosterCount - initialRosterCount}, FA ${offseason.summary.faSignings}건, CPU 트레이드 ${offseason.summary.aiTrades}건, 2027 프리시즌 롤오버`;
+  return `자동 스토브 roster +${afterOffseasonRosterCount - initialRosterCount}, 신인입단 ${rosterLedgerCount}/보류권 ${rightsLedgerCount}, FA ${offseason.summary.faSignings}건, CPU 트레이드 ${offseason.summary.aiTrades}건, 2027 프리시즌 롤오버`;
 }
 
 function cloneForTest(value) {

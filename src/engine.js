@@ -50,6 +50,15 @@ const AI_OFFSEASON_TRADE_LIMIT = 4;
 const AI_OFFSEASON_TRADE_ATTEMPTS = 24;
 const ROOKIE_BASE_SALARY_KRW = 30_000_000;
 const ROOKIE_CONTRACT_YEARS = 3;
+const DRAFT_DIRECT_SIGNING_ROUNDS = 4;
+const DRAFT_MAX_ROSTER_SIGNINGS_PER_TEAM = 6;
+const ORG_ROSTER_TARGET = 68;
+const ORG_ROSTER_HARD_CAP = 74;
+const ACTIVE_ROSTER_TARGET = 30;
+const ACTIVE_PITCHER_TARGET = 13;
+const ACTIVE_HITTER_TARGET = ACTIVE_ROSTER_TARGET - ACTIVE_PITCHER_TARGET;
+const ACTIVE_PITCHER_MIN_REQUIRED = 12;
+const PAYROLL_TARGET_RATIO = 1.08;
 const NEXT_SEASON_START_MONTH_DAY = "03-01";
 const TRADE_COMMIT_MIN_ACCEPTANCE = 74;
 const TRADE_COMMIT_MIN_ELITE_ACCEPTANCE = 86;
@@ -392,7 +401,7 @@ export function simulateDraft(state) {
   draft.status = "complete";
   draft.completedDate = state.currentDate;
   const rosterResult = applyDraftSelectionsToRosters(state);
-  addLog(state, `${state.currentDate} ${draft.year} 신인 드래프트 완료: ${draft.picks.length}명 지명, ${rosterResult.added}명 rookie 계약 반영, 미지명 ${draft.prospects.length - draft.picks.length}명.`);
+  addLog(state, `${state.currentDate} ${draft.year} 신인 드래프트 완료: ${draft.picks.length}명 지명, ${rosterResult.added}명 rookie 계약, ${draft.rightsLedger?.length ?? 0}명 보류권, 미지명 ${draft.prospects.length - draft.picks.length}명.`);
   return state;
 }
 
@@ -732,6 +741,7 @@ export function runAutonomousOffseason(state) {
     date: state.currentDate,
     year: state.freeAgency?.year ?? draftYearForState(state),
     draftSignings: safeNumber(state.draft?.rosterLedger?.length),
+    draftRights: safeNumber(state.draft?.rightsLedger?.length),
     secondaryTransfers: safeNumber(state.secondaryDraft?.transferLedger?.length),
     faSignings: freeAgency.signed,
     foreignRights: foreign.signed,
@@ -775,7 +785,7 @@ export function advanceSeason(state) {
 
   state.seasonHistory = [historyEntry, ...((state.seasonHistory ?? []))].slice(0, 12);
   for (const team of state.teams ?? []) {
-    resetTeamForNextSeason(team, nextYear);
+    resetTeamForNextSeason(team, nextYear, state);
   }
 
   state.day = 1;
@@ -813,15 +823,50 @@ function applyDraftSelectionsToRosters(state) {
   if (!draft || draft.status !== "complete") return { added: 0 };
 
   draft.rosterLedger = Array.isArray(draft.rosterLedger) ? draft.rosterLedger : [];
+  draft.rightsLedger = Array.isArray(draft.rightsLedger) ? draft.rightsLedger : [];
   const existingPlayerIds = new Set(allPlayerEntries(state).map(({ player }) => String(player.id)));
   const ledgerIds = new Set(draft.rosterLedger.map((entry) => String(entry.prospectId)));
+  const rightsIds = new Set(draft.rightsLedger.map((entry) => String(entry.prospectId)));
+  const rosterSigningsByTeam = new Map((draft.rosterLedger ?? []).map((entry) => [String(entry.teamId), 0]));
+  for (const entry of draft.rosterLedger ?? []) {
+    rosterSigningsByTeam.set(String(entry.teamId), safeNumber(rosterSigningsByTeam.get(String(entry.teamId))) + 1);
+  }
   let added = 0;
+  let rightsHeld = 0;
 
   for (const pick of draft.picks ?? []) {
-    if (pick.rosterStatus === "signed" || ledgerIds.has(String(pick.prospectId))) continue;
     const prospect = (draft.prospects ?? []).find((entry) => String(entry.id) === String(pick.prospectId));
     const team = findTeamById(state, pick.teamId);
     if (!prospect || !team) continue;
+    const signedCount = safeNumber(rosterSigningsByTeam.get(String(team.id)));
+    const directSigning = shouldAddDraftPickToRoster(team, prospect, pick, signedCount);
+
+    if (!rightsIds.has(String(pick.prospectId))) {
+      const rightsLedger = {
+        id: `draft-rights-${draft.year}-${prospect.id}-${team.id}`,
+        date: state.currentDate,
+        year: draft.year,
+        pickNumber: pick.pickNumber,
+        round: pick.round,
+        teamId: team.id,
+        teamName: team.name,
+        prospectId: prospect.id,
+        displayCode: prospect.displayCode,
+        status: directSigning ? "will-sign" : "rights-held",
+        source: "anonymous-draft-rights-v1"
+      };
+      draft.rightsLedger.push(rightsLedger);
+      rightsIds.add(String(pick.prospectId));
+      rightsHeld += 1;
+    }
+
+    if (!directSigning) {
+      prospect.rosterStatus = "rights-held";
+      pick.rosterStatus = "rights-held";
+      continue;
+    }
+
+    if (pick.rosterStatus === "signed" || ledgerIds.has(String(pick.prospectId))) continue;
 
     const player = createRookiePlayerFromProspect(prospect, pick, team, draft.year, team.roster.length);
     if (existingPlayerIds.has(String(player.id))) {
@@ -863,10 +908,26 @@ function applyDraftSelectionsToRosters(state) {
       summary: `${team.name} ${prospect.displayCode} 신인 계약`
     });
     added += 1;
+    rosterSigningsByTeam.set(String(team.id), signedCount + 1);
   }
 
   draft.rosterApplied = true;
-  return { added };
+  return { added, rightsHeld };
+}
+
+function shouldAddDraftPickToRoster(team, prospect, pick, signedCount) {
+  if (signedCount >= DRAFT_MAX_ROSTER_SIGNINGS_PER_TEAM) return false;
+  const rosterSize = Array.isArray(team?.roster) ? team.roster.length : 0;
+  const round = safeNumber(pick?.round, 99);
+  const futureGrade = safeNumber(prospect?.futureGrade);
+  const presentGrade = safeNumber(prospect?.presentGrade);
+  const signability = safeNumber(prospect?.signability, 50);
+
+  if (rosterSize >= ORG_ROSTER_HARD_CAP && round > 2) return false;
+  if (round <= DRAFT_DIRECT_SIGNING_ROUNDS) return signability >= 32;
+  if (futureGrade >= 70 && signability >= 42) return true;
+  if (round <= 6 && futureGrade >= 58 && presentGrade >= 45 && signability >= 48) return true;
+  return false;
 }
 
 function createRookiePlayerFromProspect(prospect, pick, team, year, rosterIndex) {
@@ -1444,7 +1505,7 @@ function buildSeasonHistoryEntry(state, previousSeason, nextYear) {
   };
 }
 
-function resetTeamForNextSeason(team, season) {
+function resetTeamForNextSeason(team, season, state = null) {
   team.wins = 0;
   team.losses = 0;
   team.ties = 0;
@@ -1460,6 +1521,219 @@ function resetTeamForNextSeason(team, season) {
   }
   refreshTeamCompensationGrades(team, season);
   team.payroll = roundNumber(sum((team.roster ?? []).map((player) => ({ value: safeNumber(player.contract?.salary?.payrollAmountKRW) })), "value") / 100_000_000, 1);
+  applyRosterExitPolicy(team, season, state);
+  refreshTeamCompensationGrades(team, season);
+  team.payroll = roundNumber(sum((team.roster ?? []).map((player) => ({ value: safeNumber(player.contract?.salary?.payrollAmountKRW) })), "value") / 100_000_000, 1);
+  assignActiveRoster(team, season);
+}
+
+function applyRosterExitPolicy(team, season, state = null) {
+  if (!Array.isArray(team?.roster)) return { retired: 0, released: 0 };
+  const transactions = [];
+  const retained = [];
+  const currentRoster = team.roster;
+  const capacity = payrollCapacityEok(team);
+  const payrollTarget = capacity * PAYROLL_TARGET_RATIO;
+
+  for (const player of currentRoster) {
+    if (shouldRetirePlayer(player, team, season)) {
+      transactions.push(toRosterTransaction("retired", player, team, season, "age-curve"));
+    } else {
+      retained.push(player);
+    }
+  }
+
+  team.roster = retained;
+  trimRosterToTarget(team, season, transactions);
+  trimPayrollToTarget(team, season, transactions, payrollTarget);
+
+  if (transactions.length > 0 && state) {
+    state.rosterTransactions = {
+      ...(state?.rosterTransactions ?? {}),
+      history: [...transactions, ...((state?.rosterTransactions?.history ?? []))].slice(0, MARKET_LEDGER_LIMIT)
+    };
+    appendEvent(state, {
+      id: `event-roster-trim-${season}-${team.id}`,
+      type: "roster.trimmed",
+      date: `${season}-${NEXT_SEASON_START_MONTH_DAY}`,
+      teamId: team.id,
+      summary: `${team.name} 로스터 정리: 은퇴 ${transactions.filter((entry) => entry.type === "retired").length}명, 방출 ${transactions.filter((entry) => entry.type !== "retired").length}명`
+    });
+  }
+
+  return {
+    retired: transactions.filter((entry) => entry.type === "retired").length,
+    released: transactions.filter((entry) => entry.type !== "retired").length
+  };
+}
+
+function trimRosterToTarget(team, season, transactions) {
+  while ((team.roster ?? []).length > ORG_ROSTER_HARD_CAP) {
+    const candidate = selectRosterExitCandidate(team, "roster-cap");
+    if (!candidate) break;
+    removePlayerFromTeam(team, candidate, transactions, season, "released", "roster-cap");
+  }
+
+  while ((team.roster ?? []).length > ORG_ROSTER_TARGET) {
+    const candidate = selectRosterExitCandidate(team, "depth-trim");
+    if (!candidate || rosterRetentionScore(candidate, team) >= 150) break;
+    removePlayerFromTeam(team, candidate, transactions, season, "released", "depth-trim");
+  }
+}
+
+function trimPayrollToTarget(team, season, transactions, payrollTarget) {
+  let payroll = teamPayrollEok(team);
+  let guard = 0;
+  while (payroll > payrollTarget && guard < 18) {
+    const candidate = selectRosterExitCandidate(team, "payroll");
+    if (!candidate) break;
+    const salaryEok = safeNumber(candidate.contract?.salary?.payrollAmountKRW) / 100_000_000;
+    if (salaryEok < 2.5 && (team.roster ?? []).length <= ORG_ROSTER_TARGET) break;
+    removePlayerFromTeam(team, candidate, transactions, season, "nonTendered", "payroll-pressure");
+    payroll = teamPayrollEok(team);
+    guard += 1;
+  }
+}
+
+function selectRosterExitCandidate(team, reason) {
+  const protectedCount = reason === "payroll" ? 18 : 24;
+  const protectedIds = new Set(
+    [...(team.roster ?? [])]
+      .sort((a, b) => rosterRetentionScore(b, team) - rosterRetentionScore(a, team))
+      .slice(0, protectedCount)
+      .map((player) => String(player.id))
+  );
+  return [...(team.roster ?? [])]
+    .filter((player) => !protectedIds.has(String(player.id)))
+    .filter((player) => !player?.foreignPlayer?.isForeign || reason === "payroll")
+    .sort((a, b) => rosterExitScore(a, team, reason) - rosterExitScore(b, team, reason))[0] ?? null;
+}
+
+function removePlayerFromTeam(team, player, transactions, season, type, reason) {
+  const index = (team.roster ?? []).findIndex((entry) => String(entry.id) === String(player.id));
+  if (index < 0) return;
+  team.roster.splice(index, 1);
+  if (player.contract && typeof player.contract === "object") {
+    player.contract.status = type === "retired" ? "terminated" : "released";
+    player.contract.endSeason = Math.min(safeNumber(player.contract.endSeason, season), season - 1);
+  }
+  player.status = type === "retired" ? "retired" : "released";
+  transactions.push(toRosterTransaction(type, player, team, season, reason));
+}
+
+function toRosterTransaction(type, player, team, season, reason) {
+  return {
+    id: `roster-${type}-${season}-${team.id}-${player.id}`,
+    type,
+    reason,
+    season,
+    date: `${season}-${NEXT_SEASON_START_MONTH_DAY}`,
+    teamId: team.id,
+    teamName: team.name,
+    playerId: player.id,
+    playerName: player.name,
+    age: safeNumber(player.age),
+    ovr: safeNumber(player.ovr),
+    pot: safeNumber(player.pot),
+    salaryKRW: safeNumber(player.contract?.salary?.payrollAmountKRW),
+    source: "roster-ecosystem-v1"
+  };
+}
+
+function shouldRetirePlayer(player, team, season) {
+  const age = safeNumber(player.age, 26);
+  if (age >= 45) return true;
+  const score = rosterRetentionScore(player, team);
+  if (age >= 42 && score < 170) return true;
+  if (age >= 39 && score < 132 && deterministicRange(season, team.id, player.id, "retire", 0, 99) < 44) return true;
+  return false;
+}
+
+function rosterExitScore(player, team, reason) {
+  const salaryEok = safeNumber(player.contract?.salary?.payrollAmountKRW) / 100_000_000;
+  const salaryPressure = reason === "payroll" ? salaryEok * 9 : salaryEok * 1.2;
+  const anonymousPenalty = isAnonymousDraftPlayer(player) ? 8 : 0;
+  return rosterRetentionScore(player, team) - salaryPressure - anonymousPenalty;
+}
+
+function rosterRetentionScore(player, team) {
+  const age = safeNumber(player.age, 27);
+  const ovr = safeNumber(player.ovr);
+  const pot = safeNumber(player.pot, ovr);
+  const salaryEok = safeNumber(player.contract?.salary?.payrollAmountKRW) / 100_000_000;
+  const youth = age <= 23 ? 24 : age <= 26 ? 12 : age >= 36 ? -18 : age >= 33 ? -8 : 0;
+  const roleScarcity = player.role === "pitcher" ? 8 : player.position === "C" ? 12 : 0;
+  const activeBonus = player.status === "active" ? 8 : 0;
+  const sourcePenalty = isAnonymousDraftPlayer(player) ? 5 : 0;
+  return ovr * 0.94 + pot * 0.46 + youth + roleScarcity + activeBonus - salaryEok * 1.6 - sourcePenalty;
+}
+
+function assignActiveRoster(team, season) {
+  if (!Array.isArray(team?.roster)) return { active: 0 };
+  for (const player of team.roster) {
+    if (player.status !== "retired" && player.status !== "released" && player.militaryStatus?.availability !== "unavailable") {
+      player.status = "futures";
+    }
+  }
+
+  const pitchers = team.roster
+    .filter((player) => player.role === "pitcher" && player.militaryStatus?.availability !== "unavailable")
+    .sort((a, b) => pitcherScore(b) - pitcherScore(a) || safeNumber(b.ovr) - safeNumber(a.ovr));
+  const hitters = team.roster
+    .filter((player) => player.role !== "pitcher" && player.militaryStatus?.availability !== "unavailable")
+    .sort((a, b) => hitterScore(b) - hitterScore(a) || safeNumber(b.ovr) - safeNumber(a.ovr));
+
+  const selected = new Set();
+  for (const player of pitchers.slice(0, Math.min(ACTIVE_PITCHER_TARGET, pitchers.length))) {
+    selected.add(String(player.id));
+  }
+  selectHittersByGroup(hitters, selected, "C", 2);
+  selectHittersByGroup(hitters, selected, "IF", 6);
+  selectHittersByGroup(hitters, selected, "OF", 5);
+  for (const player of hitters) {
+    if (selected.size >= ACTIVE_ROSTER_TARGET) break;
+    selected.add(String(player.id));
+  }
+  for (const player of pitchers) {
+    if (selected.size >= ACTIVE_ROSTER_TARGET) break;
+    selected.add(String(player.id));
+  }
+
+  for (const player of team.roster) {
+    if (selected.has(String(player.id))) player.status = "active";
+  }
+  team.activeRosterUpdatedSeason = season;
+  return { active: selected.size };
+}
+
+function selectHittersByGroup(hitters, selected, group, count) {
+  const matches = hitters.filter((player) => hitterRosterGroup(player) === group);
+  for (const player of matches) {
+    if (selected.size >= ACTIVE_ROSTER_TARGET) break;
+    const current = matches.filter((entry) => selected.has(String(entry.id))).length;
+    if (current >= count) break;
+    selected.add(String(player.id));
+  }
+}
+
+function hitterRosterGroup(player) {
+  if (player.position === "C") return "C";
+  if (["OF", "LF", "CF", "RF"].includes(player.position)) return "OF";
+  return "IF";
+}
+
+function teamPayrollEok(team) {
+  return sum((team?.roster ?? []).map((player) => ({ value: safeNumber(player.contract?.salary?.payrollAmountKRW) })), "value") / 100_000_000;
+}
+
+function payrollCapacityEok(team) {
+  return safeNumber(team?.budget) + safeNumber(team?.market, 50) * 0.65 + safeNumber(team?.fan, 50) * 0.35;
+}
+
+function isAnonymousDraftPlayer(player) {
+  return String(player?.sourceKind ?? "") === "anonymous-draft-rookie-v1" ||
+    String(player?.id ?? "").startsWith("rookie-draft-") ||
+    /^DRF-\d{4}-\d{3}$/.test(String(player?.name ?? ""));
 }
 
 function advancePlayerForSeason(player, team, season) {
@@ -1699,6 +1973,7 @@ function buildFreeAgentOffers(state, candidates, year) {
         candidate,
         score: freeAgentOfferScore(candidate, team, teamNeeds, year)
       }))
+      .filter((entry) => entry.score >= 72)
       .sort((a, b) => b.score - a.score || safeNumber(b.candidate.ovr) - safeNumber(a.candidate.ovr) || compareText(a.candidate.name, b.candidate.name))
       .slice(0, FA_MARKET_OFFER_LIMIT_PER_TEAM);
 
@@ -1713,18 +1988,21 @@ function freeAgentOfferScore(candidate, team, needs, year) {
   const positionGroup = draftPositionGroup(candidate.position, candidate.role);
   const need = (needs ?? []).find((entry) => entry.key === positionGroup);
   const needBonus = need ? safeNumber(need.score) * 0.9 : 0;
-  const payrollRoom = safeNumber(team?.budget) - safeNumber(team?.payroll);
-  const payrollBonus = payrollRoom > 0 ? Math.min(10, payrollRoom / 15) : Math.max(-14, payrollRoom / 8);
+  const payrollRoom = payrollCapacityEok(team) - safeNumber(team?.payroll);
+  const payrollBonus = payrollRoom > 0 ? Math.min(12, payrollRoom / 13) : Math.max(-34, payrollRoom / 4);
+  const austerityPenalty = payrollRoom < -20 ? 16 : payrollRoom < -5 ? 7 : 0;
   const gradePenalty = candidate.compensationGrade === "A" ? 8 : candidate.compensationGrade === "B" ? 4 : candidate.compensationGrade === "C" ? 1 : 0;
   const sameLeagueNoise = deterministicRange(year, team?.id, candidate.playerId, -3, 3);
-  return candidate.marketScore + needBonus + payrollBonus + sameLeagueNoise - gradePenalty;
+  return candidate.marketScore + needBonus + payrollBonus + sameLeagueNoise - gradePenalty - austerityPenalty;
 }
 
 function createFreeAgentOffer(candidate, team, year, score, index) {
   const grade = candidate.compensationGrade ?? "none";
   const years = candidate.age <= 29 && candidate.ovr >= 125 ? 4 : candidate.age <= 33 && candidate.ovr >= 118 ? 3 : candidate.age <= 36 ? 2 : 1;
   const salaryBase = Math.max(candidate.previousSalaryKRW, (candidate.ovr * 7_500_000) + (candidate.pot * 1_500_000));
-  const annualSalaryKRW = roundMarketMoney(salaryBase * (1.08 + Math.max(0, score - 120) * 0.004));
+  const payrollRoom = payrollCapacityEok(team) - safeNumber(team?.payroll);
+  const pressureDiscount = payrollRoom < -20 ? 0.82 : payrollRoom < -5 ? 0.92 : 1;
+  const annualSalaryKRW = roundMarketMoney(salaryBase * (1.08 + Math.max(0, score - 120) * 0.004) * pressureDiscount);
   const signingBonusKRW = roundMarketMoney(annualSalaryKRW * (grade === "A" ? 0.42 : grade === "B" ? 0.3 : grade === "C" ? 0.18 : 0.12));
   const incentivesKRW = roundMarketMoney(annualSalaryKRW * (candidate.role === "pitcher" ? 0.16 : 0.12));
   const totalGuaranteeKRW = annualSalaryKRW * years + signingBonusKRW;
@@ -1897,7 +2175,10 @@ function buildForeignMarketOffers(state, foreignMarket, year) {
     const candidate = selectForeignCandidateForTeam(availableCandidates.length ? availableCandidates : foreignMarket.candidates, team, year, index);
     if (!candidate) continue;
     usedCandidateIds.add(candidate.id);
-    const contractKRW = roundMarketMoney(candidate.askingSalaryKRW * (1 + deterministicRange(year, team.id, candidate.id, -4, 8) / 100));
+    const payrollRoom = payrollCapacityEok(team) - safeNumber(team?.payroll);
+    const pressureDiscount = payrollRoom < -20 ? 0.78 : payrollRoom < -5 ? 0.9 : 1;
+    const contractKRW = roundMarketMoney(candidate.askingSalaryKRW * (1 + deterministicRange(year, team.id, candidate.id, -4, 8) / 100) * pressureDiscount);
+    const pressurePenalty = payrollRoom < -20 ? 14 : payrollRoom < -5 ? 6 : 0;
     offers.push({
       id: `foreign-offer-${year}-${team.id}-${candidate.id}`,
       type: "foreign",
@@ -1912,7 +2193,7 @@ function buildForeignMarketOffers(state, foreignMarket, year) {
       slotType: candidate.slotType,
       contractKRW,
       optionKRW: roundMarketMoney(contractKRW * 0.18),
-      offerScore: candidate.scoutingGrade + (candidate.tier === 1 ? 10 : 0) + deterministicRange(year, team.id, candidate.id, -3, 3),
+      offerScore: candidate.scoutingGrade + (candidate.tier === 1 ? 10 : 0) + deterministicRange(year, team.id, candidate.id, -3, 3) - pressurePenalty,
       sourcePolicy: "코드형 후보 권리 계약"
     });
   }
@@ -2184,6 +2465,7 @@ function createPostseasonSeries(definition, participantBySeed) {
     id: definition.id,
     round: definition.round,
     label: definition.label,
+    name: definition.label,
     shortLabel: definition.shortLabel,
     order: definition.order,
     winsNeeded: definition.winsNeeded,
@@ -4216,7 +4498,7 @@ function getAvailablePitchers(team) {
       player.militaryStatus?.availability !== "unavailable"
     );
   const activePitchers = pitchers.filter(isActiveRosterPlayer);
-  return activePitchers.length >= 10 ? activePitchers : pitchers;
+  return activePitchers.length >= ACTIVE_PITCHER_MIN_REQUIRED ? activePitchers : pitchers;
 }
 
 function nextRotationIndex(team, length = 5) {

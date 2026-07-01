@@ -63,7 +63,8 @@ const POSITION_GROUP_LABELS = {
   other: "기타"
 };
 
-const GAMECAST_PIXEL_SIZE = 80;
+const GAMECAST_PIXEL_W = 120;
+const GAMECAST_PIXEL_H = 108;
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
 const GAMECAST_PLAYBACK_COUNT = 8;
 const GAMECAST_PA_MS = 850;
@@ -1743,7 +1744,7 @@ function renderGamecastPanel(state) {
             </span>
           </div>
           <div class="gamecast-screen ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen aria-hidden="true">
-            <canvas id="${GAMECAST_CANVAS_ID}" class="gamecast-pixel-canvas" width="${GAMECAST_PIXEL_SIZE}" height="${GAMECAST_PIXEL_SIZE}" aria-hidden="true"></canvas>
+            <canvas id="${GAMECAST_CANVAS_ID}" class="gamecast-pixel-canvas" width="${GAMECAST_PIXEL_W}" height="${GAMECAST_PIXEL_H}" data-pixel-w="${GAMECAST_PIXEL_W}" data-pixel-h="${GAMECAST_PIXEL_H}" aria-hidden="true"></canvas>
           </div>
           <div class="gamecast-now">
             <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
@@ -1912,21 +1913,35 @@ function initGamecastPixelScreen(root) {
 
 function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, feedItems }) {
   const palette = {
-    outline: "#2b2830",
+    outline: "#23202a",
+    grassLo: "#4f8a73",
+    grassHi: "#8fd0b4",
+    grassEdge: "#3f7361",
     grassD: "#4f8a73",
-    grassM: "#74b49b",
-    grassL: "#bfe8d8",
-    dirtD: "#d9a94e",
-    dirtM: "#ffe39a",
-    dirtL: "#fff2c4",
+    grassM: "#8fd0b4",
+    grassL: "#8fd0b4",
+    dirtD: "#c78a3e",
+    dirtM: "#e8b866",
+    dirtL: "#ffe39a",
     base: "#fffefb",
-    baseSh: "#d8cdbf",
+    baseSh: "#c9bcab",
     runner: "#c64b74",
     runnerL: "#e57a9b",
-    hit: "#74b49b",
+    hit: "#8fd0b4",
     homer: "#ff8f83",
     homerL: "#ffb3a6",
     walk: "#b9d9f7",
+    legs: "#3a3550",
+    skin: "#f2c79a",
+    wall: "#24483a",
+    wallCap: "#1b3a2e",
+    track: "#caa25f",
+    stand: "#6f6874",
+    standD: "#575160",
+    crowdA: "#c64b74",
+    crowdB: "#b9d9f7",
+    crowdC: "#ffe39a",
+    pole: "#ffd23f",
     out: "#77717a"
   };
   const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
@@ -1946,6 +1961,7 @@ function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNod
     nowDetail,
     feedItems,
     palette,
+    fieldCache: buildGamecastFieldCache(palette),
     prefersReducedMotion,
     shakenEventId: ""
   };
@@ -2079,121 +2095,156 @@ function resizeGamecastCanvas(screen, canvas, ctx, state) {
     Number.parseFloat(style.paddingRight || "0") +
     Number.parseFloat(style.borderLeftWidth || "0") +
     Number.parseFloat(style.borderRightWidth || "0");
-  const available = Math.max(GAMECAST_PIXEL_SIZE, Math.floor((rect.width || 160) - horizontalInset));
-  const scale = Math.max(1, Math.floor(available / GAMECAST_PIXEL_SIZE));
+  const available = Math.max(GAMECAST_PIXEL_W, Math.floor((rect.width || 240) - horizontalInset));
+  const scale = Math.max(1, Math.floor(available / GAMECAST_PIXEL_W));
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   state.scale = scale;
   state.dpr = dpr;
-  canvas.style.width = `${GAMECAST_PIXEL_SIZE * scale}px`;
-  canvas.style.height = `${GAMECAST_PIXEL_SIZE * scale}px`;
-  canvas.width = Math.round(GAMECAST_PIXEL_SIZE * scale * dpr);
-  canvas.height = Math.round(GAMECAST_PIXEL_SIZE * scale * dpr);
+  canvas.style.width = `${GAMECAST_PIXEL_W * scale}px`;
+  canvas.style.height = `${GAMECAST_PIXEL_H * scale}px`;
+  canvas.width = Math.round(GAMECAST_PIXEL_W * scale * dpr);
+  canvas.height = Math.round(GAMECAST_PIXEL_H * scale * dpr);
   ctx.imageSmoothingEnabled = false;
-  ctx.setTransform(canvas.width / GAMECAST_PIXEL_SIZE, 0, 0, canvas.height / GAMECAST_PIXEL_SIZE, 0, 0);
+  ctx.setTransform(canvas.width / GAMECAST_PIXEL_W, 0, 0, canvas.height / GAMECAST_PIXEL_H, 0, 0);
 }
 
 function drawGamecastFrame(ctx, state, frame) {
   const palette = state.palette;
-  clearPixelCanvas(ctx, palette);
-  drawPixelField(ctx, palette);
-  drawPixelDiamond(ctx, palette, frame.bases);
+  if (state.fieldCache) ctx.drawImage(state.fieldCache, 0, 0);
+  else drawGamecastFieldTo(ctx, palette);
+  drawGamecastBaseRunners(ctx, palette, frame.bases);
   drawPixelOutPips(ctx, palette, frame);
   drawPixelSideIcon(ctx, palette, frame);
   drawPixelAction(ctx, palette, frame);
   if (frame.scoreFlash) drawPixelScoreBurst(ctx, palette, frame);
 }
 
-function clearPixelCanvas(ctx, palette) {
-  ctx.fillStyle = palette.grassM;
-  ctx.fillRect(0, 0, GAMECAST_PIXEL_SIZE, GAMECAST_PIXEL_SIZE);
+function buildGamecastFieldCache(palette) {
+  if (typeof document === "undefined") return null;
+  const field = document.createElement("canvas");
+  field.width = GAMECAST_PIXEL_W;
+  field.height = GAMECAST_PIXEL_H;
+  const fieldCtx = field.getContext("2d");
+  if (!fieldCtx) return null;
+  fieldCtx.imageSmoothingEnabled = false;
+  drawGamecastFieldTo(fieldCtx, palette);
+  return field;
 }
 
-function drawPixelField(ctx, palette) {
-  ctx.fillStyle = palette.grassL;
-  for (let y = 0; y < GAMECAST_PIXEL_SIZE; y += 8) {
-    ctx.fillRect(0, y, GAMECAST_PIXEL_SIZE, 4);
-  }
-  ctx.fillStyle = palette.grassD;
-  for (let y = 4; y < GAMECAST_PIXEL_SIZE; y += 12) {
-    ctx.fillRect(0, y, GAMECAST_PIXEL_SIZE, 2);
-  }
-  ctx.fillStyle = palette.grassD;
-  for (let y = 44; y < GAMECAST_PIXEL_SIZE; y += 8) {
-    for (let x = y % 16 === 0 ? 2 : 6; x < GAMECAST_PIXEL_SIZE; x += 12) {
-      ctx.fillRect(x, y, 2, 2);
+function drawGamecastFieldTo(ctx, palette) {
+  drawBallparkOutfield(ctx, palette);
+  drawBallparkInfield(ctx, palette);
+  drawBallparkBases(ctx, palette);
+}
+
+function drawBallparkOutfield(ctx, palette) {
+  const fx = 60;
+  const fy = 104;
+  const wallRadius = 90;
+  for (let y = 0; y < GAMECAST_PIXEL_H; y += 1) {
+    for (let x = 0; x < GAMECAST_PIXEL_W; x += 1) {
+      const distance = Math.hypot(x - fx, y - fy);
+      if (distance > wallRadius) {
+        const crowd = [palette.crowdA, palette.crowdB, palette.crowdC][(x + y) % 3];
+        const color = (x * 5 + y * 3) % 9 === 0 ? crowd : ((x + y) % 2 ? palette.stand : palette.standD);
+        drawPixel(ctx, x, y, color);
+      } else if (distance > wallRadius - 2) {
+        drawPixel(ctx, x, y, y < 30 ? palette.wallCap : palette.wall);
+      } else if (distance > wallRadius - 5) {
+        drawPixel(ctx, x, y, palette.track);
+      } else {
+        drawPixel(ctx, x, y, Math.floor(distance / 6) % 2 ? palette.grassLo : palette.grassHi);
+      }
     }
   }
-  drawPixelLine(ctx, 40, 66, 6, 24, palette.base, 1);
-  drawPixelLine(ctx, 40, 66, 74, 24, palette.base, 1);
-}
 
-function drawPixelDiamond(ctx, palette, baseState) {
-  fillPixelDiamond(ctx, 40, 48, 27, 24, palette.outline);
-  fillPixelDiamond(ctx, 40, 48, 25, 22, palette.dirtM);
-  fillPixelDiamond(ctx, 40, 48, 18, 16, palette.dirtL);
-  fillPixelDiamond(ctx, 40, 48, 12, 10, palette.dirtM);
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(48, 4, 24, 8);
+  ctx.fillStyle = "#12211b";
+  ctx.fillRect(49, 5, 22, 6);
+  for (let index = 0; index < 6; index += 1) {
+    drawPixel(ctx, 51 + index * 3, 8, index % 2 ? palette.crowdC : palette.grassHi);
+  }
+
+  for (let y = 30; y < 48; y += 1) {
+    drawPixel(ctx, 15, y, palette.pole);
+    drawPixel(ctx, 105, y, palette.pole);
+  }
 
   const bases = gamecastBasePositions();
-  drawPixelLine(ctx, bases.home.x, bases.home.y, bases.first.x, bases.first.y, palette.dirtD, 1);
-  drawPixelLine(ctx, bases.first.x, bases.first.y, bases.second.x, bases.second.y, palette.dirtD, 1);
-  drawPixelLine(ctx, bases.second.x, bases.second.y, bases.third.x, bases.third.y, palette.dirtD, 1);
-  drawPixelLine(ctx, bases.third.x, bases.third.y, bases.home.x, bases.home.y, palette.dirtD, 1);
-
-  ctx.fillStyle = palette.dirtD;
-  ctx.fillRect(36, 45, 9, 4);
-  ctx.fillStyle = palette.base;
-  ctx.fillRect(39, 45, 3, 1);
-  ctx.fillRect(40, 46, 1, 1);
-
-  drawPixelBatterBoxes(ctx, palette);
-  drawPixelHomePlate(ctx, palette, bases.home);
-
-  drawBaseAndRunner(ctx, palette, bases.first, baseState[0]);
-  drawBaseAndRunner(ctx, palette, bases.second, baseState[1]);
-  drawBaseAndRunner(ctx, palette, bases.third, baseState[2]);
+  drawPixelLine(ctx, bases.home.x, bases.home.y, 16, 46, palette.base, 1);
+  drawPixelLine(ctx, bases.home.x, bases.home.y, 104, 46, palette.base, 1);
 }
 
-function drawPixelBatterBoxes(ctx, palette) {
+function drawBallparkInfield(ctx, palette) {
+  const bases = gamecastBasePositions();
+  drawPixelLine(ctx, bases.home.x, bases.home.y, bases.first.x, bases.first.y, palette.dirtM, 3);
+  drawPixelLine(ctx, bases.first.x, bases.first.y, bases.second.x, bases.second.y, palette.dirtM, 3);
+  drawPixelLine(ctx, bases.second.x, bases.second.y, bases.third.x, bases.third.y, palette.dirtM, 3);
+  drawPixelLine(ctx, bases.third.x, bases.third.y, bases.home.x, bases.home.y, palette.dirtM, 3);
+
+  for (const base of [bases.first, bases.second, bases.third]) fillPixelCircle(ctx, base.x, base.y, 5, palette.dirtM);
+  fillPixelCircle(ctx, bases.home.x, bases.home.y, 6, palette.dirtM);
+  fillPixelCircle(ctx, bases.mound.x, bases.mound.y, 6, palette.dirtL);
+  fillPixelCircle(ctx, bases.mound.x, bases.mound.y, 4, palette.dirtM);
+
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(bases.mound.x - 1, bases.mound.y - 1, 3, 1);
   ctx.fillStyle = palette.dirtL;
-  ctx.fillRect(34, 62, 2, 4);
-  ctx.fillRect(44, 62, 2, 4);
+  ctx.fillRect(bases.home.x - 8, bases.home.y - 5, 3, 7);
+  ctx.fillRect(bases.home.x + 6, bases.home.y - 5, 3, 7);
+  drawPixelSprite(ctx, palette, bases.home.x - 2, bases.home.y - 2, [
+    [0, 0, palette.base],
+    [1, 0, palette.base],
+    [2, 0, palette.base],
+    [1, 1, palette.base]
+  ]);
 }
 
-function drawPixelHomePlate(ctx, palette, position) {
-  ctx.fillStyle = palette.outline;
-  ctx.fillRect(position.x - 2, position.y - 2, 5, 3);
-  ctx.fillStyle = palette.base;
-  ctx.fillRect(position.x - 1, position.y - 2, 3, 1);
-  ctx.fillRect(position.x - 1, position.y - 1, 3, 1);
-  ctx.fillRect(position.x, position.y, 1, 1);
+function drawBallparkBases(ctx, palette) {
+  const bases = gamecastBasePositions();
+  drawBallparkBase(ctx, palette, bases.first);
+  drawBallparkBase(ctx, palette, bases.second);
+  drawBallparkBase(ctx, palette, bases.third);
 }
 
-function drawBaseAndRunner(ctx, palette, position, occupied) {
-  ctx.fillStyle = palette.baseSh;
-  ctx.fillRect(position.x - 1, position.y + 1, 3, 1);
-  ctx.fillStyle = palette.base;
-  ctx.fillRect(position.x - 1, position.y - 1, 3, 3);
-  if (!occupied) return;
-  ctx.fillStyle = palette.outline;
-  ctx.fillRect(position.x - 1, position.y - 3, 3, 3);
-  ctx.fillStyle = palette.runner;
-  ctx.fillRect(position.x, position.y - 3, 1, 2);
-  ctx.fillStyle = palette.runnerL;
-  ctx.fillRect(position.x, position.y - 3, 1, 1);
+function drawBallparkBase(ctx, palette, position) {
+  drawPixelSprite(ctx, palette, position.x - 2, position.y - 1, [
+    [0, 0, palette.base],
+    [1, 0, palette.base],
+    [2, 0, palette.base],
+    [3, 0, palette.base],
+    [0, 1, palette.base],
+    [1, 1, palette.base],
+    [2, 1, palette.base],
+    [3, 1, palette.base]
+  ]);
+}
+
+function drawGamecastBaseRunners(ctx, palette, baseState) {
+  const bases = gamecastBasePositions();
+  if (baseState?.[0]) drawPixelRunner(ctx, palette, bases.first, false, palette.runner, 2);
+  if (baseState?.[1]) drawPixelRunner(ctx, palette, bases.second, false, palette.runner, 2);
+  if (baseState?.[2]) drawPixelRunner(ctx, palette, bases.third, false, palette.runner, 2);
+}
+
+function drawPixel(ctx, x, y, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x | 0, y | 0, 1, 1);
 }
 
 function drawPixelOutPips(ctx, palette, frame) {
   const outs = Math.min(3, Math.max(0, Number(frame.outs ?? 0)));
   for (let index = 0; index < 3; index += 1) {
     ctx.fillStyle = palette.outline;
-    ctx.fillRect(52 + index * 8, 70, 5, 5);
+    ctx.fillRect(96 + index * 7, 98, 6, 6);
     ctx.fillStyle = index < outs ? palette.out : palette.baseSh;
-    ctx.fillRect(53 + index * 8, 71, 3, 3);
+    ctx.fillRect(97 + index * 7, 99, 4, 4);
   }
 }
 
 function drawPixelSideIcon(ctx, palette, frame) {
-  const x = 9;
+  const x = 8;
   const y = 8;
   ctx.fillStyle = palette.outline;
   if (frame.side === "home") {
@@ -2212,8 +2263,8 @@ function drawPixelSideIcon(ctx, palette, frame) {
 function drawPixelAction(ctx, palette, frame) {
   if (frame.flash) {
     ctx.fillStyle = palette.base;
-    for (let y = 0; y < GAMECAST_PIXEL_SIZE; y += 4) {
-      ctx.fillRect(0, y, GAMECAST_PIXEL_SIZE, 1);
+    for (let y = 0; y < GAMECAST_PIXEL_H; y += 4) {
+      ctx.fillRect(0, y, GAMECAST_PIXEL_W, 1);
     }
   }
   if (frame.ballTrail?.length) drawTrail(ctx, palette.homerL, frame.ballTrail);
@@ -2222,16 +2273,17 @@ function drawPixelAction(ctx, palette, frame) {
   }
   if (frame.ball) drawPixelBall(ctx, palette, frame.ball, frame.ballColor ?? palette.base);
   for (const runner of frame.runners ?? []) {
-    drawPixelRunner(ctx, palette, runner.position, runner.squash, runner.color);
+    drawPixelRunner(ctx, palette, runner.position, runner.squash, runner.color, runner.runFrame);
   }
 }
 
 function gamecastBasePositions() {
   return {
-    home: { x: 40, y: 66 },
-    first: { x: 62, y: 48 },
-    second: { x: 40, y: 28 },
-    third: { x: 18, y: 48 }
+    home: { x: 60, y: 96 },
+    first: { x: 86, y: 76 },
+    second: { x: 60, y: 56 },
+    third: { x: 34, y: 76 },
+    mound: { x: 60, y: 76 }
   };
 }
 
@@ -2351,6 +2403,7 @@ function buildRunnerSprites(event, progress, palette) {
     },
     trail: [],
     color: palette.out,
+    runFrame: Math.floor(moveT * 8) % 2,
     squash: progress > 0.55
   });
   return runners;
@@ -2366,6 +2419,7 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT) {
     ],
     color,
     trailColor,
+    runFrame: moveT > 0.92 ? 2 : Math.floor(moveT * 8) % 2,
     squash: moveT > 0.92
   };
 }
@@ -2375,16 +2429,16 @@ function buildBallSprite(event, progress) {
   if (progress < 0.15) {
     const t = progress / 0.15;
     return {
-      x: Math.round(lerp(40, bases.home.x, t)),
-      y: Math.round(lerp(46, bases.home.y - 4, t))
+      x: Math.round(lerp(bases.mound.x, bases.home.x, t)),
+      y: Math.round(lerp(bases.mound.y, bases.home.y - 4, t))
     };
   }
   if (event.outcome !== "homeRun" || progress >= 0.72) return null;
   const t = Math.max(0, Math.min(1, (progress - 0.15) / 0.57));
   const eased = easeOutCubic(t);
   return {
-    x: Math.round(40 + Math.sin(t * Math.PI) * 22),
-    y: Math.round(63 - 48 * eased - Math.sin(t * Math.PI) * 12)
+    x: Math.round(60 + Math.sin(t * Math.PI) * 34),
+    y: Math.round(92 - 78 * eased - Math.sin(t * Math.PI) * 16)
   };
 }
 
@@ -2396,8 +2450,8 @@ function buildBallTrail(event, progress) {
     const t = Math.max(0, Math.min(1, (p - 0.15) / 0.57));
     const eased = easeOutCubic(t);
     points.push({
-      x: Math.round(40 + Math.sin(t * Math.PI) * 22),
-      y: Math.round(63 - 48 * eased - Math.sin(t * Math.PI) * 12)
+      x: Math.round(60 + Math.sin(t * Math.PI) * 34),
+      y: Math.round(92 - 78 * eased - Math.sin(t * Math.PI) * 16)
     });
   }
   return points;
@@ -2413,14 +2467,14 @@ function gamecastAdvanceCount(outcome) {
 
 function gamecastPathBetween(startBase, targetBase) {
   const bases = gamecastBasePositions();
-  const points = [bases.home, bases.first, bases.second, bases.third, { x: 40, y: 70 }];
+  const points = [bases.home, bases.first, bases.second, bases.third, { x: 60, y: 102 }];
   const start = Math.max(0, Math.min(4, startBase));
   const target = Math.max(start, Math.min(4, targetBase));
   return points.slice(start, target + 1).map((point) => ({ ...point }));
 }
 
 function positionAlongPath(path, t) {
-  if (!path.length) return { x: 40, y: 66 };
+  if (!path.length) return { x: 60, y: 96 };
   if (path.length === 1) return { ...path[0] };
   const scaled = t * (path.length - 1);
   const index = Math.min(path.length - 2, Math.floor(scaled));
@@ -2446,7 +2500,7 @@ function syncGamecastDom(state, frame) {
 function drawPixelScoreBurst(ctx, palette, frame) {
   const count = Math.max(1, Math.min(4, Number(frame.event?.runs ?? 1)));
   const x = 8;
-  const y = 63;
+  const y = 86;
   ctx.fillStyle = palette.outline;
   ctx.fillRect(x + 2, y, 1, 7);
   ctx.fillRect(x, y + 3, 5, 1);
@@ -2461,15 +2515,38 @@ function drawPixelScoreBurst(ctx, palette, frame) {
   }
 }
 
-function drawPixelRunner(ctx, palette, position, squash, color) {
-  const x = Math.round(position.x);
-  const y = Math.round(position.y);
+// outlined pixel sprite: cells=[[x,y,color]...] gets a 1px dark silhouette border
+function drawPixelSprite(ctx, palette, ox, oy, cells) {
+  const set = new Set(cells.map((c) => c[0] + "," + c[1]));
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(x - 2, y - 2, squash ? 6 : 5, squash ? 4 : 5);
-  ctx.fillStyle = color;
-  ctx.fillRect(x - 1, y - 1, squash ? 4 : 3, squash ? 2 : 3);
-  ctx.fillStyle = palette.runnerL;
-  ctx.fillRect(x, y - 1, 1, 1);
+  for (const c of cells) {
+    for (const [ax, ay] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (!set.has((c[0] + ax) + "," + (c[1] + ay))) ctx.fillRect(ox + c[0] + ax, oy + c[1] + ay, 1, 1);
+    }
+  }
+  for (const c of cells) { ctx.fillStyle = c[2]; ctx.fillRect(ox + c[0], oy + c[1], 1, 1); }
+}
+
+// 5x8 outlined running person; runFrame 0/1 = stride, 2 = standing
+function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0) {
+  const S = palette.skin;
+  const L = palette.legs;
+  const ox = Math.round(position.x) - 2;
+  const oy = Math.round(position.y) - 8;
+  const J = palette.base;
+  const cells = [
+    [1, 0, color], [2, 0, color], [3, 0, color],
+    [1, 1, S], [2, 1, S], [3, 1, S],
+    [1, 2, J], [2, 2, J], [3, 2, J],
+    [1, 3, J], [2, 3, J], [3, 3, J],
+    [1, 4, J], [2, 4, J], [3, 4, J]
+  ];
+  if (runFrame === 2) cells.push([1, 5, L], [3, 5, L], [1, 6, L], [3, 6, L], [1, 7, L], [3, 7, L]);
+  else if (runFrame === 1) cells.push([4, 3, S], [0, 2, S], [1, 5, L], [3, 5, L], [1, 6, L], [4, 6, L], [0, 7, L], [4, 7, L]);
+  else cells.push([0, 3, S], [4, 2, S], [1, 5, L], [3, 5, L], [0, 6, L], [3, 6, L], [0, 7, L], [4, 7, L]);
+  ctx.fillStyle = palette.grassEdge;
+  ctx.fillRect(ox + 1, oy + 8, 3, 1);
+  drawPixelSprite(ctx, palette, ox, oy, cells);
 }
 
 function drawPixelBall(ctx, palette, position, color) {
@@ -2493,6 +2570,17 @@ function fillPixelDiamond(ctx, cx, cy, rx, ry, color) {
   for (let y = -ry; y <= ry; y += 1) {
     const width = Math.max(1, Math.round((1 - Math.abs(y) / ry) * rx));
     ctx.fillRect(cx - width, cy + y, width * 2 + 1, 1);
+  }
+}
+
+function fillPixelCircle(ctx, cx, cy, radius, color) {
+  ctx.fillStyle = color;
+  for (let y = -radius; y <= radius; y += 1) {
+    for (let x = -radius; x <= radius; x += 1) {
+      if (x * x + y * y <= radius * radius) {
+        ctx.fillRect(cx + x, cy + y, 1, 1);
+      }
+    }
   }
 }
 
