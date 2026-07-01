@@ -401,6 +401,42 @@ async function checkViewport(viewport) {
     "다음 경기 보기/시뮬레이션 패널을 찾지 못했습니다.",
     "src/ui.js"
   );
+  const playerDetailProbe = await evaluateInBrowser(`
+    (() => {
+      const row = [...document.querySelectorAll("[data-action='open-player-detail']")]
+        .find((node) => (node.dataset.playerId || "").trim().length > 0);
+      row?.click();
+      const panel = document.querySelector("[data-player-detail]");
+      const panelText = panel?.textContent ?? "";
+      const attributeNodes = [...(panel?.querySelectorAll(".player-attribute") ?? [])];
+      return {
+        clickableRows: document.querySelectorAll("[data-action='open-player-detail'][data-player-id]").length,
+        hasPanel: Boolean(panel),
+        hasIdentity: Boolean(panel?.querySelector(".player-detail-identity h2")),
+        hasLogo: Boolean(panel?.querySelector(".player-avatar-logo")),
+        hasRatings: panelText.includes("OVR") && panelText.includes("POT"),
+        hasAttributeHeader: panelText.includes("능력치") && panelText.includes("높음 빨강"),
+        hasStats: panelText.includes("2026 시즌 기록") && Boolean(panel?.querySelector(".player-stat-grid strong")),
+        attributeCount: attributeNodes.length,
+        coloredAttributeCount: attributeNodes.filter((node) =>
+          ["is-elite", "is-strong", "is-average", "is-weak", "is-poor"].some((className) => node.classList.contains(className))
+        ).length
+      };
+    })()
+  `);
+  assert(playerDetailProbe.clickableRows > 0, "클릭 가능한 선수 행을 찾지 못했습니다.", "src/ui.js");
+  assert(
+    playerDetailProbe.hasPanel &&
+      playerDetailProbe.hasIdentity &&
+      playerDetailProbe.hasLogo &&
+      playerDetailProbe.hasRatings &&
+      playerDetailProbe.hasAttributeHeader &&
+      playerDetailProbe.hasStats &&
+      playerDetailProbe.attributeCount >= 12 &&
+      playerDetailProbe.coloredAttributeCount >= 12,
+    `FM식 선수 상세 패널 검증 실패: ${JSON.stringify(playerDetailProbe)}`,
+    "src/ui.js"
+  );
   const preseasonProbe = await evaluateInBrowser(`
     (() => {
       const before = document.body.innerText;
@@ -573,6 +609,12 @@ async function checkViewport(viewport) {
         ".schedule-day strong",
         ".schedule-day small",
         ".schedule-result",
+        ".player-detail-identity p",
+        ".player-detail-facts dd",
+        ".player-detail-card-head small",
+        ".player-attribute span",
+        ".player-attribute strong",
+        ".player-stat-grid strong",
         ".news-item p",
         ".fa-offer-item small",
         ".market-ledger-item small",
@@ -774,6 +816,7 @@ async function checkViewport(viewport) {
     "자동스토브 OK",
     "다음시즌 OK",
     "다음경기선택 OK",
+    "선수상세 OK",
     "프리시즌 OK",
     "빠른주간 OK",
     "도트중계 OK",

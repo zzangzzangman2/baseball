@@ -138,6 +138,7 @@ function render(root, state) {
   const manager = getManagerProfile(state);
   const lineup = buildLineup(selectedTeam);
   const roster = getRoster(selectedTeam);
+  const selectedPlayerEntry = getSelectedPlayerEntry(state, selectedTeam);
   const seasonLeaders = buildSeasonLeaders(selectedTeam);
   const pitchingSnapshot = buildPitchingSnapshot(selectedTeam);
   const injuries = roster.filter((player) => Number(player.injuredDays) > 0);
@@ -226,6 +227,7 @@ function render(root, state) {
 
         ${renderNextGamePanel(state, selectedTeam, nextGame)}
         ${renderScheduleCalendarPanel(state, selectedTeam, monthlySchedule)}
+        ${renderPlayerDetailPanel(state, selectedPlayerEntry)}
         ${renderManagerBriefingPanel(state, selectedTeam, manager)}
         ${renderPreseasonDeskPanel(state, selectedTeam, manager)}
         ${renderPendingMailDecisionPanel(state)}
@@ -1260,7 +1262,7 @@ function renderContractSnapshot(summary) {
 
 function renderContractPlayer(player) {
   return `
-    <li>
+    <li class="is-clickable" data-action="open-player-detail" data-player-id="${escapeAttribute(player.id ?? player.playerId ?? "")}" data-team-id="${escapeAttribute(player.teamId ?? "")}" tabindex="0" role="button">
       <span class="order">${escapeHtml(player.position || "-")}</span>
       <span>
         <strong>${escapeHtml(player.name)}</strong>
@@ -1275,6 +1277,38 @@ function bindActions(root, state) {
   const picker = root.querySelector("[data-action='select-team']");
   picker?.addEventListener("change", (event) => {
     state.selectedTeamId = event.target.value;
+    state.ui = {
+      ...(state.ui ?? {}),
+      selectedPlayerId: "",
+      selectedPlayerTeamId: ""
+    };
+    render(root, state);
+  });
+
+  root.querySelectorAll("[data-action='open-player-detail']").forEach((row) => {
+    const open = () => {
+      state.ui = {
+        ...(state.ui ?? {}),
+        selectedPlayerId: row.dataset.playerId || "",
+        selectedPlayerTeamId: row.dataset.teamId || state.selectedTeamId || ""
+      };
+      render(root, state);
+      scrollToPlayerDetail();
+    };
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      open();
+    });
+  });
+
+  root.querySelector("[data-action='close-player-detail']")?.addEventListener("click", () => {
+    state.ui = {
+      ...(state.ui ?? {}),
+      selectedPlayerId: "",
+      selectedPlayerTeamId: ""
+    };
     render(root, state);
   });
 
@@ -1635,6 +1669,13 @@ function scrollToGamecast() {
   });
 }
 
+function scrollToPlayerDetail() {
+  if (typeof window === "undefined") return;
+  window.requestAnimationFrame(() => {
+    document.getElementById("player-detail")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+}
+
 function renderTeamOptions(state) {
   if (!state.teams.length) {
     return `<option>구단 데이터 준비 중</option>`;
@@ -1810,6 +1851,262 @@ function scheduleStatusDetail(status, dayLabel) {
   if (status === "season-complete") return "정규시즌 완료";
   if (status === "past") return "최근 기록 없음";
   return dayLabel;
+}
+
+function renderPlayerDetailPanel(state, entry) {
+  if (!entry?.player) return "";
+  const { player, team } = entry;
+  const pitcher = isPitcher(player);
+  const stats = pitcher ? getPitchingStats(player) : getBattingStats(player);
+  const groups = buildPlayerAttributeGroups(player);
+
+  return `
+    <section class="player-detail-panel" id="player-detail" data-player-detail aria-label="선수 상세 정보">
+      <div class="player-detail-hero">
+        <div class="player-detail-identity">
+          <div class="player-avatar" aria-hidden="true">
+            ${renderTeamLogo(team, "team-logo player-avatar-logo")}
+            <span>${escapeHtml(player.position ?? (pitcher ? "P" : "B"))}</span>
+          </div>
+          <div>
+            <span class="mini-label">${escapeHtml(team?.name ?? "KBO")} · ${escapeHtml(roleLabel(player.role))}</span>
+            <h2>${escapeHtml(player.name)} <small>${escapeHtml(player.uniformNumber ? `#${player.uniformNumber}` : player.position ?? "")}</small></h2>
+            <p>${escapeHtml(player.position ?? "-")} · ${formatNumber(player.age)}세 · ${formatBatsThrows(player)} · ${escapeHtml(player.body || player.school || "프로필 정보 확인 중")}</p>
+          </div>
+        </div>
+        <div class="player-detail-actions">
+          <span class="player-rating-badge ${attributeLevelClass(player.ovr, 200)}">OVR ${formatNumber(player.ovr)}</span>
+          <span class="player-rating-badge ${attributeLevelClass(player.pot, 200)}">POT ${formatNumber(player.pot)}</span>
+          <button class="button button-soft" data-action="close-player-detail" type="button">닫기</button>
+        </div>
+      </div>
+
+      <div class="player-detail-grid">
+        <article class="player-detail-card player-bio-card">
+          <span class="mini-label">프로필</span>
+          <dl class="player-detail-facts">
+            ${renderPlayerFact("상태", playerStatusLabel(player))}
+            ${renderPlayerFact("계약", renderPlayerContractLine(player))}
+            ${renderPlayerFact("FA", faLabel(player))}
+            ${renderPlayerFact("외국인", foreignSlotLabel(player.foreignPlayer?.slotType))}
+            ${renderPlayerFact("컨디션", `${formatNumber(player.dailyCondition ?? player.form)} / 피로 ${formatNumber(player.fatigue)}`)}
+            ${renderPlayerFact("부상", Number(player.injuredDays ?? 0) > 0 ? `${formatNumber(player.injuredDays)}일` : "없음")}
+          </dl>
+        </article>
+
+        <article class="player-detail-card player-overview-card">
+          <span class="mini-label">요약</span>
+          <div class="player-star-line" aria-label="선수 등급">
+            ${renderRatingStars(player.ovr, 200)}
+          </div>
+          ${renderDetailMeter("현재 능력", player.ovr, 200)}
+          ${renderDetailMeter("잠재 능력", player.pot, 200)}
+          ${renderDetailMeter("경기 감각", player.sharpness ?? player.form, 100)}
+          ${renderDetailMeter("체력 여유", 100 - Number(player.fatigue ?? 0), 100)}
+        </article>
+
+        <article class="player-detail-card player-attribute-card">
+          <div class="player-detail-card-head">
+            <span class="mini-label">능력치</span>
+            <small>높음 빨강 · 강점 파랑 · 보통 초록 · 약점 노랑</small>
+          </div>
+          <div class="player-attribute-groups">
+            ${groups.map(renderPlayerAttributeGroup).join("")}
+          </div>
+        </article>
+
+        <article class="player-detail-card player-stat-card">
+          <span class="mini-label">2026 시즌 기록</span>
+          <div class="player-stat-grid">
+            ${pitcher ? renderPitcherDetailStats(stats) : renderBatterDetailStats(stats)}
+          </div>
+        </article>
+      </div>
+    </section>
+  `;
+}
+
+function renderPlayerFact(label, value) {
+  return `
+    <div>
+      <dt>${escapeHtml(label)}</dt>
+      <dd>${escapeHtml(value)}</dd>
+    </div>
+  `;
+}
+
+function renderPlayerContractLine(player) {
+  const contract = player?.contract ?? {};
+  const salary = contract.salary?.payrollAmountKRW ?? contract.salary?.amountKRW;
+  const endSeason = contract.endSeason ? `${formatNumber(contract.endSeason)}년` : "기간 미확인";
+  return `${contractTypeLabel(contract.type)} · ${salary ? formatKRWShort(salary) : "금액 미확인"} · ${endSeason}`;
+}
+
+function playerStatusLabel(player) {
+  if (Number(player?.injuredDays ?? 0) > 0) return `부상 ${formatNumber(player.injuredDays)}일`;
+  if (player?.status === "active") return "1군 등록";
+  if (player?.status === "futures") return "퓨처스";
+  if (player?.status === "registered") return "등록";
+  if (player?.status === "released") return "방출";
+  if (player?.status === "retired") return "은퇴";
+  return player?.status ? String(player.status) : "확인 필요";
+}
+
+function renderRatingStars(value, max = 200) {
+  const rating = Math.max(0, Math.min(5, Math.round((Number(value ?? 0) / max) * 5)));
+  return Array.from({ length: 5 }, (_, index) => `<span class="${index < rating ? "is-filled" : ""}">★</span>`).join("");
+}
+
+function renderDetailMeter(label, value, max = 100) {
+  const percent = attributePercent(value, max);
+  return `
+    <div class="player-detail-meter">
+      <span>${escapeHtml(label)}</span>
+      <b>${formatNumber(value)}</b>
+      <i class="${attributeLevelClass(value, max)}" style="--meter: ${percent}%"></i>
+    </div>
+  `;
+}
+
+function buildPlayerAttributeGroups(player) {
+  if (isPitcher(player)) {
+    return [
+      {
+        title: "투구",
+        attributes: [
+          ["구위", player.stuff],
+          ["구속", player.velocity],
+          ["무브먼트", player.movement],
+          ["제구", player.control],
+          ["피홈런 억제", player.hrSuppression],
+          ["투구 IQ", player.pitchingIQ],
+          ["스태미나", player.stamina],
+          ["주자 견제", player.holdRunner]
+        ]
+      },
+      {
+        title: "수비/운동",
+        attributes: [
+          ["수비", player.defense],
+          ["범위", player.range],
+          ["송구", player.arm],
+          ["스피드", player.speed],
+          ["체력", player.armFreshness, 100],
+          ["컨디션", player.dailyCondition ?? player.form, 100]
+        ]
+      }
+    ];
+  }
+
+  return [
+    {
+      title: "타격",
+      attributes: [
+        ["컨택 vL", player.contactL ?? player.contact],
+        ["컨택 vR", player.contactR ?? player.contact],
+        ["파워 vL", player.powerL ?? player.power],
+        ["파워 vR", player.powerR ?? player.power],
+        ["선구안", player.eye],
+        ["참을성", player.patience],
+        ["타구질", player.battedBall],
+        ["작전 수행", player.situational]
+      ]
+    },
+    {
+      title: "주루/수비",
+      attributes: [
+        ["스피드", player.speed],
+        ["도루", player.stealing],
+        ["주루", player.baserunning],
+        ["수비", player.defense],
+        ["범위", player.range],
+        ["송구", player.arm],
+        ["포구", player.catching],
+        ["번트", player.bunting]
+      ]
+    }
+  ];
+}
+
+function renderPlayerAttributeGroup(group) {
+  return `
+    <section class="player-attribute-group">
+      <h3>${escapeHtml(group.title)}</h3>
+      <div class="player-attribute-list">
+        ${group.attributes.map(([label, value, max]) => renderPlayerAttribute(label, value, max ?? 20)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderPlayerAttribute(label, value, max = 20) {
+  const number = Number(value ?? 0);
+  const safeValue = Number.isFinite(number) ? number : 0;
+  const levelClass = attributeLevelClass(safeValue, max);
+  return `
+    <div class="player-attribute ${levelClass}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${formatNumber(safeValue)}</strong>
+      <i style="--meter: ${attributePercent(safeValue, max)}%"></i>
+    </div>
+  `;
+}
+
+function renderBatterDetailStats(stats) {
+  return [
+    ["AVG", formatRateStat(battingAverage(stats))],
+    ["OBP", formatRateStat(onBasePercentage(stats))],
+    ["SLG", formatRateStat(sluggingPercentage(stats))],
+    ["OPS", formatRateStat(ops(stats))],
+    ["G", formatNumber(stats.games)],
+    ["H", formatNumber(stats.hits)],
+    ["HR", formatNumber(stats.homeRuns)],
+    ["RBI", formatNumber(stats.rbi)],
+    ["BB", formatNumber(stats.walks)],
+    ["SO", formatNumber(stats.strikeouts)],
+    ["SB", formatNumber(stats.stolenBases)],
+    ["CS", formatNumber(stats.caughtStealing)]
+  ].map(renderPlayerStat).join("");
+}
+
+function renderPitcherDetailStats(stats) {
+  return [
+    ["ERA", formatEra(stats)],
+    ["IP", formatInnings(stats.inningsOuts)],
+    ["W-L", `${formatNumber(stats.wins)}-${formatNumber(stats.losses)}`],
+    ["SV", formatNumber(stats.saves)],
+    ["HLD", formatNumber(stats.holds)],
+    ["K", formatNumber(stats.strikeouts)],
+    ["BB", formatNumber(stats.walksAllowed)],
+    ["HR", formatNumber(stats.homeRunsAllowed)],
+    ["P", formatNumber(stats.pitches)],
+    ["BF", formatNumber(stats.battersFaced)]
+  ].map(renderPlayerStat).join("");
+}
+
+function renderPlayerStat([label, value]) {
+  return `
+    <div>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function attributeLevelClass(value, max = 20) {
+  const ratio = Number(value ?? 0) / Math.max(1, Number(max || 1));
+  if (ratio >= 0.82) return "is-elite";
+  if (ratio >= 0.68) return "is-strong";
+  if (ratio >= 0.5) return "is-average";
+  if (ratio >= 0.32) return "is-weak";
+  return "is-poor";
+}
+
+function attributePercent(value, max = 20) {
+  const number = Number(value ?? 0);
+  const denominator = Math.max(1, Number(max || 1));
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(3, Math.min(100, Math.round(number / denominator * 100)));
 }
 
 function renderFrontOfficePanels(frontOffice) {
@@ -2322,7 +2619,7 @@ function renderSummaryTopPlayer(player) {
     return renderEmptyListItem("핵심 선수 없음");
   }
 
-  return renderOfficeFact("핵심", player.name, renderPlayerMeta(player), renderPlayerScore(player));
+  return renderOfficePlayer({ player }, { label: "핵심" });
 }
 
 function renderDepthNeedList(needs) {
@@ -2356,10 +2653,11 @@ function renderOfficePlayer(entry, options) {
   const detail = [options.showTeam ? entry.teamName : "", renderPlayerMeta(player)]
     .filter(Boolean)
     .join(" · ");
+  const label = options.label ?? player.position ?? "-";
 
   return `
-    <li>
-      <span class="order">${escapeHtml(player.position ?? "-")}</span>
+    <li class="is-clickable" data-action="open-player-detail" data-player-id="${escapeAttribute(player.id ?? "")}" data-team-id="${escapeAttribute(player.teamId ?? entry.teamId ?? "")}" tabindex="0" role="button">
+      <span class="order">${escapeHtml(label)}</span>
       <span>
         <strong>${escapeHtml(player.name)}</strong>
         <small>${escapeHtml(detail)}</small>
@@ -2646,6 +2944,8 @@ function normalizeGamecastEvent(event, state) {
   const inningEnded = Boolean(event?.inningEnded) || (outsAfter % 3 === 0 && outsAfter !== outsBefore);
   const sequence = Number(event?.sequence ?? 0);
   const inning = Number(event?.inning ?? 1);
+  const offenseTeam = normalizeGameTeam(event?.offenseTeamId, state);
+  const teamColor = normalizeHexColor(getTeamColor(offenseTeam), side === "home" ? "#c64b74" : "#315288");
 
   return {
     id: `${event?.gameId ?? "game"}-${side}-${inning}-${sequence}-${event?.outcome ?? "idle"}`,
@@ -2664,7 +2964,9 @@ function normalizeGamecastEvent(event, state) {
     basesAfter: toBaseTriple(event?.basesAfter),
     scoredRunners,
     scoredRunnerCount: scoredRunners.length,
-    inningEnded
+    inningEnded,
+    teamColor,
+    teamTrailColor: mixHexColors(teamColor, "#fffefb", 0.42)
   };
 }
 
@@ -2760,8 +3062,13 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     dirtL: "#ffe39a",
     base: "#fffefb",
     baseSh: "#c9bcab",
+    uniform: "#fffefb",
+    uniformSh: "#e8ded0",
     runner: "#c64b74",
     runnerL: "#e57a9b",
+    defender: "#315288",
+    defenderL: "#b9d9f7",
+    bat: "#8a5f39",
     hit: "#8fd0b4",
     homer: "#ff8f83",
     homerL: "#ffb3a6",
@@ -3024,7 +3331,8 @@ function drawGamecastFrame(ctx, state, frame) {
   const palette = state.palette;
   if (state.fieldCache) ctx.drawImage(state.fieldCache, 0, 0);
   else drawGamecastFieldTo(ctx, palette);
-  drawGamecastBaseRunners(ctx, palette, frame.bases);
+  drawPixelFielders(ctx, palette, frame);
+  drawGamecastBaseRunners(ctx, palette, frame.bases, frame.offenseColor);
   drawPixelOutPips(ctx, palette, frame);
   drawPixelSideIcon(ctx, palette, frame);
   drawPixelAction(ctx, palette, frame);
@@ -3146,11 +3454,11 @@ function drawBallparkBase(ctx, palette, position) {
   ]);
 }
 
-function drawGamecastBaseRunners(ctx, palette, baseState) {
+function drawGamecastBaseRunners(ctx, palette, baseState, color = palette.runner) {
   const bases = gamecastBasePositions();
-  if (baseState?.[0]) drawPixelRunner(ctx, palette, bases.first, false, palette.runner, 2);
-  if (baseState?.[1]) drawPixelRunner(ctx, palette, bases.second, false, palette.runner, 2);
-  if (baseState?.[2]) drawPixelRunner(ctx, palette, bases.third, false, palette.runner, 2);
+  if (baseState?.[0]) drawPixelRunner(ctx, palette, bases.first, false, color, 2);
+  if (baseState?.[1]) drawPixelRunner(ctx, palette, bases.second, false, color, 2);
+  if (baseState?.[2]) drawPixelRunner(ctx, palette, bases.third, false, color, 2);
 }
 
 function drawPixel(ctx, x, y, color) {
@@ -3198,10 +3506,26 @@ function drawPixelAction(ctx, palette, frame) {
   for (const runner of frame.runners ?? []) {
     drawTrail(ctx, runner.trailColor ?? palette.runnerL, runner.trail);
   }
+  if (frame.batter) {
+    drawPixelRunner(ctx, palette, frame.batter.position, false, frame.batter.color, 2, { pose: "bat" });
+  }
   if (frame.ball) drawPixelBall(ctx, palette, frame.ball, frame.ballColor ?? palette.base);
   for (const runner of frame.runners ?? []) {
     drawPixelRunner(ctx, palette, runner.position, runner.squash, runner.color, runner.runFrame);
   }
+}
+
+function drawPixelFielders(ctx, palette, frame) {
+  const bases = gamecastBasePositions();
+  const defenderColor = frame.side === "home" ? palette.defender : "#575160";
+  drawPixelRunner(ctx, palette, { x: bases.mound.x, y: bases.mound.y + gamecastSize(2) }, false, defenderColor, 2, {
+    jerseyColor: palette.uniformSh,
+    pose: "field"
+  });
+  drawPixelRunner(ctx, palette, { x: bases.home.x - gamecastSize(8), y: bases.home.y + gamecastSize(4) }, false, "#575160", 2, {
+    jerseyColor: palette.defenderL,
+    pose: "catcher"
+  });
 }
 
 function gamecastBasePositions() {
@@ -3225,7 +3549,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
       bases: [false, false, false],
       outs: 0,
       score: { away: seq.finalAway, home: seq.finalHome },
-      runners: []
+      runners: [],
+      offenseColor: state.palette.runner
     };
   }
 
@@ -3242,6 +3567,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
       outs: last.inningEnded ? 0 : outsInInning(last.outsAfter),
       score: { away: seq.finalAway, home: seq.finalHome },
       runners: [],
+      offenseColor: last.teamColor ?? state.palette.runner,
       progress: 1
     };
   }
@@ -3266,13 +3592,27 @@ function buildGamecastFrameState(state, forceFinal = false) {
     outs: displayOutsForEvent(event, progress),
     score,
     runners,
+    batter: buildBatterSprite(event, progress, state.palette),
     ball: buildBallSprite(event, progress),
     ballTrail: buildBallTrail(event, progress),
     ballColor: event.outcome === "homeRun" ? state.palette.homer : state.palette.base,
     playerLabel: buildGamecastPlayerLabel(event, progress, runners),
     scoreFlash: event.runs > 0 && progress >= 0.62 && progress <= 0.84,
     flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
+    offenseColor: event.teamColor ?? state.palette.runner,
     progress
+  };
+}
+
+function buildBatterSprite(event, progress, palette) {
+  if (!event || progress >= 0.18) return null;
+  const bases = gamecastBasePositions();
+  return {
+    position: {
+      x: bases.home.x + gamecastSize(8),
+      y: bases.home.y - gamecastSize(1)
+    },
+    color: event.teamColor ?? palette.runner
   };
 }
 
@@ -3343,16 +3683,18 @@ function buildRunnerSprites(event, progress, palette) {
   const moveT = Math.max(0, Math.min(1, (progress - 0.15) / 0.57));
   const eased = easeOutCubic(moveT);
   const runners = [];
+  const runnerColor = event.teamColor ?? palette.runner;
+  const trailColor = event.teamTrailColor ?? palette.runnerL;
 
   if (advance > 0) {
     event.basesBefore.forEach((occupied, index) => {
       if (!occupied) return;
       const startBase = index + 1;
       const targetBase = Math.min(4, startBase + advance);
-      runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, palette.runner, palette.runnerL, moveT, "runner"));
+      runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, runnerColor, trailColor, moveT, "runner"));
     });
     const batterTarget = Math.min(4, advance);
-    runners.push(makeRunnerSprite(gamecastPathBetween(0, batterTarget), eased, event.outcome === "walk" ? palette.walk : palette.runner, palette.runnerL, moveT, "batter"));
+    runners.push(makeRunnerSprite(gamecastPathBetween(0, batterTarget), eased, event.outcome === "walk" ? palette.walk : runnerColor, trailColor, moveT, "batter"));
     return runners;
   }
 
@@ -3510,32 +3852,42 @@ function drawPixelSprite(ctx, palette, ox, oy, cells) {
   for (const c of cells) { ctx.fillStyle = c[2]; ctx.fillRect(ox + c[0], oy + c[1], 1, 1); }
 }
 
-// 7x11 outlined chibi player; runFrame 0/1 = stride, 2 = standing
-function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0) {
+// 9x13 outlined chibi player; runFrame 0/1 = stride, 2 = standing
+function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, options = {}) {
   const S = palette.skin;
   const L = palette.legs;
-  const ox = Math.round(position.x) - 3;
-  const oy = Math.round(position.y) - (squash ? 10 : 11);
-  const J = palette.base;
+  const U = options.jerseyColor ?? palette.uniform;
+  const US = palette.uniformSh;
+  const trim = normalizeHexColor(color, palette.runner);
+  const ox = Math.round(position.x) - 4;
+  const oy = Math.round(position.y) - (squash ? 12 : 13);
+  const pose = options.pose ?? "run";
   const cells = [
-    [2, 0, color], [3, 0, color], [4, 0, color],
-    [1, 1, color], [2, 1, color], [3, 1, color], [4, 1, color], [5, 1, color],
-    [2, 2, S], [3, 2, S], [4, 2, S],
-    [2, 3, S], [3, 3, S], [4, 3, S],
-    [2, 4, J], [3, 4, J], [4, 4, J],
-    [1, 5, J], [2, 5, J], [3, 5, color], [4, 5, J], [5, 5, J],
-    [2, 6, J], [3, 6, J], [4, 6, J],
-    [2, 7, color], [3, 7, color], [4, 7, color]
+    [2, 0, trim], [3, 0, trim], [4, 0, trim], [5, 0, trim],
+    [1, 1, trim], [2, 1, trim], [3, 1, trim], [4, 1, trim], [5, 1, trim], [6, 1, trim],
+    [6, 2, trim], [7, 2, trim],
+    [2, 2, S], [3, 2, S], [4, 2, S], [5, 2, S],
+    [2, 3, S], [3, 3, palette.outline], [4, 3, S], [5, 3, palette.outline],
+    [2, 4, S], [3, 4, S], [4, 4, S], [5, 4, S],
+    [2, 5, U], [3, 5, U], [4, 5, trim], [5, 5, U],
+    [1, 6, U], [2, 6, U], [3, 6, U], [4, 6, trim], [5, 6, U], [6, 6, U],
+    [2, 7, U], [3, 7, U], [4, 7, trim], [5, 7, U],
+    [2, 8, US], [3, 8, trim], [4, 8, trim], [5, 8, US],
+    [3, 9, L], [5, 9, L]
   ];
-  if (runFrame === 2) {
-    cells.push([1, 8, L], [2, 8, L], [4, 8, L], [5, 8, L], [1, 9, L], [5, 9, L], [1, 10, L], [5, 10, L]);
+  if (pose === "bat") {
+    cells.push([0, 5, palette.bat], [0, 6, palette.bat], [1, 7, palette.bat], [1, 5, S], [6, 6, S], [7, 6, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
+  } else if (pose === "catcher") {
+    cells.push([1, 5, trim], [6, 5, trim], [1, 9, L], [6, 9, L], [1, 10, L], [6, 10, L], [0, 11, L], [7, 11, L], [0, 12, L], [7, 12, L]);
+  } else if (runFrame === 2) {
+    cells.push([2, 10, L], [3, 10, L], [5, 10, L], [6, 10, L], [2, 11, L], [6, 11, L], [2, 12, L], [6, 12, L]);
   } else if (runFrame === 1) {
-    cells.push([6, 4, S], [0, 5, S], [1, 8, L], [4, 8, L], [1, 9, L], [5, 9, L], [0, 10, L], [5, 10, L]);
+    cells.push([7, 5, S], [0, 6, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
   } else {
-    cells.push([0, 4, S], [6, 5, S], [2, 8, L], [5, 8, L], [1, 9, L], [5, 9, L], [1, 10, L], [6, 10, L]);
+    cells.push([1, 5, S], [7, 6, S], [3, 10, L], [6, 10, L], [2, 11, L], [6, 11, L], [2, 12, L], [7, 12, L]);
   }
   ctx.fillStyle = palette.grassEdge;
-  ctx.fillRect(ox + 1, oy + 12, 5, 1);
+  ctx.fillRect(ox + 1, oy + 14, 7, 1);
   drawPixelSprite(ctx, palette, ox, oy, cells);
 }
 
@@ -3608,6 +3960,39 @@ function easeOutBack(value) {
   const c1 = 1.1;
   const c3 = c1 + 1;
   return 1 + c3 * (value - 1) ** 3 + c1 * (value - 1) ** 2;
+}
+
+function normalizeHexColor(value, fallback = "#c64b74") {
+  const text = String(value ?? "").trim();
+  if (/^#[0-9a-f]{6}$/i.test(text)) return text;
+  if (/^#[0-9a-f]{3}$/i.test(text)) {
+    return `#${text.slice(1).split("").map((char) => char + char).join("")}`;
+  }
+  return fallback;
+}
+
+function mixHexColors(from, to, amount = 0.5) {
+  const a = parseHexColor(normalizeHexColor(from, "#c64b74"));
+  const b = parseHexColor(normalizeHexColor(to, "#fffefb"));
+  const t = Math.max(0, Math.min(1, Number(amount)));
+  return rgbToHex({
+    r: Math.round(a.r + (b.r - a.r) * t),
+    g: Math.round(a.g + (b.g - a.g) * t),
+    b: Math.round(a.b + (b.b - a.b) * t)
+  });
+}
+
+function parseHexColor(value) {
+  const hex = normalizeHexColor(value, "#000000").slice(1);
+  return {
+    r: Number.parseInt(hex.slice(0, 2), 16),
+    g: Number.parseInt(hex.slice(2, 4), 16),
+    b: Number.parseInt(hex.slice(4, 6), 16)
+  };
+}
+
+function rgbToHex(color) {
+  return `#${[color.r, color.g, color.b].map((part) => Math.max(0, Math.min(255, part)).toString(16).padStart(2, "0")).join("")}`;
 }
 
 function lerp(from, to, amount) {
@@ -3721,7 +4106,7 @@ function renderSeasonStatsPanel(team, leaders) {
 function renderBatterLeader(entry, index) {
   const { player, stats } = entry;
   return `
-    <li>
+    <li class="is-clickable" data-action="open-player-detail" data-player-id="${escapeAttribute(player.id ?? "")}" data-team-id="${escapeAttribute(player.teamId ?? "")}" tabindex="0" role="button">
       <span class="order">${index + 1}</span>
       <span>
         <strong>${escapeHtml(player.name)}</strong>
@@ -3735,7 +4120,7 @@ function renderBatterLeader(entry, index) {
 function renderPitcherLeader(entry, index) {
   const { player, stats } = entry;
   return `
-    <li>
+    <li class="is-clickable" data-action="open-player-detail" data-player-id="${escapeAttribute(player.id ?? "")}" data-team-id="${escapeAttribute(player.teamId ?? "")}" tabindex="0" role="button">
       <span class="order">${index + 1}</span>
       <span>
         <strong>${escapeHtml(player.name)}</strong>
@@ -3748,7 +4133,7 @@ function renderPitcherLeader(entry, index) {
 
 function renderLineupPlayer(player, index) {
   return `
-    <li>
+    <li class="is-clickable" data-action="open-player-detail" data-player-id="${escapeAttribute(player.id ?? "")}" data-team-id="${escapeAttribute(player.teamId ?? "")}" tabindex="0" role="button">
       <span class="order">${index + 1}</span>
       <span>
         <strong>${escapeHtml(player.name)}</strong>
@@ -3761,7 +4146,7 @@ function renderLineupPlayer(player, index) {
 
 function renderPitchingRole(entry) {
   return `
-    <li>
+    <li class="is-clickable" data-action="open-player-detail" data-player-id="${escapeAttribute(entry.id ?? "")}" data-team-id="" tabindex="0" role="button">
       <span class="order">${escapeHtml(pitchingRoleLabel(entry.role))}</span>
       <span>
         <strong>${escapeHtml(entry.name)}</strong>
@@ -3851,6 +4236,27 @@ function normalizeGameTeam(teamOrId, state) {
 
 function getRoster(team) {
   return [...(team?.roster ?? [])].sort(sortByOvr);
+}
+
+function getSelectedPlayerEntry(state, selectedTeam) {
+  const playerId = String(state?.ui?.selectedPlayerId ?? "");
+  if (!playerId) return null;
+  const preferredTeamId = String(state?.ui?.selectedPlayerTeamId || selectedTeam?.id || "");
+  const teams = preferredTeamId
+    ? [
+        ...(state?.teams ?? []).filter((team) => String(team.id) === preferredTeamId),
+        ...(state?.teams ?? []).filter((team) => String(team.id) !== preferredTeamId)
+      ]
+    : (state?.teams ?? []);
+  for (const team of teams) {
+    const player = (team.roster ?? []).find((entry) =>
+      String(entry.id ?? "") === playerId ||
+      String(entry.playerId ?? "") === playerId ||
+      String(entry.name ?? "") === playerId
+    );
+    if (player) return { team, player };
+  }
+  return null;
 }
 
 function buildSeasonLeaders(team) {
