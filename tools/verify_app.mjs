@@ -800,6 +800,13 @@ function checkNextUserGameFlow() {
   ensureImportsReady();
   const state = dataModule.createInitialState();
   state.selectedTeamId = "lg";
+  const preseasonPreview = engineModule.getNextGamePreview(state, state.selectedTeamId);
+  assert(preseasonPreview.ok === false && preseasonPreview.code === "preseason", `프리시즌 다음 경기 preview가 차단되지 않음: ${preseasonPreview.code}`, MODULE_PATHS.engine);
+  const blocked = engineModule.simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
+  assert(blocked.ok === false && blocked.code === "preseason", `프리시즌 경기 보기 실행이 차단되지 않음: ${blocked.code}`, MODULE_PATHS.engine);
+  assert(state.currentDate === "2026-03-01" && state.gamesPlayed === 0, `프리시즌 차단 후 상태 변조: ${state.currentDate}, games=${state.gamesPlayed}`, MODULE_PATHS.engine);
+
+  advanceToRegularSeason(state);
   const preview = engineModule.getNextGamePreview(state, state.selectedTeamId);
   assert(preview.ok === true, `다음 경기 preview 실패: ${preview.message}`, MODULE_PATHS.engine);
   assert(preview.awayTeamId === "lg" || preview.homeTeamId === "lg", `다음 경기 preview가 유저팀 경기가 아님: ${preview.awayTeamId}/${preview.homeTeamId}`, MODULE_PATHS.engine);
@@ -812,7 +819,7 @@ function checkNextUserGameFlow() {
   assert(focused?.awayTeamId === "lg" || focused?.homeTeamId === "lg", `포커스 경기가 유저팀 경기가 아님: ${focused?.awayTeamId}/${focused?.homeTeamId}`, MODULE_PATHS.engine);
   assert((focused?.plateAppearanceEvents ?? []).length >= 60, `포커스 경기 PA 이벤트 부족: ${focused?.plateAppearanceEvents?.length ?? 0}`, MODULE_PATHS.engine);
 
-  return `${preview.date} ${preview.awayShortName}@${preview.homeShortName}, Gamecast PA ${focused.plateAppearanceEvents.length}개 포커스`;
+  return `프리시즌 차단 후 ${preview.date} ${preview.awayShortName}@${preview.homeShortName}, Gamecast PA ${focused.plateAppearanceEvents.length}개 포커스`;
 }
 
 function checkPlayerSeasonStats() {

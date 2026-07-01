@@ -105,6 +105,8 @@ const POSITION_GROUP_LABELS = {
 };
 const KBO_CALENDAR_MONTHS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const KOREAN_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+const UI_OPENING_DAY_MONTH_DAY = "03-28";
+const UI_MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const GAMECAST_PIXEL_W = 160;
 const GAMECAST_PIXEL_H = 144;
@@ -180,7 +182,7 @@ function render(root, state) {
           <a class="nav-item" href="#draft">드래프트</a>
           <a class="nav-item" href="#secondary-draft">2차</a>
           <a class="nav-item" href="#lineup">라인업</a>
-          <a class="nav-item" href="#news">소식</a>
+          <a class="nav-item" href="#news-inbox">뉴스함</a>
         </nav>
         <section class="sidebar-card">
           <span class="mini-label">오늘</span>
@@ -225,12 +227,12 @@ function render(root, state) {
           ${renderMetricCard("부상", `${injuries.length}명`, injuries[0] ? `${escapeHtml(injuries[0].name)} 관리 필요` : "건강한 클럽하우스")}
         </section>
 
+        ${renderManagerBriefingPanel(state, selectedTeam, manager)}
+        ${renderNewsInboxPanel(state, selectedTeam, manager)}
+        ${renderPendingMailDecisionPanel(state)}
         ${renderNextGamePanel(state, selectedTeam, nextGame)}
         ${renderScheduleCalendarPanel(state, selectedTeam, monthlySchedule)}
         ${renderPlayerDetailPanel(state, selectedPlayerEntry)}
-        ${renderManagerBriefingPanel(state, selectedTeam, manager)}
-        ${renderPreseasonDeskPanel(state, selectedTeam, manager)}
-        ${renderPendingMailDecisionPanel(state)}
         ${renderOperationsBar()}
         ${renderFrontOfficePanels(frontOffice)}
         ${renderCommandCenterPanels(gmDesk)}
@@ -384,30 +386,70 @@ function renderManagerBriefingPanel(state, selectedTeam, manager) {
   `;
 }
 
-function renderPreseasonDeskPanel(state, selectedTeam, manager) {
-  if (state.phase !== "preseason") return "";
-
-  const logs = (state.logs ?? []).map((log) => normalizeLogItem(log, state));
-  const assistant =
-    logs.find((item) => item.type === "assistant") ??
-    buildFallbackAssistantBriefing(state, selectedTeam, manager);
-  const mediaItems = logs.filter((item) => item.type === "media").slice(0, 2);
-  const mediaCards = mediaItems.length
-    ? mediaItems
-    : [buildFallbackMediaBriefing(state, selectedTeam)];
+function renderNewsInboxPanel(state, selectedTeam, manager) {
+  const items = buildNewsInboxItems(state, selectedTeam, manager);
+  const assistant = items.find((item) => item.type === "assistant") ?? buildFallbackAssistantBriefing(state, selectedTeam, manager);
+  const lead = items.find((item) => item.type === "media") ?? items.find((item) => item.type === "kbo-official") ?? items[0];
+  const unreadCount = items.length;
+  const phaseLabel = state.phase === "preseason" ? "프리시즌 뉴스함" : "뉴스함";
 
   return `
-    <section class="preseason-desk-panel" data-preseason-desk aria-label="프리시즌 뉴스와 비서 보고">
-      <article class="assistant-brief-card" data-news-type="assistant">
-        <span>${escapeHtml(assistant.tag)}</span>
-        <h2>${escapeHtml(assistant.headline)}</h2>
-        <p>${escapeHtml(assistant.body || assistant.text)}</p>
-        <small>${escapeHtml(assistant.date ?? state.currentDate ?? "")}</small>
-      </article>
-      <div class="media-brief-list" aria-label="언론 기사">
-        ${mediaCards.map(renderPreseasonMediaCard).join("")}
+    <section class="news-inbox-panel" id="news-inbox" data-main-news-inbox data-preseason-desk aria-label="뉴스함과 개인비서 보고">
+      <div class="news-inbox-head">
+        <div>
+          <span class="mini-label">${escapeHtml(phaseLabel)}</span>
+          <h2>개인비서 / 언론 브리핑</h2>
+          <p>SBS · KBS · MBC · JTBC · MBN · SPOTV 기사와 구단 공문이 이곳에 쌓입니다.</p>
+        </div>
+        <span class="pill">${formatNumber(unreadCount)}건</span>
+      </div>
+      <div class="news-inbox-grid">
+        <article class="inbox-assistant-card" data-news-type="assistant">
+          <span>${escapeHtml(assistant.source ?? assistant.tag ?? "개인비서")}</span>
+          <h3>${escapeHtml(assistant.headline)}</h3>
+          <p>${escapeHtml(assistant.body || assistant.text)}</p>
+          <small>${escapeHtml(assistant.date ?? state.currentDate ?? "")}</small>
+        </article>
+        <div class="news-inbox-list" aria-label="받은 뉴스와 공문">
+          ${items.slice(0, 7).map(renderInboxNewsItem).join("")}
+        </div>
+        ${lead ? `
+          <article class="news-inbox-feature is-${escapeAttribute(logTypeClass(lead.type))}" data-news-type="${escapeAttribute(lead.type)}">
+            <span>${escapeHtml(lead.source ?? lead.tag ?? "뉴스")}</span>
+            <h3>${escapeHtml(lead.headline)}</h3>
+            <p>${escapeHtml(lead.body || lead.text)}</p>
+            <small>${escapeHtml(lead.date ?? state.currentDate ?? "")}</small>
+          </article>
+        ` : ""}
       </div>
     </section>
+  `;
+}
+
+function buildNewsInboxItems(state, selectedTeam, manager) {
+  const normalized = (state.logs ?? []).map((log) => normalizeLogItem(log, state));
+  const fallbacks = [
+    buildFallbackAssistantBriefing(state, selectedTeam, manager),
+    buildFallbackMediaBriefing(state, selectedTeam)
+  ];
+  const merged = [...normalized, ...fallbacks];
+  const seen = new Set();
+  return merged.filter((item) => {
+    const key = `${item.date ?? ""}-${item.type ?? ""}-${item.source ?? item.tag ?? ""}-${item.headline ?? item.text ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 12);
+}
+
+function renderInboxNewsItem(item, index) {
+  const type = logTypeClass(item.type);
+  return `
+    <article class="news-inbox-item ${type ? `is-${escapeAttribute(type)}` : ""}" data-news-type="${escapeAttribute(item.type)}">
+      <span>${escapeHtml(item.source ?? item.tag ?? "뉴스")}</span>
+      <strong>${escapeHtml(item.headline ?? item.text ?? "새 소식")}</strong>
+      <small>${escapeHtml(item.date ?? "")} · ${index === 0 ? "방금 도착" : "읽지 않음"}</small>
+    </article>
   `;
 }
 
@@ -578,14 +620,14 @@ function renderOnboarding(root, state, screen) {
 function onboardingTitle(screen) {
   if (screen === "team-select") return "함께할 구단을 고르세요";
   if (screen === "manager-setup") return "감독 프로필 작성";
-  if (screen === "appointment") return "취임 기자회견";
+  if (screen === "appointment") return "취임식과 첫 기자회견";
   return "프리시즌을 시작합니다";
 }
 
 function onboardingLead(screen, selectedTeam) {
   if (screen === "team-select") return "프런트 첫날, 맡을 구단을 선택하세요.";
   if (screen === "manager-setup") return `${getTeamName(selectedTeam) ?? "선택한 구단"}의 새 감독으로 등록됩니다.`;
-  if (screen === "appointment") return "첫 공식 인터뷰 답변이 감독실 브리핑과 뉴스에 남습니다.";
+  if (screen === "appointment") return "구단 공식 취임식 뒤 첫 인터뷰 답변이 감독실 브리핑과 뉴스함에 남습니다.";
   return "구단을 고르고 감독 이름과 나이를 정한 뒤 취임식으로 시즌을 엽니다.";
 }
 
@@ -675,6 +717,11 @@ function renderAppointmentStage(state, selectedTeam) {
           <span class="mini-label">Manager Appointment</span>
           <h2>${escapeHtml(manager.name)} 감독 첫 인터뷰</h2>
           <p>${escapeHtml(ballpark)} · ${formatNumber(manager.age)}세 · ${escapeHtml(managerStyleLabel(manager.style))}</p>
+        </div>
+        <div class="appointment-ceremony-banner">
+          <span>취임식</span>
+          <strong>${escapeHtml(teamName)} ${escapeHtml(manager.name)} 감독 선임</strong>
+          <p>구단기 전달, 포토 세션, 방송사 공동 취재 뒤 첫 질의응답을 진행합니다.</p>
         </div>
         <div class="appointment-media-strip" aria-label="기자회견 정보">
           <span><b>01</b><small>시즌 목표</small></span>
@@ -831,16 +878,7 @@ function bindOnboardingActions(root, state) {
       inaugurationComplete: true
     };
     state.logs = [
-      {
-        date: state.currentDate,
-        tag: "취임",
-        text: `${manager.name} 감독이 ${getTeamName(selectedTeam) ?? "구단"} 취임 기자회견을 마쳤습니다.`
-      },
-      {
-        date: state.currentDate,
-        tag: "인터뷰",
-        text: `첫 목표: ${answers[0]?.label ?? "시즌 준비"} · 운영 원칙: ${answers[2]?.label ?? "균형"}`
-      },
+      ...buildAppointmentNewsLogs(state, selectedTeam, manager, answers),
       ...((state.logs ?? []))
     ].slice(0, 60);
     state.ui = { ...(state.ui ?? {}), screen: "game" };
@@ -1354,24 +1392,32 @@ function bindActions(root, state) {
     });
   });
 
-  root.querySelector("[data-action='next-day']")?.addEventListener("click", () => {
-    if (stopForBlockingMail(root, state)) return;
-    simulateDay(state);
-    render(root, state);
+  root.querySelectorAll("[data-action='next-day']").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (stopForBlockingMail(root, state)) return;
+      simulateDay(state);
+      render(root, state);
+    });
   });
 
-  root.querySelector("[data-action='week']")?.addEventListener("click", () => {
-    if (stopForBlockingMail(root, state)) return;
-    const beforeDate = state.currentDate;
-    const beforeGames = Number(state.gamesPlayed ?? 0);
-    simulateDays(state, 7);
-    const gamesDelta = Number(state.gamesPlayed ?? 0) - beforeGames;
-    render(root, state);
-    setStatus(root, `빠른 주간 진행: ${beforeDate} → ${state.currentDate}, ${formatNumber(gamesDelta)}경기 완료.`);
+  root.querySelectorAll("[data-action='week']").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (stopForBlockingMail(root, state)) return;
+      const beforeDate = state.currentDate;
+      const beforeGames = Number(state.gamesPlayed ?? 0);
+      simulateDays(state, 7);
+      const gamesDelta = Number(state.gamesPlayed ?? 0) - beforeGames;
+      render(root, state);
+      setStatus(root, `빠른 주간 진행: ${beforeDate} → ${state.currentDate}, ${formatNumber(gamesDelta)}경기 완료.`);
+    });
   });
 
   root.querySelector("[data-action='watch-next-game']")?.addEventListener("click", () => {
     if (stopForBlockingMail(root, state)) return;
+    if (state.phase !== "regular") {
+      setStatus(root, "프리시즌에는 경기 보기로 개막전까지 건너뛰지 않습니다. 캠프 하루 진행으로 뉴스함을 확인하세요.");
+      return;
+    }
     const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
     state.ui = {
       ...(state.ui ?? {}),
@@ -1386,6 +1432,10 @@ function bindActions(root, state) {
 
   root.querySelector("[data-action='simulate-next-game']")?.addEventListener("click", () => {
     if (stopForBlockingMail(root, state)) return;
+    if (state.phase !== "regular") {
+      setStatus(root, "프리시즌에는 경기 시뮬레이션을 열지 않습니다. 개막 후 다음 경기 패널이 활성화됩니다.");
+      return;
+    }
     const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "quick" });
     state.ui = {
       ...(state.ui ?? {}),
@@ -1591,6 +1641,50 @@ function bindActions(root, state) {
   });
 }
 
+function buildAppointmentNewsLogs(state, selectedTeam, manager, answers) {
+  const teamName = getTeamName(selectedTeam) ?? "구단";
+  const shortName = getTeamShortName(selectedTeam) ?? teamName;
+  const date = state.currentDate ?? "";
+  const goal = answers[0]?.label ?? "시즌 준비";
+  const message = answers[1]?.label ?? "선수단 신뢰";
+  const front = answers[2]?.label ?? "균형 운영";
+
+  return [
+    {
+      date,
+      type: "assistant",
+      tag: "개인비서",
+      source: "개인비서",
+      headline: `${manager.name} 감독님, 취임식 후 첫 보고입니다`,
+      text: `${shortName} 프리시즌 캠프가 시작됐습니다. 오늘 뉴스함에는 취임식 반응, 선수단 메시지, 개막 엔트리 체크리스트를 우선 정리했습니다.`
+    },
+    {
+      date,
+      type: "media",
+      tag: "SPOTV",
+      source: "SPOTV",
+      headline: `${shortName} ${manager.name} 감독 취임식, "${goal}" 선언`,
+      text: `SPOTV는 ${teamName} 새 감독 취임식에서 "${message}" 메시지가 선수단 분위기의 첫 기준점이 됐다고 전했습니다. SBS, KBS, MBC, JTBC, MBN도 프리시즌 첫 행보를 주요 기사로 다뤘습니다.`
+    },
+    {
+      date,
+      type: "front-office",
+      tag: "단장실",
+      source: "단장실",
+      headline: "첫 시즌 운영 원칙 접수",
+      text: `프런트는 "${front}" 방향에 맞춰 캠프 보고, 스카우트 자료, FA/외국인 시장 체크리스트를 매일 뉴스함으로 올리겠습니다.`
+    },
+    {
+      date,
+      type: "community",
+      tag: "홍보팀",
+      source: "홍보팀",
+      headline: "취임식 여론 모니터링",
+      text: `야구 커뮤니티에서는 ${manager.name} 감독의 첫 인터뷰 톤과 개막 엔트리 구상에 관심이 모이고 있습니다.`
+    }
+  ];
+}
+
 function downloadSaveFile(state) {
   const blob = new Blob([exportGameState(state)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -1639,6 +1733,18 @@ function normalizeCalendarMonthOffset(value) {
 function parseUiDate(value) {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? new Date("2026-03-01T00:00:00.000Z") : parsed;
+}
+
+function openingDayForUiDate(value) {
+  const date = parseUiDate(value);
+  const year = Number.isFinite(date.getUTCFullYear()) ? date.getUTCFullYear() : 2026;
+  return `${year}-${UI_OPENING_DAY_MONTH_DAY}`;
+}
+
+function daysUntilUiOpening(value) {
+  const current = parseUiDate(value);
+  const opening = parseUiDate(openingDayForUiDate(value));
+  return Math.max(0, Math.round((opening.getTime() - current.getTime()) / UI_MS_PER_DAY));
 }
 
 function stopForBlockingMail(root, state) {
@@ -1700,6 +1806,35 @@ function renderMetricCard(label, value, detail) {
 }
 
 function renderNextGamePanel(state, selectedTeam, nextGame) {
+  if (state.phase === "preseason") {
+    const openingDay = openingDayForUiDate(state.currentDate);
+    const daysToOpening = daysUntilUiOpening(state.currentDate);
+    return `
+      <section class="next-game-panel is-preseason-camp" aria-label="프리시즌 캠프 진행">
+        <div class="next-game-copy">
+          <span class="mini-label">프리시즌 캠프</span>
+          <h2>개막 전 경기 없음</h2>
+          <p>${escapeHtml(state.currentDate ?? "")} · 개막 ${escapeHtml(openingDay)}까지 ${formatNumber(daysToOpening)}일 · 뉴스함과 보고서를 확인하며 진행</p>
+        </div>
+        <div class="next-game-matchup">
+          <div class="next-game-team is-user is-camp">
+            ${renderTeamLogo(selectedTeam, "team-logo mini-logo")}
+            <span>${escapeHtml(getTeamShortName(selectedTeam) ?? "KBO")}</span>
+          </div>
+          <b>캠프</b>
+          <div class="next-game-team is-camp">
+            <span>NEWS</span>
+          </div>
+        </div>
+        <div class="next-game-actions">
+          <button class="button button-primary" data-action="next-day" type="button">캠프 하루 진행</button>
+          <button class="button button-soft" data-action="week" type="button">캠프 주간 진행</button>
+          <small>경기 보기/시뮬레이션은 정규시즌 개막 후 활성화됩니다.</small>
+        </div>
+      </section>
+    `;
+  }
+
   const away = nextGame?.ok ? normalizeGameTeam(nextGame.awayTeamId, state) : null;
   const home = nextGame?.ok ? normalizeGameTeam(nextGame.homeTeamId, state) : null;
   const userIsAway = String(nextGame?.awayTeamId ?? "") === String(selectedTeam?.id ?? state.selectedTeamId);
@@ -2852,6 +2987,7 @@ function renderGamecastPixelStage(instanceId) {
     <div class="gamecast-pixel-stage" data-gamecast-stage>
       <canvas id="${GAMECAST_CANVAS_ID}-${safeInstanceId}" class="gamecast-pixel-canvas" width="${GAMECAST_PIXEL_W}" height="${GAMECAST_PIXEL_H}" data-gamecast-canvas data-pixel-w="${GAMECAST_PIXEL_W}" data-pixel-h="${GAMECAST_PIXEL_H}" aria-hidden="true"></canvas>
       <span class="gamecast-player-label" data-gamecast-player-label></span>
+      <span class="gamecast-action-burst" data-gamecast-action-burst></span>
     </div>
   `;
 }
@@ -2966,6 +3102,8 @@ function normalizeGamecastEvent(event, state) {
     scoredRunnerCount: scoredRunners.length,
     inningEnded,
     teamColor,
+    teamJerseyColor: side === "home" ? "#fffefb" : "#d9d3ca",
+    teamJerseyShadow: side === "home" ? "#e8ded0" : "#c9bcab",
     teamTrailColor: mixHexColors(teamColor, "#fffefb", 0.42)
   };
 }
@@ -3022,6 +3160,7 @@ function initGamecastPixelScreen(root) {
     const canvas = screen.querySelector("[data-gamecast-canvas]");
     const stage = screen.querySelector("[data-gamecast-stage]");
     const playerLabel = screen.querySelector("[data-gamecast-player-label]");
+    const actionBurst = screen.querySelector("[data-gamecast-action-burst]");
     if (!board || !canvas || typeof canvas.getContext !== "function") continue;
 
     const ctx = canvas.getContext("2d");
@@ -3037,6 +3176,7 @@ function initGamecastPixelScreen(root) {
       nowTitle: board.querySelector(".gamecast-now strong"),
       nowDetail: board.querySelector(".gamecast-now small"),
       playerLabel,
+      actionBurst,
       feedItems: [...instanceRoot.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")],
       speedControls: [...board.querySelectorAll("[data-gamecast-speed]")],
       skipControls: [...board.querySelectorAll("[data-gamecast-skip]")]
@@ -3048,7 +3188,7 @@ function initGamecastPixelScreen(root) {
   };
 }
 
-function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, playerLabel, feedItems, speedControls = [], skipControls = [] }) {
+function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, playerLabel, actionBurst, feedItems, speedControls = [], skipControls = [] }) {
   const palette = {
     outline: "#23202a",
     grassLo: "#4f8a73",
@@ -3064,11 +3204,14 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     baseSh: "#c9bcab",
     uniform: "#fffefb",
     uniformSh: "#e8ded0",
+    uniformAway: "#d9d3ca",
     runner: "#c64b74",
     runnerL: "#e57a9b",
     defender: "#315288",
     defenderL: "#b9d9f7",
     bat: "#8a5f39",
+    glove: "#7a4c2a",
+    ballSeam: "#d92f42",
     hit: "#8fd0b4",
     homer: "#ff8f83",
     homerL: "#ffb3a6",
@@ -3083,6 +3226,8 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     crowdA: "#c64b74",
     crowdB: "#b9d9f7",
     crowdC: "#ffe39a",
+    crowdSkin: "#f2c79a",
+    crowdHair: "#2d2630",
     pole: "#ffd23f",
     out: "#77717a"
   };
@@ -3104,6 +3249,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     nowTitle,
     nowDetail,
     playerLabel,
+    actionBurst,
     feedItems,
     palette,
     fieldCache: buildGamecastFieldCache(palette),
@@ -3254,6 +3400,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
       }
       screen.classList.remove("is-shaking");
       if (state.playerLabel) state.playerLabel.classList.remove("is-visible", "is-scoring");
+      if (state.actionBurst) state.actionBurst.className = "gamecast-action-burst";
       for (const item of state.feedItems ?? []) item.classList.remove("is-live");
     }
   };
@@ -3332,7 +3479,7 @@ function drawGamecastFrame(ctx, state, frame) {
   if (state.fieldCache) ctx.drawImage(state.fieldCache, 0, 0);
   else drawGamecastFieldTo(ctx, palette);
   drawPixelFielders(ctx, palette, frame);
-  drawGamecastBaseRunners(ctx, palette, frame.bases, frame.offenseColor);
+  drawGamecastBaseRunners(ctx, palette, frame.bases, frame);
   drawPixelOutPips(ctx, palette, frame);
   drawPixelSideIcon(ctx, palette, frame);
   drawPixelAction(ctx, palette, frame);
@@ -3390,6 +3537,8 @@ function drawBallparkOutfield(ctx, palette) {
     }
   }
 
+  drawPixelCrowd(ctx, palette, fx, fy, wallRadius);
+
   ctx.fillStyle = palette.outline;
   ctx.fillRect(gamecastX(48), gamecastY(4), gamecastSize(24), gamecastSize(8));
   ctx.fillStyle = "#12211b";
@@ -3407,6 +3556,36 @@ function drawBallparkOutfield(ctx, palette) {
   const bases = gamecastBasePositions();
   drawPixelLine(ctx, bases.home.x, bases.home.y, gamecastX(16), gamecastY(46), palette.base, gamecastSize(1));
   drawPixelLine(ctx, bases.home.x, bases.home.y, gamecastX(104), gamecastY(46), palette.base, gamecastSize(1));
+}
+
+function drawPixelCrowd(ctx, palette, fx, fy, wallRadius) {
+  const stepX = gamecastSize(4);
+  const stepY = gamecastSize(5);
+  const startY = gamecastY(2);
+  const endY = gamecastY(43);
+  const shirts = [palette.crowdA, palette.crowdB, palette.crowdC, palette.standD];
+
+  for (let y = startY; y < endY; y += stepY) {
+    const row = Math.floor((y - startY) / stepY);
+    for (let x = gamecastX(2) + (row % 2 ? gamecastSize(2) : 0); x < GAMECAST_PIXEL_W - gamecastX(3); x += stepX) {
+      const distance = Math.hypot(x - fx, y - fy);
+      if (distance <= wallRadius + gamecastSize(1)) continue;
+      drawPixelFan(ctx, palette, x, y, shirts[(row + x) % shirts.length]);
+    }
+  }
+}
+
+function drawPixelFan(ctx, palette, x, y, shirt) {
+  ctx.fillStyle = palette.crowdHair;
+  ctx.fillRect(x + 1, y, 2, 1);
+  ctx.fillStyle = palette.crowdSkin;
+  ctx.fillRect(x + 1, y + 1, 2, 1);
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x + 1, y + 2, 1, 1);
+  ctx.fillStyle = shirt;
+  ctx.fillRect(x, y + 3, 4, 2);
+  ctx.fillStyle = palette.stand;
+  ctx.fillRect(x, y + 5, 4, 1);
 }
 
 function drawBallparkInfield(ctx, palette) {
@@ -3454,11 +3633,13 @@ function drawBallparkBase(ctx, palette, position) {
   ]);
 }
 
-function drawGamecastBaseRunners(ctx, palette, baseState, color = palette.runner) {
+function drawGamecastBaseRunners(ctx, palette, baseState, frame = {}) {
   const bases = gamecastBasePositions();
-  if (baseState?.[0]) drawPixelRunner(ctx, palette, bases.first, false, color, 2);
-  if (baseState?.[1]) drawPixelRunner(ctx, palette, bases.second, false, color, 2);
-  if (baseState?.[2]) drawPixelRunner(ctx, palette, bases.third, false, color, 2);
+  const color = frame.offenseColor ?? palette.runner;
+  const jerseyColor = frame.offenseJerseyColor ?? palette.uniform;
+  if (baseState?.[0]) drawPixelRunner(ctx, palette, bases.first, false, color, 2, { jerseyColor, pose: "idle" });
+  if (baseState?.[1]) drawPixelRunner(ctx, palette, bases.second, false, color, 2, { jerseyColor, pose: "idle" });
+  if (baseState?.[2]) drawPixelRunner(ctx, palette, bases.third, false, color, 2, { jerseyColor, pose: "idle" });
 }
 
 function drawPixel(ctx, x, y, color) {
@@ -3491,7 +3672,7 @@ function drawPixelSideIcon(ctx, palette, frame) {
     ctx.fillRect(x + 1, y + 1, 5, 1);
     ctx.fillRect(x + 2, y + 2, 3, 1);
   }
-  ctx.fillStyle = frame.side === "home" ? palette.runner : palette.walk;
+  ctx.fillStyle = frame.offenseColor ?? (frame.side === "home" ? palette.runner : palette.defender);
   ctx.fillRect(x + 2, y + 4, 3, 2);
 }
 
@@ -3502,16 +3683,22 @@ function drawPixelAction(ctx, palette, frame) {
       ctx.fillRect(0, y, GAMECAST_PIXEL_W, 1);
     }
   }
-  if (frame.ballTrail?.length) drawTrail(ctx, palette.homerL, frame.ballTrail);
+  if (frame.ballTrail?.length) drawTrail(ctx, frame.ballTrailColor ?? palette.homerL, frame.ballTrail);
   for (const runner of frame.runners ?? []) {
     drawTrail(ctx, runner.trailColor ?? palette.runnerL, runner.trail);
   }
   if (frame.batter) {
-    drawPixelRunner(ctx, palette, frame.batter.position, false, frame.batter.color, 2, { pose: "bat" });
+    drawPixelRunner(ctx, palette, frame.batter.position, false, frame.batter.color, frame.batter.runFrame ?? 2, {
+      pose: frame.batter.pose ?? "stance",
+      jerseyColor: frame.batter.jerseyColor
+    });
   }
   if (frame.ball) drawPixelBall(ctx, palette, frame.ball, frame.ballColor ?? palette.base);
   for (const runner of frame.runners ?? []) {
-    drawPixelRunner(ctx, palette, runner.position, runner.squash, runner.color, runner.runFrame);
+    drawPixelRunner(ctx, palette, runner.position, runner.squash, runner.color, runner.runFrame, {
+      jerseyColor: runner.jerseyColor,
+      pose: runner.pose
+    });
   }
 }
 
@@ -3550,7 +3737,9 @@ function buildGamecastFrameState(state, forceFinal = false) {
       outs: 0,
       score: { away: seq.finalAway, home: seq.finalHome },
       runners: [],
-      offenseColor: state.palette.runner
+      offenseColor: state.palette.runner,
+      offenseJerseyColor: state.palette.uniform,
+      actionBurst: null
     };
   }
 
@@ -3568,6 +3757,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
       score: { away: seq.finalAway, home: seq.finalHome },
       runners: [],
       offenseColor: last.teamColor ?? state.palette.runner,
+      offenseJerseyColor: last.teamJerseyColor ?? state.palette.uniform,
+      actionBurst: null,
       progress: 1
     };
   }
@@ -3595,24 +3786,84 @@ function buildGamecastFrameState(state, forceFinal = false) {
     batter: buildBatterSprite(event, progress, state.palette),
     ball: buildBallSprite(event, progress),
     ballTrail: buildBallTrail(event, progress),
-    ballColor: event.outcome === "homeRun" ? state.palette.homer : state.palette.base,
+    ballTrailColor: event.outcome === "homeRun" ? state.palette.homerL : state.palette.baseSh,
+    ballColor: state.palette.base,
     playerLabel: buildGamecastPlayerLabel(event, progress, runners),
+    actionBurst: buildGamecastActionBurst(event, progress),
     scoreFlash: event.runs > 0 && progress >= 0.62 && progress <= 0.84,
     flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
     offenseColor: event.teamColor ?? state.palette.runner,
+    offenseJerseyColor: event.teamJerseyColor ?? state.palette.uniform,
     progress
   };
 }
 
+function buildGamecastActionBurst(event, progress) {
+  if (!event) return null;
+  const start = gamecastPitchEnd(event) + 0.02;
+  const end = event.outcome === "homeRun" ? 0.88 : 0.72;
+  if (progress < start || progress > end) return null;
+
+  const t = Math.max(0, Math.min(1, (progress - start) / Math.max(0.01, end - start)));
+  const pop = Math.sin(Math.min(1, t * 1.25) * Math.PI);
+  const text = gamecastBurstText(event.outcome);
+  if (!text) return null;
+
+  return {
+    text,
+    className: gamecastBurstClass(event.outcome),
+    x: event.outcome === "homeRun" ? 50 : event.outcome === "strikeout" ? 52 : 58,
+    y: event.outcome === "homeRun" ? 30 : event.outcome === "strikeout" ? 42 : 38,
+    opacity: Math.max(0, Math.min(1, t < 0.18 ? t / 0.18 : (1 - t) / 0.28)),
+    scale: 0.72 + pop * (event.outcome === "homeRun" ? 0.78 : 0.48),
+    shake: Math.round(Math.sin(t * Math.PI * 10) * (event.outcome === "homeRun" ? 5 : 3))
+  };
+}
+
+function gamecastBurstText(outcome) {
+  if (outcome === "homeRun") return "홈런!";
+  if (outcome === "triple") return "3루타!";
+  if (outcome === "double") return "2루타!";
+  if (outcome === "single" || outcome === "error") return "안타!";
+  if (outcome === "strikeout") return "삼진!";
+  if (outcome === "walk") return "볼넷!";
+  if (outcome === "out") return "아웃!";
+  return "";
+}
+
+function gamecastBurstClass(outcome) {
+  if (outcome === "homeRun") return "is-homer";
+  if (["single", "double", "triple", "error"].includes(outcome)) return "is-hit";
+  if (outcome === "strikeout" || outcome === "out") return "is-out";
+  if (outcome === "walk") return "is-walk";
+  return "";
+}
+
 function buildBatterSprite(event, progress, palette) {
-  if (!event || progress >= 0.18) return null;
+  if (!event || progress >= 0.72) return null;
+  const advance = gamecastAdvanceCount(event.outcome);
+  if ((advance > 0 || event.outcome === "walk") && progress >= gamecastRunnerMoveStart(event) + 0.06) return null;
   const bases = gamecastBasePositions();
+  const pitchEnd = gamecastPitchEnd(event);
+  let pose = "stance";
+  if (progress >= pitchEnd - 0.08 && progress < pitchEnd + 0.01) pose = "load";
+  else if (progress >= pitchEnd + 0.01 && progress < pitchEnd + 0.16) {
+    if (event.outcome === "walk") pose = "take";
+    else if (event.outcome === "strikeout") pose = "miss";
+    else pose = "swing";
+  } else if (progress >= pitchEnd + 0.16) {
+    pose = event.outcome === "strikeout" ? "miss" : "follow";
+  }
+
   return {
     position: {
       x: bases.home.x + gamecastSize(8),
       y: bases.home.y - gamecastSize(1)
     },
-    color: event.teamColor ?? palette.runner
+    color: event.teamColor ?? palette.runner,
+    jerseyColor: event.teamJerseyColor ?? palette.uniform,
+    pose,
+    runFrame: 2
   };
 }
 
@@ -3650,7 +3901,7 @@ function shortenGamecastPlayerName(name) {
 
 function baseOccupancyDuringMove(event, progress) {
   const advance = gamecastAdvanceCount(event.outcome);
-  if (progress < 0.15 || advance <= 0) return event.basesBefore;
+  if (progress < gamecastRunnerMoveStart(event) || advance <= 0) return event.basesBefore;
   return [false, false, false];
 }
 
@@ -3678,23 +3929,35 @@ function outsInInning(value) {
 
 function buildRunnerSprites(event, progress, palette) {
   const advance = gamecastAdvanceCount(event.outcome);
-  if (progress < 0.15 || progress >= 0.72) return [];
+  if (event.outcome === "strikeout") return [];
+  const moveStart = gamecastRunnerMoveStart(event);
+  if (progress < moveStart || progress >= 0.72) return [];
 
-  const moveT = Math.max(0, Math.min(1, (progress - 0.15) / 0.57));
-  const eased = easeOutCubic(moveT);
+  const moveT = Math.max(0, Math.min(1, (progress - moveStart) / Math.max(0.01, 0.72 - moveStart)));
+  const walking = event.outcome === "walk";
+  const eased = walking ? easeInOutCubic(moveT) : easeOutCubic(moveT);
   const runners = [];
   const runnerColor = event.teamColor ?? palette.runner;
   const trailColor = event.teamTrailColor ?? palette.runnerL;
+  const jerseyColor = event.teamJerseyColor ?? palette.uniform;
 
   if (advance > 0) {
     event.basesBefore.forEach((occupied, index) => {
       if (!occupied) return;
       const startBase = index + 1;
       const targetBase = Math.min(4, startBase + advance);
-      runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, runnerColor, trailColor, moveT, "runner"));
+      runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, runnerColor, trailColor, moveT, "runner", {
+        jerseyColor,
+        pose: walking ? "walk" : "run",
+        trail: !walking
+      }));
     });
     const batterTarget = Math.min(4, advance);
-    runners.push(makeRunnerSprite(gamecastPathBetween(0, batterTarget), eased, event.outcome === "walk" ? palette.walk : runnerColor, trailColor, moveT, "batter"));
+    runners.push(makeRunnerSprite(gamecastPathBetween(0, batterTarget), eased, runnerColor, trailColor, moveT, "batter", {
+      jerseyColor,
+      pose: walking ? "walk" : "run",
+      trail: !walking
+    }));
     return runners;
   }
 
@@ -3706,61 +3969,113 @@ function buildRunnerSprites(event, progress, palette) {
       y: Math.round(lerp(bases.home.y, bases.home.y - gamecastSize(3), outT))
     },
     trail: [],
-    color: palette.out,
+    color: runnerColor,
+    jerseyColor,
     runFrame: Math.floor(moveT * 8) % 2,
     squash: progress > 0.55,
-    role: "batter"
+    role: "batter",
+    pose: "run"
   });
   return runners;
 }
 
-function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner") {
+function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner", options = {}) {
   const position = positionAlongPath(path, eased);
   return {
     position,
-    trail: [
-      positionAlongPath(path, Math.max(0, eased - 0.12)),
-      positionAlongPath(path, Math.max(0, eased - 0.24))
-    ],
+    trail: options.trail === false
+      ? []
+      : [
+          positionAlongPath(path, Math.max(0, eased - 0.12)),
+          positionAlongPath(path, Math.max(0, eased - 0.24))
+        ],
     color,
+    jerseyColor: options.jerseyColor,
     trailColor,
-    runFrame: moveT > 0.92 ? 2 : Math.floor(moveT * 8) % 2,
-    squash: moveT > 0.92,
+    runFrame: moveT > 0.92 ? 2 : Math.floor(moveT * (options.pose === "walk" ? 4 : 8)) % 2,
+    squash: options.pose === "walk" ? false : moveT > 0.92,
+    pose: options.pose ?? "run",
     role
   };
 }
 
 function buildBallSprite(event, progress) {
   const bases = gamecastBasePositions();
-  if (progress < 0.15) {
-    const t = progress / 0.15;
+  const pitchEnd = gamecastPitchEnd(event);
+  if (progress < pitchEnd) {
+    const t = Math.max(0, Math.min(1, progress / pitchEnd));
+    const target = pitchTargetForEvent(event, bases);
     return {
-      x: Math.round(lerp(bases.mound.x, bases.home.x, t)),
-      y: Math.round(lerp(bases.mound.y, bases.home.y - gamecastSize(4), t))
+      x: Math.round(lerp(bases.mound.x, target.x, easeOutCubic(t))),
+      y: Math.round(lerp(bases.mound.y, target.y, easeOutCubic(t)))
     };
   }
-  if (event.outcome !== "homeRun" || progress >= 0.72) return null;
-  const t = Math.max(0, Math.min(1, (progress - 0.15) / 0.57));
-  const eased = easeOutCubic(t);
-  return {
-    x: Math.round(gamecastX(60) + Math.sin(t * Math.PI) * gamecastSize(34)),
-    y: Math.round(gamecastY(92) - gamecastSize(78) * eased - Math.sin(t * Math.PI) * gamecastSize(16))
-  };
+  if (event.outcome === "walk") return progress < pitchEnd + 0.12 ? pitchTargetForEvent(event, bases) : null;
+  if (event.outcome === "strikeout") return progress < pitchEnd + 0.18 ? pitchTargetForEvent(event, bases) : null;
+  if (!isBattedBallOutcome(event.outcome) || progress >= 0.76) return null;
+  return battedBallPoint(event, Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, 0.76 - pitchEnd))));
 }
 
 function buildBallTrail(event, progress) {
-  if (event.outcome !== "homeRun" || progress < 0.18 || progress >= 0.72) return [];
+  const pitchEnd = gamecastPitchEnd(event);
+  if (!isBattedBallOutcome(event.outcome) || progress < pitchEnd + 0.05 || progress >= 0.76) return [];
   const points = [];
-  for (const offset of [0.08, 0.16]) {
-    const p = Math.max(0.15, progress - offset);
-    const t = Math.max(0, Math.min(1, (p - 0.15) / 0.57));
-    const eased = easeOutCubic(t);
-    points.push({
-      x: Math.round(gamecastX(60) + Math.sin(t * Math.PI) * gamecastSize(34)),
-      y: Math.round(gamecastY(92) - gamecastSize(78) * eased - Math.sin(t * Math.PI) * gamecastSize(16))
-    });
+  for (const offset of [0.06, 0.12, 0.18]) {
+    const p = Math.max(pitchEnd, progress - offset);
+    points.push(battedBallPoint(event, Math.max(0, Math.min(1, (p - pitchEnd) / Math.max(0.01, 0.76 - pitchEnd)))));
   }
   return points;
+}
+
+function gamecastPitchEnd(event) {
+  if (event?.outcome === "walk") return 0.34;
+  if (event?.outcome === "strikeout") return 0.26;
+  return 0.22;
+}
+
+function gamecastRunnerMoveStart(event) {
+  if (event?.outcome === "walk") return 0.34;
+  return 0.25;
+}
+
+function pitchTargetForEvent(event, bases) {
+  if (event?.outcome === "walk") return { x: bases.home.x + gamecastSize(12), y: bases.home.y - gamecastSize(7) };
+  if (event?.outcome === "strikeout") return { x: bases.home.x - gamecastSize(6), y: bases.home.y - gamecastSize(2) };
+  return { x: bases.home.x + gamecastSize(2), y: bases.home.y - gamecastSize(6) };
+}
+
+function isBattedBallOutcome(outcome) {
+  return ["single", "double", "triple", "homeRun", "error", "out"].includes(outcome);
+}
+
+function battedBallPoint(event, t) {
+  const bases = gamecastBasePositions();
+  const start = { x: bases.home.x + gamecastSize(2), y: bases.home.y - gamecastSize(7) };
+  const target = battedBallTarget(event);
+  const eased = easeOutCubic(t);
+  const lift = battedBallLift(event.outcome) * Math.sin(t * Math.PI);
+  return {
+    x: Math.round(lerp(start.x, target.x, eased)),
+    y: Math.round(lerp(start.y, target.y, eased) - lift)
+  };
+}
+
+function battedBallTarget(event) {
+  const pullSide = Number(event?.sequence ?? 0) % 2 === 0 ? -1 : 1;
+  if (event?.outcome === "homeRun") return { x: gamecastX(pullSide > 0 ? 104 : 18), y: gamecastY(24) };
+  if (event?.outcome === "triple") return { x: gamecastX(pullSide > 0 ? 105 : 16), y: gamecastY(36) };
+  if (event?.outcome === "double") return { x: gamecastX(pullSide > 0 ? 96 : 24), y: gamecastY(44) };
+  if (event?.outcome === "single") return { x: gamecastX(pullSide > 0 ? 82 : 38), y: gamecastY(58) };
+  if (event?.outcome === "error") return { x: gamecastX(pullSide > 0 ? 76 : 44), y: gamecastY(76) };
+  return { x: gamecastX(pullSide > 0 ? 82 : 38), y: gamecastY(48) };
+}
+
+function battedBallLift(outcome) {
+  if (outcome === "homeRun") return gamecastSize(24);
+  if (outcome === "triple" || outcome === "double") return gamecastSize(16);
+  if (outcome === "out") return gamecastSize(20);
+  if (outcome === "single") return gamecastSize(9);
+  return gamecastSize(4);
 }
 
 function gamecastAdvanceCount(outcome) {
@@ -3799,9 +4114,31 @@ function syncGamecastDom(state, frame) {
   if (state.nowTitle) state.nowTitle.textContent = frame.event ? gamecastNowTitle(frame.event) : "경기 종료";
   if (state.nowDetail) state.nowDetail.textContent = frame.event ? gamecastNowDetail(frame.event) : "타석 이벤트 대기";
   syncGamecastPlayerLabel(state.playerLabel, frame.playerLabel);
+  syncGamecastActionBurst(state.actionBurst, frame.actionBurst);
   for (const item of state.feedItems ?? []) {
     item.classList.toggle("is-live", Boolean(frame.event?.id && !frame.done && item.dataset.gamecastEventId === frame.event.id));
   }
+}
+
+function syncGamecastActionBurst(node, burst) {
+  if (!node) return;
+  if (!burst?.text) {
+    node.className = "gamecast-action-burst";
+    node.textContent = "";
+    node.style.removeProperty("--burst-x");
+    node.style.removeProperty("--burst-y");
+    node.style.removeProperty("--burst-opacity");
+    node.style.removeProperty("--burst-scale");
+    node.style.removeProperty("--burst-shake");
+    return;
+  }
+  node.textContent = burst.text;
+  node.className = `gamecast-action-burst is-visible ${burst.className ?? ""}`.trim();
+  node.style.setProperty("--burst-x", `${burst.x}%`);
+  node.style.setProperty("--burst-y", `${burst.y}%`);
+  node.style.setProperty("--burst-opacity", String(Math.max(0, Math.min(1, burst.opacity ?? 1))));
+  node.style.setProperty("--burst-scale", String(Math.max(0.4, burst.scale ?? 1)));
+  node.style.setProperty("--burst-shake", `${burst.shake ?? 0}px`);
 }
 
 function syncGamecastPlayerLabel(labelNode, label) {
@@ -3875,10 +4212,25 @@ function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, op
     [2, 8, US], [3, 8, trim], [4, 8, trim], [5, 8, US],
     [3, 9, L], [5, 9, L]
   ];
-  if (pose === "bat") {
+  if (pose === "stance" || pose === "load") {
+    cells.push([7, 2, palette.bat], [7, 3, palette.bat], [6, 4, palette.bat], [1, 5, S], [6, 6, S], [7, 6, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
+    if (pose === "load") cells.push([6, 2, palette.bat], [5, 3, palette.bat], [6, 5, S]);
+  } else if (pose === "swing") {
+    cells.push([0, 4, palette.bat], [1, 4, palette.bat], [6, 4, palette.bat], [7, 4, palette.bat], [8, 4, palette.bat], [1, 5, S], [6, 5, S], [7, 5, S], [2, 10, L], [5, 10, L], [1, 11, L], [6, 11, L], [1, 12, L], [7, 12, L]);
+  } else if (pose === "follow") {
+    cells.push([0, 2, palette.bat], [1, 3, palette.bat], [2, 4, palette.bat], [1, 5, S], [6, 5, S], [7, 6, S], [2, 10, L], [5, 10, L], [1, 11, L], [6, 11, L], [1, 12, L], [7, 12, L]);
+  } else if (pose === "miss") {
+    cells.push([6, 1, palette.bat], [7, 2, palette.bat], [7, 3, palette.bat], [0, 5, S], [6, 5, S], [2, 10, L], [5, 10, L], [2, 11, L], [5, 11, L], [2, 12, L], [6, 12, L]);
+  } else if (pose === "take") {
+    cells.push([0, 5, S], [1, 5, S], [6, 5, S], [7, 5, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
+  } else if (pose === "walk") {
+    cells.push([1, 5, S], [7, 6, S], [2, 10, L], [5, 10, L], [runFrame === 1 ? 1 : 2, 11, L], [runFrame === 1 ? 6 : 5, 11, L], [runFrame === 1 ? 1 : 2, 12, L], [runFrame === 1 ? 7 : 6, 12, L]);
+  } else if (pose === "bat") {
     cells.push([0, 5, palette.bat], [0, 6, palette.bat], [1, 7, palette.bat], [1, 5, S], [6, 6, S], [7, 6, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
   } else if (pose === "catcher") {
     cells.push([1, 5, trim], [6, 5, trim], [1, 9, L], [6, 9, L], [1, 10, L], [6, 10, L], [0, 11, L], [7, 11, L], [0, 12, L], [7, 12, L]);
+  } else if (pose === "field") {
+    cells.push([0, 5, palette.glove], [1, 5, S], [6, 5, S], [7, 5, palette.glove], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [2, 12, L], [6, 12, L]);
   } else if (runFrame === 2) {
     cells.push([2, 10, L], [3, 10, L], [5, 10, L], [6, 10, L], [2, 11, L], [6, 11, L], [2, 12, L], [6, 12, L]);
   } else if (runFrame === 1) {
@@ -3898,6 +4250,9 @@ function drawPixelBall(ctx, palette, position, color) {
   ctx.fillRect(x - 1, y - 1, 5, 5);
   ctx.fillStyle = color;
   ctx.fillRect(x, y, 3, 3);
+  ctx.fillStyle = palette.ballSeam;
+  ctx.fillRect(x, y, 1, 1);
+  ctx.fillRect(x + 2, y + 2, 1, 1);
 }
 
 function drawTrail(ctx, color, trail) {
@@ -3954,6 +4309,12 @@ function drawPixelLine(ctx, x0, y0, x1, y1, color, size = 1) {
 
 function easeOutCubic(value) {
   return 1 - (1 - value) ** 3;
+}
+
+function easeInOutCubic(value) {
+  return value < 0.5
+    ? 4 * value * value * value
+    : 1 - ((-2 * value + 2) ** 3) / 2;
 }
 
 function easeOutBack(value) {

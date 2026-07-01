@@ -220,17 +220,25 @@ export function getNextGamePreview(state, teamId = state?.selectedTeamId) {
   let phase = state.phase || "preseason";
   let gamesPlayed = Math.max(0, Math.floor(safeNumber(state.gamesPlayed)));
   let date = parseDate(state.currentDate);
+
+  if (phase === "preseason") {
+    const dateKey = formatDateKey(date);
+    const openingDay = openingDayForDateKey(dateKey);
+    const daysToOpening = Math.max(0, Math.round((parseDate(openingDay).getTime() - date.getTime()) / MS_PER_DAY));
+    return {
+      ok: false,
+      code: "preseason",
+      date: dateKey,
+      openingDay,
+      daysToOpening,
+      message: `프리시즌 캠프 기간입니다. 개막전은 ${openingDay}이며, 경기 보기/시뮬레이션은 개막 후 열립니다.`
+    };
+  }
+
   let skippedDays = 0;
 
   for (let guard = 0; guard < 220; guard += 1) {
     const dateKey = formatDateKey(date);
-    if (phase === "preseason") {
-      date = new Date(date.getTime() + MS_PER_DAY);
-      skippedDays += 1;
-      if (formatDateKey(date) >= openingDayForDateKey(formatDateKey(date))) phase = "regular";
-      continue;
-    }
-
     if (gamesPlayed >= REGULAR_SEASON_GAMES) {
       return { ok: false, code: "season-complete", message: "정규시즌 720경기를 모두 마쳤습니다." };
     }
@@ -330,27 +338,26 @@ export function simulateNextUserGame(state, options = {}) {
   }
 
   normalizeState(state);
+
+  if (state.phase === "preseason") {
+    const date = parseDate(state.currentDate);
+    const openingDay = openingDayForDateKey(formatDateKey(date));
+    const daysToOpening = Math.max(0, Math.round((parseDate(openingDay).getTime() - date.getTime()) / MS_PER_DAY));
+    return {
+      ok: false,
+      code: "preseason",
+      date: state.currentDate,
+      openingDay,
+      daysToOpening,
+      message: `아직 프리시즌입니다. 개막까지 ${daysToOpening}일 남았고, 경기 보기 대신 뉴스함/보고서를 확인하며 하루씩 진행하세요.`
+    };
+  }
+
   const teamId = options.teamId ?? state.selectedTeamId;
   const mode = options.mode === "watch" ? "watch" : "quick";
   let skippedDays = 0;
 
   for (let guard = 0; guard < 220; guard += 1) {
-    if (state.phase === "preseason") {
-      const date = parseDate(state.currentDate);
-      const weather = buildWeather(state, date);
-      state.weather = weather;
-      recoverRoster(state.teams);
-      advanceDate(state, date);
-      skippedDays += 1;
-      if (state.currentDate >= openingDayForDateKey(state.currentDate)) {
-        state.phase = "regular";
-        addLog(state, `${state.currentDate} 정규시즌 개막일입니다. 다음 경기부터 도트 중계를 볼 수 있어요.`);
-      } else {
-        addPreseasonActivityLog(state, state.currentDate, weather);
-      }
-      continue;
-    }
-
     const date = parseDate(state.currentDate);
     const dateKey = formatDateKey(date);
     const weather = buildWeather(state, date);

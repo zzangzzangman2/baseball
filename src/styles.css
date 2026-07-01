@@ -730,6 +730,163 @@ img {
   text-align: right;
 }
 
+.news-inbox-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(226, 219, 210, 0.95);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 254, 250, 0.98), rgba(244, 249, 246, 0.96) 58%, rgba(247, 250, 252, 0.96)),
+    var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.news-inbox-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.news-inbox-head p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 760;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.news-inbox-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.88fr) minmax(280px, 1fr) minmax(260px, 0.92fr);
+  gap: 12px;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.inbox-assistant-card,
+.news-inbox-feature,
+.news-inbox-item {
+  min-width: 0;
+  border: 1px solid #e1dbd1;
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.97);
+}
+
+.inbox-assistant-card,
+.news-inbox-feature {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 14px;
+}
+
+.inbox-assistant-card {
+  border-left: 4px solid color-mix(in srgb, var(--team-color, var(--leaf)), #ffffff 18%);
+}
+
+.news-inbox-feature {
+  border-top: 4px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 24%);
+}
+
+.news-inbox-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.news-inbox-item {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.34fr) minmax(0, 1fr);
+  gap: 5px 9px;
+  align-items: center;
+  padding: 10px;
+  border-left: 3px solid #9aa6ad;
+}
+
+.news-inbox-item strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.24;
+  overflow-wrap: anywhere;
+}
+
+.news-inbox-item small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.inbox-assistant-card span,
+.news-inbox-feature span,
+.news-inbox-item span {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8f9f6;
+  color: color-mix(in srgb, var(--team-color, #2f343a), #3f464c 48%);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.inbox-assistant-card h3,
+.news-inbox-feature h3 {
+  min-width: 0;
+  font-size: 1.02rem;
+  line-height: 1.23;
+  overflow-wrap: anywhere;
+}
+
+.inbox-assistant-card p,
+.news-inbox-feature p {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 760;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+}
+
+.inbox-assistant-card small,
+.news-inbox-feature small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.news-inbox-item.is-media {
+  border-left-color: #607080;
+}
+
+.news-inbox-item.is-assistant {
+  border-left-color: color-mix(in srgb, var(--team-color, var(--leaf)), #ffffff 12%);
+}
+
+.news-inbox-item.is-kbo-official {
+  border-left-color: #2f343a;
+}
+
+.news-inbox-item.is-front-office,
+.news-inbox-item.is-compliance {
+  border-left-color: #716457;
+}
+
+.news-inbox-item.is-community {
+  border-left-color: #8a7468;
+}
+
 .preseason-desk-panel {
   display: grid;
   grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.1fr);
@@ -1162,6 +1319,13 @@ img {
   box-shadow: var(--shadow-soft);
 }
 
+.next-game-panel.is-preseason-camp {
+  border-left: 4px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 18%);
+  background:
+    linear-gradient(135deg, rgba(255, 254, 250, 0.98), rgba(245, 250, 246, 0.96) 58%, rgba(245, 249, 252, 0.96)),
+    var(--panel);
+}
+
 .next-game-copy,
 .next-game-actions {
   display: grid;
@@ -1214,6 +1378,18 @@ img {
 .next-game-team.is-user {
   border-color: color-mix(in srgb, var(--team-color), #ffffff 54%);
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--team-color), transparent 84%);
+}
+
+.next-game-team.is-camp {
+  min-height: 66px;
+  background: #fffefa;
+}
+
+.next-game-team.is-camp:last-child {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  color: color-mix(in srgb, var(--team-color, #2f343a), #3f464c 55%);
+  font-weight: 950;
 }
 
 .next-game-team span {
@@ -2640,6 +2816,61 @@ img {
   border-color: rgba(198, 75, 116, 0.82);
   background: linear-gradient(135deg, rgba(255, 254, 251, 0.96), rgba(255, 227, 154, 0.94));
   color: #6e3048;
+}
+
+.gamecast-action-burst {
+  position: absolute;
+  left: var(--burst-x, 50%);
+  top: var(--burst-y, 38%);
+  z-index: 3;
+  min-width: 0;
+  padding: 3px 7px 5px;
+  border: 2px solid #23202a;
+  border-radius: 6px;
+  background: #fffefb;
+  box-shadow:
+    3px 3px 0 #23202a,
+    -2px 0 0 rgba(255, 255, 255, 0.82);
+  color: #23202a;
+  font-size: clamp(1rem, 4.4vw, 1.65rem);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  text-shadow:
+    1px 0 0 rgba(255, 255, 255, 0.8),
+    0 1px 0 rgba(255, 255, 255, 0.8);
+  transform:
+    translate(calc(-50% + var(--burst-shake, 0px)), -50%)
+    scale(var(--burst-scale, 1));
+  transform-origin: center;
+  white-space: nowrap;
+}
+
+.gamecast-action-burst.is-visible {
+  opacity: var(--burst-opacity, 1);
+}
+
+.gamecast-action-burst.is-homer {
+  background: linear-gradient(135deg, #fffefb, #ffe39a 58%, #ffb3a6);
+  color: #7d2c43;
+}
+
+.gamecast-action-burst.is-hit {
+  background: linear-gradient(135deg, #fffefb, #bfead9);
+  color: #275d4e;
+}
+
+.gamecast-action-burst.is-out {
+  background: linear-gradient(135deg, #fffefb, #e3e6ec);
+  color: #43414a;
+}
+
+.gamecast-action-burst.is-walk {
+  background: linear-gradient(135deg, #fffefb, #ddecff);
+  color: #315288;
 }
 
 .gamecast-broadcast-backdrop {
@@ -5086,6 +5317,7 @@ body {
 
 .appointment-card-head,
 .appointment-title-block,
+.appointment-ceremony-banner,
 .appointment-media-strip,
 .interview-form {
   position: relative;
@@ -5179,6 +5411,48 @@ body {
   font-weight: 850;
   line-height: 1.36;
   overflow-wrap: anywhere;
+}
+
+.appointment-ceremony-banner {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid rgba(230, 223, 213, 0.92);
+  border-left: 4px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 14%);
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.78);
+}
+
+.appointment-ceremony-banner span {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 84%);
+  color: color-mix(in srgb, var(--team-color, #2f343a), #20262a 46%);
+  font-size: 0.72rem;
+  font-weight: 950;
+  overflow-wrap: anywhere;
+}
+
+.appointment-ceremony-banner strong,
+.appointment-ceremony-banner p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.32;
+}
+
+.appointment-ceremony-banner strong {
+  color: #20262a;
+  font-size: 1.02rem;
+  font-weight: 950;
+}
+
+.appointment-ceremony-banner p {
+  color: #596268;
+  font-size: 0.84rem;
+  font-weight: 780;
 }
 
 .appointment-media-strip {
@@ -5348,6 +5622,7 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .news-inbox-grid,
   .preseason-desk-panel {
     grid-template-columns: 1fr;
   }
@@ -5393,6 +5668,18 @@ body {
   .operation-group,
   .operation-group .button {
     flex-basis: 100%;
+  }
+
+  .news-inbox-head {
+    flex-direction: column;
+  }
+
+  .news-inbox-item {
+    grid-template-columns: 1fr;
+  }
+
+  .news-inbox-item small {
+    grid-column: auto;
   }
 
   .player-detail-identity {

@@ -374,31 +374,43 @@ async function checkViewport(viewport) {
     (() => {
       const bodyText = document.body.innerText;
       return {
+        hasMainNewsInbox: Boolean(document.querySelector("[data-main-news-inbox]")),
         hasTopbarLogo: Boolean(document.querySelector(".topbar .topbar-logo-plate img")),
         hasDuplicateHero: Boolean(document.querySelector(".hero-card")),
         hasPreseasonDesk: Boolean(document.querySelector("[data-preseason-desk]")),
         hasAssistantBrief: Boolean(document.querySelector("[data-news-type='assistant']")),
         hasMediaBrief: Boolean(document.querySelector("[data-news-type='media']")),
-        hasSpotv: bodyText.includes("SPOTV")
+        hasSpotv: bodyText.includes("SPOTV"),
+        hasAppointmentNews: bodyText.includes("취임식") && bodyText.includes("뉴스함")
       };
     })()
   `);
   assert(headerProbe.hasTopbarLogo && !headerProbe.hasDuplicateHero, "상단 로고 이동 또는 중복 구단 히어로 제거가 확인되지 않았습니다.", "src/ui.js");
-  assert(headerProbe.hasPreseasonDesk && headerProbe.hasAssistantBrief && headerProbe.hasMediaBrief && headerProbe.hasSpotv, "프리시즌 데스크/비서/언론 피드가 확인되지 않았습니다.", "src/ui.js");
+  assert(headerProbe.hasMainNewsInbox && headerProbe.hasPreseasonDesk && headerProbe.hasAssistantBrief && headerProbe.hasMediaBrief && headerProbe.hasSpotv && headerProbe.hasAppointmentNews, "메인 뉴스함/취임식/비서/언론 피드가 확인되지 않았습니다.", "src/ui.js");
   const nextGameProbe = await evaluateInBrowser(`
     (() => {
       const panel = document.querySelector(".next-game-panel");
       return {
         hasPanel: Boolean(panel),
-        hasWatch: Boolean(document.querySelector("[data-action='watch-next-game']")),
-        hasQuick: Boolean(document.querySelector("[data-action='simulate-next-game']")),
+        isPreseasonCamp: Boolean(panel?.classList.contains("is-preseason-camp")),
+        hasCampDay: Boolean(panel?.querySelector("[data-action='next-day']")),
+        hasCampWeek: Boolean(panel?.querySelector("[data-action='week']")),
+        hasEnabledWatch: Boolean(panel?.querySelector("[data-action='watch-next-game']:not(:disabled)")),
+        hasEnabledQuick: Boolean(panel?.querySelector("[data-action='simulate-next-game']:not(:disabled)")),
         text: panel?.textContent?.trim() ?? ""
       };
     })()
   `);
   assert(
-    nextGameProbe.hasPanel && nextGameProbe.hasWatch && nextGameProbe.hasQuick && nextGameProbe.text.includes("다음 경기"),
-    "다음 경기 보기/시뮬레이션 패널을 찾지 못했습니다.",
+    nextGameProbe.hasPanel &&
+      nextGameProbe.isPreseasonCamp &&
+      nextGameProbe.hasCampDay &&
+      nextGameProbe.hasCampWeek &&
+      !nextGameProbe.hasEnabledWatch &&
+      !nextGameProbe.hasEnabledQuick &&
+      nextGameProbe.text.includes("프리시즌 캠프") &&
+      nextGameProbe.text.includes("개막 전 경기 없음"),
+    `프리시즌 캠프 패널이 개막 전 경기 버튼을 막지 못했습니다: ${JSON.stringify(nextGameProbe)}`,
     "src/ui.js"
   );
   const playerDetailProbe = await evaluateInBrowser(`
@@ -602,9 +614,19 @@ async function checkViewport(viewport) {
         ".gamecast-now small",
         ".assistant-brief-card p",
         ".media-brief-card p",
+        ".news-inbox-head p",
+        ".inbox-assistant-card h3",
+        ".inbox-assistant-card p",
+        ".news-inbox-item span",
+        ".news-inbox-item strong",
+        ".news-inbox-item small",
+        ".news-inbox-feature h3",
+        ".news-inbox-feature p",
         ".decision-mail-copy p",
         ".decision-choice strong",
         ".decision-choice small",
+        ".appointment-ceremony-banner strong",
+        ".appointment-ceremony-banner p",
         ".schedule-month-chip",
         ".schedule-day strong",
         ".schedule-day small",
@@ -1008,6 +1030,8 @@ async function waitForAppointment() {
         Boolean(
           document.querySelector(".appointment-stage") &&
           document.querySelector("[data-appointment-form]") &&
+          document.querySelector(".appointment-ceremony-banner") &&
+          document.body.innerText.includes("취임식") &&
           document.querySelectorAll(".interview-question").length > 0
         )
       `);
