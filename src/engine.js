@@ -11,6 +11,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const OPENING_DAY = "2026-03-28";
 const OPENING_DAY_MONTH_DAY = "03-28";
 const PRESEASON_MEDIA_OUTLETS = ["SBS 스포츠", "KBS 스포츠", "MBC 스포츠", "JTBC 스포츠", "MBN 스포츠", "SPOTV"];
+const MAIL_DECISION_LIMIT = 24;
 const POSTSEASON_RULE_SOURCE = "KBO 운영제도 v1: 와일드카드 4위 1승 어드밴티지, 준PO/PO 5전 3선승, 한국시리즈 7전 4선승";
 const DRAFT_RULE_SOURCE = "KBO 신인 드래프트 v1: 전면 드래프트 11라운드, 최대 110명 지명";
 const DRAFT_POOL_SIZE = 150;
@@ -317,6 +318,7 @@ export function simulateNextUserGame(state, options = {}) {
     const playable = matchups.slice(0, gamesToPlay);
     const focusMatchup = findMatchupForTeam(playable, teamId) ?? playable[0];
     const focusIndex = playable.indexOf(focusMatchup);
+    const injurySnapshot = captureInjurySnapshot(state);
     const results = [];
 
     for (let i = 0; i < gamesToPlay; i += 1) {
@@ -333,6 +335,12 @@ export function simulateNextUserGame(state, options = {}) {
     if (results.length > 0) {
       const focusText = focusGame ? `${focusGame.away} ${focusGame.awayScore}-${focusGame.homeScore} ${focusGame.home}` : `${results.length}경기`;
       addLog(state, `${dateKey} ${weather.label}: ${mode === "watch" ? "경기 보기" : "빠른 시뮬레이션"} 완료, ${focusText}.`);
+      addDailyMorningRoutine(state, {
+        reportDate: dateKey,
+        results,
+        focusGame,
+        newInjuries: collectNewInjuries(state, injurySnapshot)
+      });
     }
 
     tickInjuries(state.teams);
@@ -393,6 +401,7 @@ export function simulateDay(state) {
     const remaining = REGULAR_SEASON_GAMES - state.gamesPlayed;
     const matchups = buildMatchups(state.teams, Math.floor(state.gamesPlayed / DAILY_GAME_COUNT));
     const gamesToPlay = Math.min(matchups.length, Math.floor(remaining));
+    const injurySnapshot = captureInjurySnapshot(state);
     const results = [];
 
     for (let i = 0; i < gamesToPlay; i += 1) {
@@ -403,6 +412,12 @@ export function simulateDay(state) {
     state.gamesPlayed += results.length;
     if (results.length > 0) {
       addLog(state, `${dateKey} ${weather.label}: ${results.length}경기 진행, 총 ${sum(results, "totalRuns")}득점.`);
+      addDailyMorningRoutine(state, {
+        reportDate: dateKey,
+        results,
+        focusGame: findGameForTeam(results, state.selectedTeamId) ?? results[0],
+        newInjuries: collectNewInjuries(state, injurySnapshot)
+      });
     }
   } else if (state.teams.length < KBO_TEAM_COUNT) {
     addLog(state, `${dateKey} 구단 데이터 대기: ${KBO_TEAM_COUNT}개 구단이 필요합니다.`);
@@ -432,6 +447,49 @@ export function simulateRegularSeason(state) {
     simulateDay(state);
   }
   return state;
+}
+
+export function resolveMailDecision(state, action = "acknowledge") {
+  if (!state?.pendingMailDecision || state.pendingMailDecision.status !== "open") {
+    return { ok: false, code: "no-pending-decision", message: "처리할 긴급 보고가 없습니다." };
+  }
+
+  normalizeState(state);
+  const decision = state.pendingMailDecision;
+  let result;
+  if (decision.type === "medical-roster") {
+    result = resolveMedicalRosterDecision(state, decision, action);
+  } else if (decision.type === "foreign-adaptation") {
+    result = resolveForeignAdaptationDecision(state, decision, action);
+  } else if (decision.type === "trade-offer") {
+    result = resolveTradeOfferDecision(state, decision, action);
+  } else if (decision.type === "waiver-claim") {
+    result = resolveWaiverClaimDecision(state, decision, action);
+  } else {
+    result = { ok: true, code: "acknowledged", message: "보고를 확인했습니다." };
+  }
+
+  state.mailDecisions = [
+    {
+      ...decision,
+      status: "resolved",
+      resolvedAt: state.currentDate,
+      resolution: action,
+      resultMessage: result.message
+    },
+    ...((state.mailDecisions ?? []).filter((entry) => entry.id !== decision.id))
+  ].slice(0, MAIL_DECISION_LIMIT);
+  state.pendingMailDecision = null;
+  addLog(state, {
+    date: state.currentDate,
+    type: "assistant",
+    tag: "개인비서",
+    source: "개인비서",
+    headline: "긴급 보고 처리 완료",
+    text: result.message
+  });
+
+  return result;
 }
 
 export function initializePostseason(state) {
@@ -2986,6 +3044,12 @@ function findTeamById(state, teamId) {
   return state?.teams?.find((team) => String(team.id) === String(teamId)) ?? null;
 }
 
+function findGameForTeam(games, teamId) {
+  const key = String(teamId ?? "");
+  if (!key) return null;
+  return (games ?? []).find((game) => String(game.awayTeamId) === key || String(game.homeTeamId) === key) ?? null;
+}
+
 function makePostseasonGameId(dateKey, options, awayTeamId, homeTeamId) {
   return `${dateKey}-ps-${options.seriesId ?? "series"}-${safeNumber(options.gameNumber, 1)}-${awayTeamId}-${homeTeamId}`;
 }
@@ -5321,6 +5385,126 @@ function openingDayForDateKey(dateKey) {
 function winningPct(team) {
   const decisions = safeNumber(team.wins) + safeNumber(team.losses);
   return decisions === 0 ? 0 : safeNumber(team.wins) / decisions;
+}
+
+function captureInjurySnapshot(state) {
+  return new Map(allPlayerEntries(state).map(({ player }) => [String(player.id ?? player.name ?? ""), safeNumber(player.injuredDays)]));
+}
+
+function collectNewInjuries(state, snapshot = new Map()) {
+  return allPlayerEntries(state)
+    .filter(({ player }) => {
+      const key = String(player.id ?? player.name ?? "");
+      return safeNumber(player.injuredDays) > 0 && safeNumber(snapshot.get(key)) <= 0;
+    })
+    .map(({ team, player }) => ({
+      teamId: team.id,
+      teamName: team.name,
+      teamShortName: team.shortName ?? team.name,
+      playerId: player.id,
+      name: player.name,
+      role: player.role,
+      position: player.position,
+      injuredDays: safeNumber(player.injuredDays),
+      fatigue: safeNumber(player.fatigue),
+      ovr: safeNumber(player.ovr)
+    }))
+    .sort((a, b) => safeNumber(b.injuredDays) - safeNumber(a.injuredDays) || safeNumber(b.ovr) - safeNumber(a.ovr))
+    .slice(0, 8);
+}
+
+function addDailyMorningRoutine(state, context = {}) {
+  const reportDate = context.reportDate ?? state.currentDate;
+  const results = Array.isArray(context.results) ? context.results : [];
+  const team = findTeamById(state, state.selectedTeamId) ?? state.teams?.[0] ?? null;
+  const focusGame = context.focusGame ?? findGameForTeam(results, team?.id) ?? results[0] ?? null;
+  const newInjuries = Array.isArray(context.newInjuries) ? context.newInjuries : [];
+  const selectedInjuries = newInjuries.filter((entry) => String(entry.teamId) === String(team?.id));
+  const totalRuns = sum(results, "totalRuns");
+  const gameText = focusGame
+    ? `${focusGame.away} ${focusGame.awayScore}-${focusGame.homeScore} ${focusGame.home}`
+    : `${results.length}경기`;
+  const injuryText = selectedInjuries.length
+    ? `${selectedInjuries[0].name} ${selectedInjuries[0].injuredDays}일 이탈 보고`
+    : newInjuries.length
+      ? `리그 신규 부상 ${newInjuries.length}건`
+      : "신규 부상 보고 없음";
+
+  addLog(state, {
+    date: reportDate,
+    type: "media",
+    tag: "KBO 데일리",
+    source: "KBO 데일리",
+    headline: `${reportDate} 리그 데일리 리캡`,
+    text: `${results.length}경기에서 총 ${totalRuns}득점이 나왔습니다. 포커스 게임은 ${gameText}입니다.`
+  });
+
+  addLog(state, {
+    date: reportDate,
+    type: "assistant",
+    tag: "개인비서",
+    source: "개인비서",
+    headline: `${team?.shortName ?? "우리 팀"} 경기 후 아침 보고`,
+    text: `${gameText}. ${injuryText}. 라인업/피로도와 다음 경기 선발 컨디션을 확인하십시오.`
+  });
+
+  if (selectedInjuries.length && state.pendingMailDecision?.status !== "open") {
+    const injury = selectedInjuries[0];
+    state.pendingMailDecision = {
+      id: `medical-${reportDate}-${injury.playerId}`,
+      date: reportDate,
+      status: "open",
+      type: "medical-roster",
+      teamId: injury.teamId,
+      teamName: injury.teamName,
+      playerId: injury.playerId,
+      playerName: injury.name,
+      injuredDays: injury.injuredDays,
+      headline: `${injury.name} 부상 대응 필요`,
+      body: `${injury.teamShortName} ${injury.name}이 ${injury.injuredDays}일 이탈 예정입니다. 휴식, 대체 콜업, 강행 중 하나를 결정해야 합니다.`
+    };
+  }
+}
+
+function resolveMedicalRosterDecision(state, decision, action) {
+  const entry = findPlayerEntry(state, decision.playerId, decision.teamId) ?? findPlayerEntry(state, decision.playerId);
+  const player = entry?.player ?? null;
+  const team = entry?.team ?? findTeamById(state, decision.teamId);
+  if (action === "rush" && player) {
+    player.injuredDays = Math.max(0, safeNumber(player.injuredDays) - 1);
+    player.fatigue = clamp(safeNumber(player.fatigue) + 8, 0, 100);
+    return { ok: true, code: "rushed", message: `${player.name}의 복귀 일정을 하루 앞당겼지만 피로도가 올라갔습니다.` };
+  }
+  if (action === "callup" && team) {
+    team.morale = clamp(safeNumber(team.morale, 50) + 1, 20, 85);
+    return { ok: true, code: "callup-planned", message: `${team.shortName ?? team.name} 대체 엔트리 운용안을 승인했습니다.` };
+  }
+  if (player) {
+    player.fatigue = clamp(safeNumber(player.fatigue) - 6, 0, 100);
+  }
+  return { ok: true, code: "rest", message: `${decision.playerName ?? player?.name ?? "부상 선수"}의 회복 우선 방침을 확정했습니다.` };
+}
+
+function resolveForeignAdaptationDecision(state, decision, action) {
+  const team = findTeamById(state, decision.teamId) ?? findTeamById(state, state.selectedTeamId);
+  if (team) {
+    team.morale = clamp(safeNumber(team.morale, 50) + (action === "extra-support" ? 2 : 1), 20, 85);
+  }
+  return { ok: true, code: "foreign-adaptation", message: "외국인 선수 적응 지원안을 프런트와 공유했습니다." };
+}
+
+function resolveTradeOfferDecision(state, decision, action) {
+  if (action === "reject") {
+    return { ok: true, code: "trade-rejected", message: "트레이드 제안을 보류하고 기존 자산 가치를 유지했습니다." };
+  }
+  return { ok: true, code: "trade-reviewed", message: "트레이드 제안을 스카우트/재정팀 검토 안건으로 넘겼습니다." };
+}
+
+function resolveWaiverClaimDecision(state, decision, action) {
+  if (action === "claim") {
+    return { ok: true, code: "waiver-claim", message: "웨이버 클레임 우선순위 등록을 요청했습니다." };
+  }
+  return { ok: true, code: "waiver-pass", message: "웨이버 후보를 패스하고 현재 로스터를 유지했습니다." };
 }
 
 function buildDraftScoutingOfficialLog(state) {

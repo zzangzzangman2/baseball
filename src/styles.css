@@ -3974,7 +3974,7 @@ body {
   max-width: 9ch;
   color: #22282c;
   font-size: clamp(2.5rem, 5.3vw, 4.45rem);
-  line-height: 0.94;
+  line-height: 1.04;
 }
 
 .start-hero.is-appointment-step .start-copy p {
@@ -4202,7 +4202,7 @@ body {
 .appointment-title-block h2 {
   color: #20262a;
   font-size: clamp(1.65rem, 3.1vw, 2.55rem);
-  line-height: 1.05;
+  line-height: 1.14;
   overflow-wrap: anywhere;
   word-break: keep-all;
 }
@@ -4291,9 +4291,9 @@ body {
   position: relative;
   display: grid;
   min-width: 0;
-  min-height: 92px;
-  padding: 12px;
-  overflow: hidden;
+  min-height: 98px;
+  padding: 13px 14px;
+  overflow: visible;
   border: 1px solid rgba(232, 235, 229, 0.92);
   border-radius: 8px;
   background:
@@ -4338,27 +4338,31 @@ body {
 .interview-question label span {
   display: grid;
   gap: 5px;
+  align-content: center;
   min-width: 0;
+  width: 100%;
 }
 
 .interview-question strong,
 .interview-question small {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: keep-all;
   white-space: normal;
+  text-wrap: pretty;
 }
 
 .interview-question strong {
   color: #242a2e;
   font-size: 0.98rem;
-  line-height: 1.18;
+  line-height: 1.24;
 }
 
 .interview-question small {
   color: #697176;
   font-size: 0.78rem;
   font-weight: 760;
-  line-height: 1.32;
+  line-height: 1.4;
 }
 
 .appointment-actions {
