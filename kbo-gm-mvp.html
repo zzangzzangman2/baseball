@@ -1,0 +1,1218 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KBO GM Manager MVP</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f5f1;
+      --panel: #ffffff;
+      --panel-2: #f8faf6;
+      --ink: #20252a;
+      --muted: #697078;
+      --line: #d8ded5;
+      --line-strong: #b8c2b2;
+      --red: #ba2430;
+      --green: #25785d;
+      --blue: #285f9f;
+      --gold: #b78321;
+      --chip: #edf1ea;
+      --shadow: 0 10px 24px rgba(28, 35, 28, 0.08);
+      --radius: 8px;
+      font-family: "Segoe UI", "Malgun Gothic", Arial, sans-serif;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 1180px;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    button,
+    select {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--line-strong);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 6px;
+      min-height: 34px;
+      padding: 0 12px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    button.primary {
+      border-color: #173a68;
+      background: #173a68;
+      color: #fff;
+    }
+
+    button.danger {
+      border-color: #8c1c26;
+      color: #8c1c26;
+    }
+
+    select {
+      min-height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--ink);
+      padding: 0 10px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 248px minmax(920px, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      background: #1f2523;
+      color: #e9ede6;
+      padding: 18px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .brand {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.13);
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background:
+        linear-gradient(90deg, transparent 46%, rgba(150, 26, 36, 0.85) 47%, rgba(150, 26, 36, 0.85) 53%, transparent 54%),
+        radial-gradient(circle at 50% 50%, #f5f0df 0 64%, #9b2330 65% 68%, #f5f0df 69%);
+      border: 2px solid #f5f0df;
+    }
+
+    .brand-title {
+      font-size: 1.1rem;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .brand-sub {
+      color: #aeb8ad;
+      font-size: 0.82rem;
+      margin-top: 3px;
+    }
+
+    .side-section {
+      display: grid;
+      gap: 8px;
+    }
+
+    .side-label {
+      color: #aeb8ad;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .nav-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      min-height: 38px;
+      padding: 0 10px;
+      border-radius: 6px;
+      color: #e9ede6;
+      background: rgba(255,255,255,0.04);
+    }
+
+    .nav-item.active {
+      background: #e9ede6;
+      color: #1f2523;
+      font-weight: 800;
+    }
+
+    .nav-number {
+      color: inherit;
+      opacity: 0.65;
+      font-size: 0.8rem;
+    }
+
+    .main {
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .topbar {
+      min-height: 72px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 22px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .title {
+      font-size: 1.25rem;
+      font-weight: 850;
+      margin: 0;
+    }
+
+    .pill {
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 10px;
+      background: var(--chip);
+      color: var(--muted);
+      font-size: 0.86rem;
+      white-space: nowrap;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .content {
+      padding: 18px 22px 26px;
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(148px, 1fr));
+      gap: 12px;
+    }
+
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      min-height: 92px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .metric .value {
+      font-size: 1.55rem;
+      font-weight: 850;
+      margin-top: 8px;
+    }
+
+    .metric .detail {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 4px;
+      min-height: 16px;
+    }
+
+    .grid-main {
+      display: grid;
+      grid-template-columns: minmax(530px, 1.1fr) minmax(390px, 0.9fr);
+      gap: 16px;
+    }
+
+    .grid-bottom {
+      display: grid;
+      grid-template-columns: minmax(520px, 1fr) minmax(400px, 0.85fr);
+      gap: 16px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+
+    .panel-head {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 0.98rem;
+      font-weight: 850;
+    }
+
+    .panel-body {
+      padding: 12px 14px 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 8px 7px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: middle;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 800;
+      background: var(--panel-2);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .rank {
+      width: 36px;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .team-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      flex: 0 0 auto;
+      border: 1px solid rgba(0,0,0,0.18);
+    }
+
+    .number {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .good {
+      color: var(--green);
+      font-weight: 800;
+    }
+
+    .bad {
+      color: var(--red);
+      font-weight: 800;
+    }
+
+    .gold {
+      color: var(--gold);
+      font-weight: 800;
+    }
+
+    .team-overview {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .field {
+      min-height: 156px;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, transparent 49%, rgba(255,255,255,0.7) 50%, transparent 51%),
+        linear-gradient(45deg, transparent 49%, rgba(255,255,255,0.7) 50%, transparent 51%),
+        #5b8f67;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .diamond {
+      position: absolute;
+      width: 82px;
+      height: 82px;
+      left: 34px;
+      top: 38px;
+      transform: rotate(45deg);
+      border: 4px solid #dfc48b;
+      background: rgba(221, 193, 137, 0.56);
+    }
+
+    .mound {
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      left: 64px;
+      top: 68px;
+      border-radius: 50%;
+      background: #d9b56c;
+      border: 2px solid rgba(70,45,10,0.22);
+    }
+
+    .team-summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .summary-block {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 6px;
+      padding: 10px;
+      min-height: 70px;
+    }
+
+    .summary-label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+
+    .summary-value {
+      font-size: 1.2rem;
+      margin-top: 8px;
+      font-weight: 850;
+    }
+
+    .games {
+      display: grid;
+      gap: 8px;
+    }
+
+    .game-row {
+      display: grid;
+      grid-template-columns: 1fr 64px 1fr;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+
+    .game-team {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .score {
+      text-align: center;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      color: #173a68;
+    }
+
+    .logs {
+      display: grid;
+      gap: 8px;
+      max-height: 356px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .log {
+      display: grid;
+      grid-template-columns: 84px 1fr auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+    }
+
+    .log-date {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+
+    .log-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tag {
+      min-width: 46px;
+      text-align: center;
+      border-radius: 999px;
+      background: #e5ebdf;
+      color: #4a554d;
+      font-size: 0.75rem;
+      font-weight: 800;
+      padding: 4px 8px;
+    }
+
+    .lineup {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .slot {
+      min-height: 58px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      padding: 8px;
+      overflow: hidden;
+    }
+
+    .slot-order {
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 850;
+    }
+
+    .slot-name {
+      margin-top: 4px;
+      font-weight: 850;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .slot-meta {
+      color: var(--muted);
+      font-size: 0.76rem;
+      margin-top: 2px;
+    }
+
+    .roster-table th:nth-child(1),
+    .roster-table td:nth-child(1) {
+      width: 32px;
+    }
+
+    .roster-table th:nth-child(3),
+    .roster-table td:nth-child(3) {
+      width: 58px;
+    }
+
+    .roster-table th:nth-child(4),
+    .roster-table td:nth-child(4),
+    .roster-table th:nth-child(5),
+    .roster-table td:nth-child(5),
+    .roster-table th:nth-child(6),
+    .roster-table td:nth-child(6) {
+      width: 60px;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding: 0 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <div class="brand-title">KBO GM Manager</div>
+          <div class="brand-sub">Web MVP</div>
+        </div>
+      </div>
+
+      <div class="side-section">
+        <div class="side-label">Office</div>
+        <div class="nav-item active"><span>대시보드</span><span class="nav-number">01</span></div>
+        <div class="nav-item"><span>선수단</span><span class="nav-number">02</span></div>
+        <div class="nav-item"><span>라인업</span><span class="nav-number">03</span></div>
+        <div class="nav-item"><span>스카우트</span><span class="nav-number">04</span></div>
+        <div class="nav-item"><span>재정</span><span class="nav-number">05</span></div>
+      </div>
+
+      <div class="side-section">
+        <div class="side-label">League</div>
+        <div class="nav-item"><span>일정</span><span class="nav-number">06</span></div>
+        <div class="nav-item"><span>순위</span><span class="nav-number">07</span></div>
+        <div class="nav-item"><span>시상식</span><span class="nav-number">08</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 class="title">2026 정규시즌 운영실</h1>
+          <div class="status-line" style="margin-top:8px">
+            <span class="pill" id="datePill">2026-03-28</span>
+            <span class="pill" id="dayPill">Day 1</span>
+            <span class="pill" id="phasePill">정규시즌</span>
+            <span class="pill" id="savePill">단일 메모리 상태</span>
+          </div>
+        </div>
+        <div class="toolbar">
+          <select id="teamSelect" aria-label="구단 선택"></select>
+          <button id="nextDayBtn" class="primary">다음 날</button>
+          <button id="weekBtn">7일 진행</button>
+          <button id="seasonBtn">시즌 진행</button>
+          <button id="resetBtn" class="danger">초기화</button>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="metrics">
+          <div class="metric">
+            <div class="label">선택 구단 승률</div>
+            <div class="value" id="metricWinPct">.000</div>
+            <div class="detail" id="metricRecord">0승 0패 0무</div>
+          </div>
+          <div class="metric">
+            <div class="label">리그 1위</div>
+            <div class="value" id="metricLeader">-</div>
+            <div class="detail" id="metricLeaderRecord">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">평균 관중</div>
+            <div class="value" id="metricAttendance">0</div>
+            <div class="detail">홈 경기 기준</div>
+          </div>
+          <div class="metric">
+            <div class="label">가용 예산</div>
+            <div class="value" id="metricBudget">0억</div>
+            <div class="detail" id="metricPayroll">페이롤 0억</div>
+          </div>
+          <div class="metric">
+            <div class="label">오늘 경기</div>
+            <div class="value" id="metricGames">5</div>
+            <div class="detail" id="metricRest">정상 편성</div>
+          </div>
+        </div>
+
+        <div class="grid-main">
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">리그 순위</h2>
+              <span class="pill" id="gamesPlayedPill">0 / 720 경기</span>
+            </div>
+            <div class="panel-body">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="rank">순위</th>
+                    <th>구단</th>
+                    <th class="number">승</th>
+                    <th class="number">패</th>
+                    <th class="number">무</th>
+                    <th class="number">승률</th>
+                    <th class="number">득실</th>
+                    <th class="number">최근</th>
+                  </tr>
+                </thead>
+                <tbody id="standingsBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">오늘 매치업</h2>
+              <span class="pill" id="weatherPill">맑음 18도</span>
+            </div>
+            <div class="panel-body">
+              <div class="games" id="gamesBody"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="grid-bottom">
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title" id="teamPanelTitle">구단 운영</h2>
+              <span class="pill" id="teamRankPill">-</span>
+            </div>
+            <div class="panel-body">
+              <div class="team-overview">
+                <div class="field">
+                  <div class="diamond"></div>
+                  <div class="mound"></div>
+                </div>
+                <div class="team-summary">
+                  <div class="summary-block">
+                    <div class="summary-label">팀 전력</div>
+                    <div class="summary-value" id="summaryPower">0</div>
+                  </div>
+                  <div class="summary-block">
+                    <div class="summary-label">사기</div>
+                    <div class="summary-value" id="summaryMorale">50</div>
+                  </div>
+                  <div class="summary-block">
+                    <div class="summary-label">평균 OVR</div>
+                    <div class="summary-value" id="summaryOvr">0</div>
+                  </div>
+                  <div class="summary-block">
+                    <div class="summary-label">부상자</div>
+                    <div class="summary-value" id="summaryInjuries">0명</div>
+                  </div>
+                </div>
+              </div>
+              <div style="height:12px"></div>
+              <div class="lineup" id="lineupBody"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">최근 리그 로그</h2>
+              <span class="pill" id="logCountPill">0건</span>
+            </div>
+            <div class="panel-body">
+              <div class="logs" id="logsBody"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">선수단 스냅샷</h2>
+            <span class="pill" id="rosterCountPill">0명</span>
+          </div>
+          <div class="panel-body">
+            <table class="roster-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>선수</th>
+                  <th>포지션</th>
+                  <th class="number">나이</th>
+                  <th class="number">OVR</th>
+                  <th class="number">POT</th>
+                  <th class="number">피로</th>
+                  <th>상태</th>
+                </tr>
+              </thead>
+              <tbody id="rosterBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="footer-note">Prototype build: HTML + CSS + JavaScript. 저장은 아직 영구화하지 않고, 모든 상태는 하나의 메모리 스냅샷에서만 움직입니다.</div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const baseDate = new Date("2026-03-28T12:00:00+09:00");
+    const teamSeeds = [
+      ["서울 트윈스", "#b51f32", 88, 94, 141, 85],
+      ["대구 라이온즈", "#275d9f", 87, 92, 135, 80],
+      ["수원 위즈", "#111111", 86, 89, 128, 65],
+      ["인천 랜더스", "#c32035", 84, 88, 161, 65],
+      ["대전 이글스", "#ef7d21", 83, 87, 120, 60],
+      ["광주 타이거즈", "#ba2035", 82, 86, 130, 70],
+      ["부산 자이언츠", "#0f4f8f", 80, 84, 120, 60],
+      ["창원 다이노스", "#2f6f7f", 79, 83, 125, 50],
+      ["잠실 베어스", "#1d2633", 78, 82, 145, 75],
+      ["고척 히어로즈", "#6e1732", 74, 80, 95, 40]
+    ];
+    const surnames = ["김", "이", "박", "최", "정", "강", "조", "윤", "장", "임", "오", "한", "신", "서", "권"];
+    const names = ["민재", "현우", "준서", "도윤", "지환", "성민", "태훈", "우진", "동현", "건우", "시온", "재원", "승현", "하준", "영준"];
+    const hitterPositions = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"];
+    const pitcherPositions = ["SP", "SP", "SP", "SP", "SP", "CL", "SU", "MR", "MR", "LR"];
+    const weatherTypes = [
+      ["맑음", 18, 1.00],
+      ["흐림", 16, 0.98],
+      ["비", 14, 0.92],
+      ["더움", 28, 1.03],
+      ["습함", 25, 0.97],
+      ["바람", 21, 1.04]
+    ];
+
+    let state;
+
+    function createState() {
+      const teams = teamSeeds.map((seed, index) => {
+        const roster = createRoster(index, seed[1], seed[2]);
+        return {
+          id: index,
+          name: seed[0],
+          color: seed[1],
+          market: seed[2],
+          fan: seed[3],
+          payroll: seed[4],
+          budget: seed[5],
+          morale: 55 + Math.round((seed[2] - 80) / 2),
+          wins: 0,
+          losses: 0,
+          ties: 0,
+          runsFor: 0,
+          runsAgainst: 0,
+          attendanceTotal: 0,
+          homeGames: 0,
+          streak: [],
+          roster
+        };
+      });
+      return {
+        day: 1,
+        gamesPlayed: 0,
+        selectedTeamId: 0,
+        teams,
+        logs: [],
+        lastGames: [],
+        weather: weatherTypes[0]
+      };
+    }
+
+    function createRoster(teamIndex, color, base) {
+      const roster = [];
+      for (let i = 0; i < hitterPositions.length; i += 1) {
+        roster.push(createPlayer(teamIndex, i, hitterPositions[i], "H", base));
+      }
+      for (let i = 0; i < pitcherPositions.length; i += 1) {
+        roster.push(createPlayer(teamIndex, i + 10, pitcherPositions[i], "P", base - 1));
+      }
+      return roster.sort((a, b) => b.ovr - a.ovr);
+    }
+
+    function createPlayer(teamIndex, index, position, role, base) {
+      const raw = Math.abs(Math.sin((teamIndex + 3) * 101 + index * 37));
+      const name = surnames[(teamIndex + index) % surnames.length] + names[Math.floor(raw * names.length) % names.length];
+      const age = role === "P" ? 21 + Math.floor(raw * 15) : 20 + Math.floor(raw * 14);
+      const primeBonus = Math.max(0, 7 - Math.abs(age - (role === "P" ? 28 : 27)));
+      const positionBonus = position === "SP" || position === "C" || position === "SS" ? 4 : 0;
+      const ovr = clamp(Math.round(base + primeBonus + positionBonus + (raw * 18 - 7)), 55, 178);
+      const pot = clamp(Math.round(ovr + 4 + (28 - Math.min(age, 28)) * 1.7 + raw * 10), ovr, 190);
+      return {
+        id: `${teamIndex}-${index}`,
+        name,
+        position,
+        role,
+        age,
+        ovr,
+        pot,
+        contact: role === "H" ? clamp(7 + Math.round((ovr - 75) / 8 + raw * 4), 3, 20) : 4,
+        power: role === "H" ? clamp(6 + Math.round((ovr - 78) / 9 + (1 - raw) * 5), 2, 20) : 3,
+        eye: role === "H" ? clamp(6 + Math.round((ovr - 80) / 10 + raw * 5), 2, 20) : 4,
+        speed: role === "H" ? clamp(5 + Math.round(raw * 12), 2, 20) : 3,
+        defense: clamp(5 + Math.round(raw * 12), 2, 20),
+        stuff: role === "P" ? clamp(6 + Math.round((ovr - 76) / 8 + raw * 5), 3, 20) : 3,
+        control: role === "P" ? clamp(6 + Math.round((ovr - 76) / 9 + (1 - raw) * 5), 3, 20) : 3,
+        stamina: role === "P" ? clamp(position === "SP" ? 10 + Math.round(raw * 8) : 4 + Math.round(raw * 6), 3, 20) : 4,
+        fatigue: Math.round(raw * 8),
+        injuredDays: 0,
+        form: 50 + Math.round(raw * 20)
+      };
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function pct(team) {
+      const total = team.wins + team.losses;
+      return total === 0 ? 0 : team.wins / total;
+    }
+
+    function formatPct(value) {
+      return value.toFixed(3).replace(/^0/, "");
+    }
+
+    function standings() {
+      return [...state.teams].sort((a, b) => {
+        const diff = pct(b) - pct(a);
+        if (Math.abs(diff) > 0.0001) return diff;
+        return (b.runsFor - b.runsAgainst) - (a.runsFor - a.runsAgainst);
+      });
+    }
+
+    function currentDate() {
+      const date = new Date(baseDate);
+      date.setDate(baseDate.getDate() + state.day - 1);
+      return date;
+    }
+
+    function dateKey(date) {
+      return date.toISOString().slice(0, 10);
+    }
+
+    function seededNoise(a, b, c) {
+      const x = Math.sin(a * 92821 + b * 68917 + c * 31337) * 10000;
+      return x - Math.floor(x);
+    }
+
+    function teamPower(team) {
+      const hitters = team.roster.filter(p => p.role === "H" && p.injuredDays === 0).sort((a, b) => b.ovr - a.ovr).slice(0, 9);
+      const pitchers = team.roster.filter(p => p.role === "P" && p.injuredDays === 0).sort((a, b) => b.ovr - a.ovr).slice(0, 8);
+      const hit = average(hitters.map(p => p.ovr - p.fatigue * 0.25 + (p.form - 50) * 0.08));
+      const pit = average(pitchers.map(p => p.ovr - p.fatigue * 0.18 + (p.form - 50) * 0.05));
+      return Math.round(hit * 0.54 + pit * 0.46 + (team.morale - 50) * 0.12);
+    }
+
+    function average(values) {
+      if (!values.length) return 0;
+      return values.reduce((a, b) => a + b, 0) / values.length;
+    }
+
+    function buildDailyPairings() {
+      const ids = state.teams.map(t => t.id);
+      const shift = (state.day - 1) % ids.length;
+      const rotated = ids.slice(shift).concat(ids.slice(0, shift));
+      const pairings = [];
+      for (let i = 0; i < 5; i += 1) {
+        const away = rotated[i];
+        const home = rotated[9 - i];
+        if (away !== home) pairings.push([away, home]);
+      }
+      return pairings;
+    }
+
+    function simulateDay() {
+      const date = currentDate();
+      const isMonday = date.getDay() === 1;
+      state.lastGames = [];
+      state.weather = weatherTypes[Math.floor(seededNoise(state.day, 3, 9) * weatherTypes.length)];
+      recoverPlayers(isMonday ? 7 : 4);
+      if (isMonday) {
+        pushLog("휴식일", "전 구단 휴식일. 피로가 회복되었습니다.", "REST");
+        state.day += 1;
+        render();
+        return;
+      }
+      const pairings = buildDailyPairings();
+      pairings.forEach(([awayId, homeId], index) => simulateGame(state.teams[awayId], state.teams[homeId], index));
+      applyRandomInjuries();
+      state.day += 1;
+      render();
+    }
+
+    function simulateGame(away, home, index) {
+      const weatherFactor = state.weather[2];
+      const awayPower = teamPower(away);
+      const homePower = teamPower(home) + 2;
+      const base = 4.1 * weatherFactor;
+      const awayRaw = base + (awayPower - homePower) / 22 + seededNoise(state.day, away.id, index) * 4.1;
+      const homeRaw = base + (homePower - awayPower) / 22 + seededNoise(state.day, home.id, index + 7) * 4.1;
+      let awayRuns = clamp(Math.round(awayRaw), 0, 14);
+      let homeRuns = clamp(Math.round(homeRaw), 0, 14);
+      if (awayRuns === homeRuns && seededNoise(state.day, away.id, home.id) > 0.72) {
+        homeRuns += homePower >= awayPower ? 1 : 0;
+        awayRuns += awayPower > homePower ? 1 : 0;
+      }
+      recordResult(away, home, awayRuns, homeRuns);
+      state.gamesPlayed += 1;
+      const crowd = attendance(home, away, homeRuns >= awayRuns);
+      home.attendanceTotal += crowd;
+      home.homeGames += 1;
+      updatePlayerFatigue(away, home);
+      state.lastGames.push({ away, home, awayRuns, homeRuns, crowd });
+      pushLog(dateKey(currentDate()), `${away.name} ${awayRuns} - ${homeRuns} ${home.name}`, awayRuns === homeRuns ? "무" : homeRuns > awayRuns ? "홈" : "원");
+    }
+
+    function recordResult(away, home, awayRuns, homeRuns) {
+      away.runsFor += awayRuns;
+      away.runsAgainst += homeRuns;
+      home.runsFor += homeRuns;
+      home.runsAgainst += awayRuns;
+      if (awayRuns === homeRuns) {
+        away.ties += 1;
+        home.ties += 1;
+        away.streak.push("D");
+        home.streak.push("D");
+      } else if (awayRuns > homeRuns) {
+        away.wins += 1;
+        home.losses += 1;
+        away.morale = clamp(away.morale + 2, 20, 90);
+        home.morale = clamp(home.morale - 2, 20, 90);
+        away.streak.push("W");
+        home.streak.push("L");
+      } else {
+        home.wins += 1;
+        away.losses += 1;
+        home.morale = clamp(home.morale + 2, 20, 90);
+        away.morale = clamp(away.morale - 2, 20, 90);
+        home.streak.push("W");
+        away.streak.push("L");
+      }
+      away.streak = away.streak.slice(-5);
+      home.streak = home.streak.slice(-5);
+    }
+
+    function attendance(home, away, homeWin) {
+      const winBoost = 0.82 + pct(home) * 0.42;
+      const rivalBoost = Math.abs(home.id - away.id) === 1 ? 1.08 : 1;
+      const weatherBoost = state.weather[0] === "비" ? 0.78 : state.weather[0] === "더움" ? 0.94 : 1;
+      const moraleBoost = 0.88 + home.morale / 420;
+      const resultBoost = homeWin ? 1.03 : 0.98;
+      return Math.round(clamp(home.fan * 240 * winBoost * rivalBoost * weatherBoost * moraleBoost * resultBoost, 7200, 23500));
+    }
+
+    function updatePlayerFatigue(away, home) {
+      [away, home].forEach(team => {
+        team.roster.forEach((p, idx) => {
+          if (p.injuredDays > 0) return;
+          const load = p.role === "P" ? (idx < 14 ? 8 : 3) : (idx < 9 ? 5 : 2);
+          p.fatigue = clamp(p.fatigue + load + Math.round(seededNoise(state.day, team.id, idx) * 3), 0, 100);
+          p.form = clamp(p.form + Math.round(seededNoise(team.id, idx, state.day) * 6 - 2), 20, 90);
+        });
+      });
+    }
+
+    function recoverPlayers(amount) {
+      state.teams.forEach(team => {
+        team.roster.forEach(p => {
+          p.fatigue = clamp(p.fatigue - amount - Math.round(p.pot > p.ovr ? 1 : 0), 0, 100);
+          if (p.injuredDays > 0) p.injuredDays = Math.max(0, p.injuredDays - 1);
+        });
+      });
+    }
+
+    function applyRandomInjuries() {
+      state.teams.forEach(team => {
+        const risky = team.roster.filter(p => p.injuredDays === 0 && p.fatigue > 62);
+        risky.forEach(p => {
+          const chance = (p.fatigue - 62) / 1500;
+          if (seededNoise(state.day, team.id, p.age + p.ovr) < chance) {
+            const days = 3 + Math.floor(seededNoise(p.ovr, state.day, team.id) * 24);
+            p.injuredDays = days;
+            pushLog(dateKey(currentDate()), `${team.name} ${p.name} ${days}일 부상자 명단`, "IL");
+          }
+        });
+      });
+    }
+
+    function pushLog(date, text, tag) {
+      state.logs.unshift({ date, text, tag });
+      state.logs = state.logs.slice(0, 80);
+    }
+
+    function buildLineup(team) {
+      return team.roster
+        .filter(p => p.role === "H")
+        .sort((a, b) => lineupScore(b) - lineupScore(a))
+        .slice(0, 9);
+    }
+
+    function lineupScore(p) {
+      return p.ovr + p.contact * 1.2 + p.power * 1.1 + p.eye * 0.8 + p.speed * 0.25 - p.fatigue * 0.25 - (p.injuredDays > 0 ? 80 : 0);
+    }
+
+    function reset() {
+      state = createState();
+      renderTeamOptions();
+      render();
+    }
+
+    function simulateMany(days) {
+      for (let i = 0; i < days; i += 1) simulateDayNoRender();
+      render();
+    }
+
+    function simulateDayNoRender() {
+      const date = currentDate();
+      const isMonday = date.getDay() === 1;
+      state.lastGames = [];
+      state.weather = weatherTypes[Math.floor(seededNoise(state.day, 3, 9) * weatherTypes.length)];
+      recoverPlayers(isMonday ? 7 : 4);
+      if (!isMonday) {
+        buildDailyPairings().forEach(([awayId, homeId], index) => simulateGame(state.teams[awayId], state.teams[homeId], index));
+        applyRandomInjuries();
+      } else {
+        pushLog("휴식일", "전 구단 휴식일. 피로가 회복되었습니다.", "REST");
+      }
+      state.day += 1;
+    }
+
+    function simulateSeason() {
+      while (state.gamesPlayed < 720 && state.day < 210) {
+        simulateDayNoRender();
+      }
+      pushLog(dateKey(currentDate()), `${standings()[0].name} 정규시즌 1위 확정`, "1위");
+      render();
+    }
+
+    function renderTeamOptions() {
+      const select = document.getElementById("teamSelect");
+      select.innerHTML = state.teams.map(team => `<option value="${team.id}">${team.name}</option>`).join("");
+      select.value = String(state.selectedTeamId);
+    }
+
+    function render() {
+      const date = currentDate();
+      document.getElementById("datePill").textContent = dateKey(date);
+      document.getElementById("dayPill").textContent = `Day ${state.day}`;
+      document.getElementById("phasePill").textContent = state.gamesPlayed >= 720 ? "정규시즌 종료" : "정규시즌";
+      document.getElementById("gamesPlayedPill").textContent = `${state.gamesPlayed} / 720 경기`;
+      document.getElementById("weatherPill").textContent = `${state.weather[0]} ${state.weather[1]}도`;
+      const selected = state.teams[state.selectedTeamId];
+      const sorted = standings();
+      const leader = sorted[0];
+      document.getElementById("metricWinPct").textContent = formatPct(pct(selected));
+      document.getElementById("metricRecord").textContent = `${selected.wins}승 ${selected.losses}패 ${selected.ties}무`;
+      document.getElementById("metricLeader").textContent = leader.name.replace(" ", "\n");
+      document.getElementById("metricLeaderRecord").textContent = `${leader.wins}승 ${leader.losses}패 ${leader.ties}무`;
+      document.getElementById("metricAttendance").textContent = selected.homeGames ? Math.round(selected.attendanceTotal / selected.homeGames).toLocaleString("ko-KR") : "0";
+      document.getElementById("metricBudget").textContent = `${selected.budget}억`;
+      document.getElementById("metricPayroll").textContent = `페이롤 ${selected.payroll}억`;
+      document.getElementById("metricGames").textContent = currentDate().getDay() === 1 ? "0" : "5";
+      document.getElementById("metricRest").textContent = currentDate().getDay() === 1 ? "월요일 휴식" : "정상 편성";
+      renderStandings(sorted);
+      renderGames();
+      renderTeam(selected, sorted);
+      renderLogs();
+      renderRoster(selected);
+    }
+
+    function renderStandings(sorted) {
+      document.getElementById("standingsBody").innerHTML = sorted.map((team, index) => {
+        const diff = team.runsFor - team.runsAgainst;
+        const diffClass = diff > 0 ? "good" : diff < 0 ? "bad" : "";
+        return `
+          <tr>
+            <td class="rank">${index + 1}</td>
+            <td><div class="team-cell"><span class="swatch" style="background:${team.color}"></span><span>${team.name}</span></div></td>
+            <td class="number">${team.wins}</td>
+            <td class="number">${team.losses}</td>
+            <td class="number">${team.ties}</td>
+            <td class="number">${formatPct(pct(team))}</td>
+            <td class="number ${diffClass}">${diff > 0 ? "+" : ""}${diff}</td>
+            <td class="number">${team.streak.join("") || "-"}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderGames() {
+      const games = state.lastGames.length ? state.lastGames : buildDailyPairings().map(([awayId, homeId]) => ({
+        away: state.teams[awayId],
+        home: state.teams[homeId],
+        awayRuns: "-",
+        homeRuns: "-",
+        crowd: 0
+      }));
+      document.getElementById("gamesBody").innerHTML = games.map(game => `
+        <div class="game-row">
+          <div class="game-team"><span class="swatch" style="background:${game.away.color}"></span><span>${game.away.name}</span></div>
+          <div class="score">${game.awayRuns} : ${game.homeRuns}</div>
+          <div class="game-team" style="justify-content:flex-end"><span>${game.home.name}</span><span class="swatch" style="background:${game.home.color}"></span></div>
+        </div>
+      `).join("");
+    }
+
+    function renderTeam(team, sorted) {
+      const rank = sorted.findIndex(t => t.id === team.id) + 1;
+      const lineup = buildLineup(team);
+      const avgOvr = Math.round(average(team.roster.map(p => p.ovr)));
+      const injuries = team.roster.filter(p => p.injuredDays > 0).length;
+      document.getElementById("teamPanelTitle").textContent = `${team.name} 운영`;
+      document.getElementById("teamRankPill").textContent = `${rank}위`;
+      document.getElementById("summaryPower").textContent = teamPower(team);
+      document.getElementById("summaryMorale").textContent = team.morale;
+      document.getElementById("summaryOvr").textContent = avgOvr;
+      document.getElementById("summaryInjuries").textContent = `${injuries}명`;
+      document.getElementById("lineupBody").innerHTML = lineup.map((p, index) => `
+        <div class="slot">
+          <div class="slot-order">${index + 1}번 ${p.position}</div>
+          <div class="slot-name">${p.name}</div>
+          <div class="slot-meta">OVR ${p.ovr} / 피로 ${p.fatigue}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderLogs() {
+      document.getElementById("logCountPill").textContent = `${state.logs.length}건`;
+      const body = document.getElementById("logsBody");
+      if (!state.logs.length) {
+        body.innerHTML = `<div class="log"><div class="log-date">-</div><div class="log-text">아직 진행된 이벤트가 없습니다.</div><div class="tag">READY</div></div>`;
+        return;
+      }
+      body.innerHTML = state.logs.slice(0, 24).map(log => `
+        <div class="log">
+          <div class="log-date">${log.date}</div>
+          <div class="log-text">${log.text}</div>
+          <div class="tag">${log.tag}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderRoster(team) {
+      const rows = [...team.roster].sort((a, b) => b.ovr - a.ovr);
+      document.getElementById("rosterCountPill").textContent = `${rows.length}명`;
+      document.getElementById("rosterBody").innerHTML = rows.map((p, index) => {
+        const status = p.injuredDays > 0 ? `${p.injuredDays}일 부상` : p.fatigue > 70 ? "휴식 필요" : p.fatigue > 45 ? "피로 누적" : "정상";
+        const statusClass = p.injuredDays > 0 || p.fatigue > 70 ? "bad" : p.fatigue > 45 ? "gold" : "good";
+        return `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${p.name}</td>
+            <td>${p.position}</td>
+            <td class="number">${p.age}</td>
+            <td class="number">${p.ovr}</td>
+            <td class="number">${p.pot}</td>
+            <td class="number">${p.fatigue}</td>
+            <td class="${statusClass}">${status}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    document.getElementById("teamSelect").addEventListener("change", event => {
+      state.selectedTeamId = Number(event.target.value);
+      render();
+    });
+    document.getElementById("nextDayBtn").addEventListener("click", simulateDay);
+    document.getElementById("weekBtn").addEventListener("click", () => simulateMany(7));
+    document.getElementById("seasonBtn").addEventListener("click", simulateSeason);
+    document.getElementById("resetBtn").addEventListener("click", reset);
+
+    reset();
+  </script>
+</body>
+</html>

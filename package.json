@@ -1,0 +1,60 @@
+{
+  "name": "kbo-gm-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static HTML KBO GM Manager app packaged with Electron.",
+  "type": "module",
+  "main": "electron-main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron .",
+    "verify": "node tools/verify_app.mjs",
+    "verify:browser": "node tools/verify_browser.mjs",
+    "verify:balance": "node tools/verify_balance.mjs",
+    "package": "electron-builder --win --x64",
+    "package:dir": "electron-builder --dir",
+    "dist": "electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.pastahealth.kbogmmanager",
+    "productName": "KBO GM Manager",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "src/**/*",
+      "assets/**/*",
+      "electron-main.cjs",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^42.5.1",
+    "electron-builder": "^26.15.3"
+  }
+}

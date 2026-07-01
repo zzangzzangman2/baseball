@@ -1,0 +1,1043 @@
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, "..");
+const REPORT_DIR = path.join(ROOT_DIR, "reports");
+const REPORT_PATH = path.join(REPORT_DIR, "browser-qa.md");
+const PACKAGE_PATH = path.join(ROOT_DIR, "package.json");
+const ELECTRON_MAIN_PATH = path.join(ROOT_DIR, "electron-main.cjs");
+const INDEX_PATH = path.join(ROOT_DIR, "index.html");
+
+const EXPECTED_TEAM_NAMES = [
+  "LG 트윈스",
+  "두산 베어스",
+  "KIA 타이거즈",
+  "삼성 라이온즈",
+  "롯데 자이언츠",
+  "한화 이글스",
+  "SSG 랜더스",
+  "KT 위즈",
+  "NC 다이노스",
+  "키움 히어로즈"
+];
+
+const VIEWPORTS = [
+  { label: "desktop", width: 1280, height: 900, deviceScaleFactor: 1, mobile: false },
+  { label: "mobile", width: 390, height: 844, deviceScaleFactor: 3, mobile: true }
+];
+
+const MIME_TYPES = new Map([
+  [".html", "text/html; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".mjs", "text/javascript; charset=utf-8"],
+  [".css", "text/css; charset=utf-8"],
+  [".json", "application/json; charset=utf-8"],
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".svg", "image/svg+xml; charset=utf-8"],
+  [".ico", "image/x-icon"]
+]);
+
+const results = [];
+const warnings = [];
+const browserErrors = [];
+const consoleEvents = [];
+
+let server;
+let browserProcess;
+let browserProfileDir;
+let appUrl;
+let cdp;
+let browserName = "";
+
+class VerificationError extends Error {
+  constructor(message, location) {
+    super(message);
+    this.name = "VerificationError";
+    this.location = location;
+  }
+}
+
+class CdpClient {
+  constructor(webSocketUrl) {
+    this.webSocketUrl = webSocketUrl;
+    this.nextId = 1;
+    this.pending = new Map();
+    this.listeners = new Map();
+    this.socket = new WebSocket(webSocketUrl);
+  }
+
+  connect() {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("CDP WebSocket 연결 시간이 초과되었습니다."));
+      }, 10000);
+
+      this.socket.addEventListener("open", () => {
+        clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+
+      this.socket.addEventListener("error", (event) => {
+        clearTimeout(timeout);
+        reject(event.error ?? new Error("CDP WebSocket 연결 오류"));
+      }, { once: true });
+
+      this.socket.addEventListener("message", (event) => {
+        this.handleMessage(event.data);
+      });
+    });
+  }
+
+  handleMessage(rawMessage) {
+    const message = JSON.parse(rawMessage);
+    if (message.id) {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if (message.error) {
+        pending.reject(new Error(`${message.error.message}${message.error.data ? `: ${message.error.data}` : ""}`));
+      } else {
+        pending.resolve(message.result ?? {});
+      }
+      return;
+    }
+
+    const listeners = this.listeners.get(message.method);
+    if (!listeners) return;
+    for (const listener of listeners) {
+      listener(message.params ?? {});
+    }
+  }
+
+  send(method, params = {}) {
+    const id = this.nextId++;
+    const payload = JSON.stringify({ id, method, params });
+
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.socket.send(payload);
+    });
+  }
+
+  on(method, listener) {
+    const listeners = this.listeners.get(method) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(method, listeners);
+  }
+
+  once(method) {
+    return new Promise((resolve) => {
+      const listener = (params) => {
+        this.off(method, listener);
+        resolve(params);
+      };
+      this.on(method, listener);
+    });
+  }
+
+  off(method, listener) {
+    const listeners = this.listeners.get(method);
+    if (!listeners) return;
+    listeners.delete(listener);
+  }
+
+  close() {
+    for (const pending of this.pending.values()) {
+      pending.reject(new Error("CDP WebSocket이 닫혔습니다."));
+    }
+    this.pending.clear();
+    if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
+      this.socket.close();
+    }
+  }
+}
+
+async function main() {
+  try {
+    await runCheck("정적 로컬 서버 시작", startStaticServer);
+    await runCheck("Chromium 브라우저 연결", launchBrowser);
+    await runCheck("Electron 패키징 구성", checkPackagingConfig);
+    await runCheck("선수 총원 기준", checkPlayerTotal);
+
+    for (const viewport of VIEWPORTS) {
+      await runCheck(`${viewport.label} 렌더링`, () => checkViewport(viewport));
+    }
+
+    await runCheck("브라우저 콘솔 에러", checkBrowserConsoleErrors);
+  } finally {
+    await cleanup();
+  }
+
+  const report = buildReport();
+  fs.mkdirSync(REPORT_DIR, { recursive: true });
+  fs.writeFileSync(REPORT_PATH, report, "utf8");
+  console.log(report);
+
+  if (results.some((result) => result.status === "FAIL")) {
+    process.exitCode = 1;
+  }
+}
+
+async function runCheck(name, checker) {
+  try {
+    const detail = await checker();
+    results.push({ name, status: "PASS", detail: detail || "정상", location: "" });
+  } catch (error) {
+    results.push({
+      name,
+      status: "FAIL",
+      detail: error?.message ?? String(error),
+      location: error?.location ?? guessLocation(name)
+    });
+  }
+}
+
+async function startStaticServer() {
+  server = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    const decodedPath = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
+    const filePath = path.resolve(ROOT_DIR, decodedPath.replace(/^[/\\]+/, ""));
+
+    if (!isInsideRoot(filePath)) {
+      response.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Forbidden");
+      return;
+    }
+
+    fs.readFile(filePath, (error, body) => {
+      if (error) {
+        response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        response.end("Not found");
+        return;
+      }
+
+      const contentType = MIME_TYPES.get(path.extname(filePath).toLowerCase()) ?? "application/octet-stream";
+      response.writeHead(200, {
+        "Content-Type": contentType,
+        "Cache-Control": "no-store"
+      });
+      response.end(body);
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const address = server.address();
+  appUrl = `http://127.0.0.1:${address.port}/index.html`;
+  return appUrl;
+}
+
+async function launchBrowser() {
+  if (typeof WebSocket !== "function") {
+    throw new VerificationError(
+      "현재 Node 런타임에 WebSocket이 없어 CDP 브라우저 검증을 실행할 수 없습니다. Node 22 이상에서 실행하세요.",
+      "tools/verify_browser.mjs"
+    );
+  }
+
+  const executable = findBrowserExecutable();
+  browserName = path.basename(executable);
+  browserProfileDir = fs.mkdtempSync(path.join(os.tmpdir(), "kbo-gm-browser-qa-"));
+
+  const args = [
+    "--headless=new",
+    "--disable-gpu",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-networking",
+    "--disable-extensions",
+    "--remote-debugging-port=0",
+    `--user-data-dir=${browserProfileDir}`,
+    "about:blank"
+  ];
+
+  browserProcess = spawn(executable, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  });
+
+  const stderrLines = [];
+  browserProcess.stderr?.on("data", (chunk) => {
+    const text = String(chunk);
+    stderrLines.push(text.trim());
+  });
+
+  const devtools = await waitForDevToolsEndpoint(browserProfileDir, browserProcess, stderrLines);
+  const target = await openCdpTarget(devtools.port, "about:blank");
+  cdp = new CdpClient(target.webSocketDebuggerUrl);
+  await cdp.connect();
+  attachBrowserEventCollectors(cdp);
+
+  await cdp.send("Page.enable");
+  await cdp.send("Runtime.enable");
+  await cdp.send("Log.enable");
+  await cdp.send("Network.enable");
+
+  return `${browserName} CDP 연결 완료`;
+}
+
+function checkPackagingConfig() {
+  assertFileExists(PACKAGE_PATH, "package.json");
+  assertFileExists(ELECTRON_MAIN_PATH, "electron-main.cjs");
+  assertFileExists(INDEX_PATH, "index.html");
+
+  const pkg = JSON.parse(fs.readFileSync(PACKAGE_PATH, "utf8"));
+  const buildFiles = pkg.build?.files ?? [];
+  const missingBuildEntries = ["index.html", "src/**/*", "assets/**/*", "electron-main.cjs"].filter(
+    (entry) => !buildFiles.includes(entry)
+  );
+
+  assert(pkg.main === "electron-main.cjs", "package.json main이 electron-main.cjs가 아닙니다.", "package.json");
+  assert(pkg.scripts?.package, "package.json에 package 스크립트가 없습니다.", "package.json");
+  assert(pkg.build?.appId, "electron-builder appId가 없습니다.", "package.json");
+  assert(missingBuildEntries.length === 0, `electron-builder files 누락: ${missingBuildEntries.join(", ")}`, "package.json");
+
+  const electronMain = fs.readFileSync(ELECTRON_MAIN_PATH, "utf8");
+  assert(
+    electronMain.includes("APP_ENTRY_URL") && electronMain.includes("/index.html") && electronMain.includes("loadURL(APP_ENTRY_URL)"),
+    "Electron entry URL이 index.html을 가리키지 않습니다.",
+    "electron-main.cjs"
+  );
+  assert(electronMain.includes("nodeIntegration: false"), "Electron nodeIntegration 비활성화 설정을 찾지 못했습니다.", "electron-main.cjs");
+
+  if (!fs.existsSync(path.join(ROOT_DIR, "node_modules", "electron"))) {
+    warnings.push("node_modules/electron이 아직 없습니다. 실제 EXE 빌드 전 `npm install`이 필요합니다.");
+  }
+
+  return `main=${pkg.main}, product=${pkg.build?.productName ?? pkg.name}`;
+}
+
+async function checkPlayerTotal() {
+  const dataModule = await import(pathToFileURL(path.join(ROOT_DIR, "src", "data.js")).href);
+  const state = dataModule.createInitialState();
+  const totalPlayers = state.teams.flatMap((team) => team.roster ?? []).length;
+
+  assert(totalPlayers >= 500, `선수 총원이 ${totalPlayers}명입니다. 최소 500명 이상이어야 합니다.`, "src/data.js");
+
+  if (totalPlayers < 965) {
+    warnings.push(`선수 총원은 ${totalPlayers}명입니다. 현재 정책은 검증된 등록/퓨처스 중심 500명대 로스터입니다.`);
+  }
+
+  return `총 ${totalPlayers}명`;
+}
+
+async function checkViewport(viewport) {
+  assert(cdp, "브라우저 CDP 연결이 없습니다.", "tools/verify_browser.mjs");
+
+  browserErrors.length = 0;
+  consoleEvents.length = 0;
+
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: viewport.width,
+    height: viewport.height,
+    deviceScaleFactor: viewport.deviceScaleFactor,
+    mobile: viewport.mobile
+  });
+
+  const loadEvent = cdp.once("Page.loadEventFired");
+  await cdp.send("Page.navigate", { url: `${appUrl}?qa=${viewport.label}-${Date.now()}` });
+  await loadEvent;
+  await waitForStartScreen();
+  await evaluateInBrowser(`document.querySelector("[data-action='start-new']")?.click(); true`);
+  await waitForTeamSelect();
+  await evaluateInBrowser(`document.querySelector("[data-action='choose-start-team'][data-team-id='kia']")?.click(); true`);
+  await waitForRenderedApp();
+  const preseasonProbe = await evaluateInBrowser(`
+    (() => {
+      const before = document.body.innerText;
+      document.querySelector("[data-action='next-day']")?.click();
+      const after = document.body.innerText;
+      return {
+        hadPreseason: before.includes("프리시즌"),
+        dateAdvanced: after.includes("2026-03-02"),
+        gamesStillZero: after.includes("0 / 720경기"),
+        boxscores: document.querySelectorAll(".boxscore-mini").length
+      };
+    })()
+  `);
+  assert(preseasonProbe.hadPreseason && preseasonProbe.dateAdvanced && preseasonProbe.gamesStillZero && preseasonProbe.boxscores === 0, "프리시즌 하루 진행이 경기 없이 날짜만 넘기지 않았습니다.", "src/ui.js");
+  const weeklyProbe = await evaluateInBrowser(`
+    (() => {
+      document.querySelector("[data-action='week']")?.click();
+      const after = document.body.innerText;
+      return {
+        hasWeekButton: Boolean(document.querySelector("[data-action='week']")),
+        dateAdvanced: after.includes("2026-03-09"),
+        gamesStillZero: after.includes("0 / 720경기"),
+        boxscores: document.querySelectorAll(".boxscore-mini").length
+      };
+    })()
+  `);
+  assert(weeklyProbe.hasWeekButton && weeklyProbe.dateAdvanced && weeklyProbe.gamesStillZero && weeklyProbe.boxscores === 0, "빠른 주간 진행이 프리시즌에서 7일만 안전하게 넘기지 못했습니다.", "src/ui.js");
+  await evaluateInBrowser(`for (let i = 0; i < 20; i += 1) { document.querySelector("[data-action='next-day']")?.click(); } true`);
+  await waitForBoxScore();
+  await waitForFreeAgencyPanel();
+
+  const result = await evaluateInBrowser(`
+    (() => {
+      const expectedTeamNames = ${JSON.stringify(EXPECTED_TEAM_NAMES)};
+      const bodyText = document.body.innerText || "";
+      const hasSeasonFastButton = Boolean(document.querySelector("[data-action='season']"));
+      const hasWeekFastButton = Boolean(document.querySelector("[data-action='week']"));
+      const hasAutoOffseasonAction = Boolean(document.querySelector("[data-action='auto-offseason']"));
+      const hasNextSeasonAction = Boolean(document.querySelector("[data-action='next-season']"));
+      const optionNames = [...document.querySelectorAll("[data-action='select-team'] option")]
+        .map((option) => option.textContent.trim())
+        .filter(Boolean);
+      const standingNames = [...document.querySelectorAll(".standings-table .team-cell strong")]
+        .map((node) => node.textContent.trim())
+        .filter(Boolean);
+      const logoImages = [...document.querySelectorAll("img.team-logo")].map((img) => ({
+        alt: img.alt,
+        src: img.currentSrc || img.src,
+        complete: img.complete,
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+        visible: img.getBoundingClientRect().bottom >= 0 && img.getBoundingClientRect().top <= window.innerHeight
+      }));
+      const loadedLogoAlts = logoImages
+        .filter((img) => img.complete && img.naturalWidth > 0 && img.naturalHeight > 0)
+        .map((img) => img.alt);
+      const logoAlts = logoImages.map((img) => img.alt);
+      const statsPanel = document.querySelector("#stats.stats-panel");
+      const statsPanelText = statsPanel?.textContent ?? "";
+      const contractsPanel = document.querySelector("#contracts.contract-panel");
+      const contractsPanelText = contractsPanel?.textContent ?? "";
+      const postseasonPanel = document.querySelector("#postseason.postseason-panel");
+      const postseasonPanelText = postseasonPanel?.textContent ?? "";
+      const draftPanel = document.querySelector("#draft.draft-panel");
+      const draftPanelText = draftPanel?.textContent ?? "";
+      const secondaryDraftPanel = document.querySelector("#secondary-draft.secondary-draft-panel");
+      const secondaryDraftPanelText = secondaryDraftPanel?.textContent ?? "";
+      const tradeLedgerPanel = document.querySelector("#trade-ledger.trade-ledger-panel");
+      const tradeLedgerPanelText = tradeLedgerPanel?.textContent ?? "";
+      const freeAgencyPanel = document.querySelector("#free-agency.free-agency-panel");
+      const freeAgencyPanelText = freeAgencyPanel?.textContent ?? "";
+      const hasPitchingSnapshot = bodyText.includes("선발 로테이션") && bodyText.includes("불펜 역할");
+      const gamecastPanel = document.querySelector("#gamecast.gamecast-panel");
+      const gamecastPanelText = gamecastPanel?.textContent ?? "";
+      const gamecastScreen = document.querySelector("[data-gamecast-screen]");
+      const gamecastCanvas = document.querySelector("#gamecast-pixel-canvas.gamecast-pixel-canvas");
+      const gamecastCanvasRect = gamecastCanvas?.getBoundingClientRect();
+      const gamecastCanvasStyle = gamecastCanvas ? getComputedStyle(gamecastCanvas) : null;
+      const gamecastCanvasPixels = gamecastCanvas ? (() => {
+        const ctx = gamecastCanvas.getContext("2d");
+        const image = ctx?.getImageData(0, 0, gamecastCanvas.width, gamecastCanvas.height);
+        if (!image) return { unique: 0, alpha: 0 };
+        const colors = new Set();
+        let alpha = 0;
+        for (let i = 0; i < image.data.length; i += 4 * Math.max(1, Math.floor(image.data.length / 1200))) {
+          const a = image.data[i + 3];
+          if (a > 0) alpha += 1;
+          colors.add(image.data[i] + "," + image.data[i + 1] + "," + image.data[i + 2] + "," + a);
+        }
+        return { unique: colors.size, alpha };
+      })() : { unique: 0, alpha: 0 };
+      const boxscoreCount = document.querySelectorAll(".boxscore-mini").length;
+      const scoringMomentCount = document.querySelectorAll(".scoring-moments span").length;
+      const clipSelectors = [
+        ".button",
+        ".pill",
+        ".player-list strong",
+        ".player-list small",
+        ".proposal-card p",
+        ".trade-command-actions small",
+        ".trade-asset-pill",
+        ".fa-card p",
+        ".fa-card small",
+        ".foreign-card p",
+        ".foreign-card small",
+        ".gamecast-feed span",
+        ".gamecast-feed small",
+        ".gamecast-now strong",
+        ".gamecast-now small",
+        ".fa-offer-item small",
+        ".market-ledger-item small",
+        ".market-asset-pill",
+        ".free-agency-summary span",
+        ".draft-summary span",
+        ".secondary-draft-summary span",
+        ".eligibility-chip-row span"
+      ];
+      const clippingIssues = [];
+      for (const selector of clipSelectors) {
+        for (const node of document.querySelectorAll(selector)) {
+          const rect = node.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) continue;
+          const style = getComputedStyle(node);
+          const clipsY = ["hidden", "clip"].includes(style.overflowY) || ["hidden", "clip"].includes(style.overflow);
+          const clipsX = ["hidden", "clip"].includes(style.overflowX) || ["hidden", "clip"].includes(style.overflow);
+          if ((clipsY && node.scrollHeight > node.clientHeight + 1) || (clipsX && node.scrollWidth > node.clientWidth + 1)) {
+            clippingIssues.push({
+              selector,
+              text: (node.textContent || "").trim().slice(0, 80),
+              scrollWidth: node.scrollWidth,
+              clientWidth: node.clientWidth,
+              scrollHeight: node.scrollHeight,
+              clientHeight: node.clientHeight
+            });
+          }
+        }
+      }
+      const visibleBrokenLogos = logoImages
+        .filter((img) => img.visible && (!img.complete || img.naturalWidth <= 0 || img.naturalHeight <= 0))
+        .map((img) => img.alt);
+      const missingNames = expectedTeamNames.filter((name) =>
+        !bodyText.includes(name) && !optionNames.includes(name) && !standingNames.includes(name)
+      );
+      const missingStandingNames = expectedTeamNames.filter((name) => !standingNames.includes(name));
+      const missingLogos = expectedTeamNames.filter((name) =>
+        !logoAlts.some((alt) => alt.includes(name))
+      );
+      const doc = document.documentElement;
+      const body = document.body;
+      const scrollWidth = Math.max(doc.scrollWidth, body.scrollWidth);
+      const clientWidth = doc.clientWidth;
+      const bodyClientWidth = body.clientWidth;
+      const overflowPx = scrollWidth - clientWidth;
+      return {
+        title: document.title,
+        optionNames,
+        standingNames,
+        logoCount: logoImages.length,
+        loadedLogoCount: loadedLogoAlts.length,
+        missingNames,
+        missingStandingNames,
+        missingLogos,
+        visibleBrokenLogos,
+        hasStatsPanel: Boolean(statsPanel),
+        hasBatterStats: statsPanelText.includes("타자 TOP"),
+        hasPitcherStats: statsPanelText.includes("투수 TOP"),
+        hasContractsPanel: Boolean(contractsPanel),
+        hasContractSummary: contractsPanelText.includes("연봉/FA") && contractsPanelText.includes("추정"),
+        hasPostseasonPanel: Boolean(postseasonPanel),
+        hasPostseasonBracket: postseasonPanelText.includes("와일드카드") && postseasonPanelText.includes("한국시리즈"),
+        postseasonSeriesCards: document.querySelectorAll("#postseason .series-card").length,
+        hasAwardGrid: Boolean(document.querySelector("#postseason .award-grid")),
+        hasPostseasonAction: Boolean(document.querySelector("[data-action='postseason']")),
+        hasDraftPanel: Boolean(draftPanel),
+        hasDraftBoard: draftPanelText.includes("드래프트 보드"),
+        draftCards: document.querySelectorAll("#draft .draft-card").length,
+        hasDraftAction: Boolean(document.querySelector("[data-action='draft']")),
+        hasSecondaryDraftPanel: Boolean(secondaryDraftPanel),
+        hasSecondaryDraftBoard: secondaryDraftPanelText.includes("2차 드래프트") && secondaryDraftPanelText.includes("35인"),
+        secondaryProtectionCards: document.querySelectorAll("#secondary-draft .protection-card").length,
+        hasSecondaryDraftAction: Boolean(document.querySelector("[data-action='secondary-draft']")),
+        hasTradeCommitAction: Boolean(document.querySelector("[data-action='commit-trade']")),
+        hasTradeLedgerPanel: Boolean(tradeLedgerPanel),
+        hasTradeLedgerTitle: tradeLedgerPanelText.includes("트레이드 원장"),
+        hasTradeCommandCard: Boolean(document.querySelector(".trade-command-card")),
+        hasTradeSupplementalAsset: bodyText.includes("현금") || bodyText.includes("지명권") || bodyText.includes("조건부") || bodyText.includes("후일결정선수"),
+        hasFreeAgencyAction: Boolean(document.querySelector("[data-action='free-agency']")),
+        hasSignFaAction: Boolean(document.querySelector("[data-action='sign-fa']")),
+        hasSignForeignAction: Boolean(document.querySelector("[data-action='sign-foreign']")),
+        hasFreeAgencyPanel: Boolean(freeAgencyPanel),
+        hasFreeAgencyBoard: freeAgencyPanelText.includes("FA/외국인 시장") && freeAgencyPanelText.includes("FGN-"),
+        faCards: document.querySelectorAll("#free-agency .fa-card").length,
+        foreignCards: document.querySelectorAll("#free-agency .foreign-card").length,
+        marketLedgerItems: document.querySelectorAll("#free-agency .market-ledger-item").length,
+        hasMarketLedger: freeAgencyPanelText.includes("시장 장부"),
+        hasSeasonFastButton,
+        hasWeekFastButton,
+        hasAutoOffseasonAction,
+        hasNextSeasonAction,
+        hasGamecastPanel: Boolean(gamecastPanel),
+        hasGamecastScreen: Boolean(gamecastScreen),
+        hasGamecastCanvas: Boolean(gamecastCanvas),
+        gamecastCanvasWidth: gamecastCanvas?.width ?? 0,
+        gamecastCanvasHeight: gamecastCanvas?.height ?? 0,
+        gamecastCanvasCssWidth: gamecastCanvasRect?.width ?? 0,
+        gamecastCanvasCssHeight: gamecastCanvasRect?.height ?? 0,
+        gamecastCanvasImageRendering: gamecastCanvasStyle?.imageRendering ?? "",
+        gamecastCanvasPixelUnique: gamecastCanvasPixels.unique,
+        gamecastCanvasAlphaSamples: gamecastCanvasPixels.alpha,
+        hasGamecastFeed: document.querySelectorAll(".gamecast-feed li").length > 0,
+        hasGamecastScore: gamecastPanelText.includes("빠른 도트 중계") && gamecastPanelText.includes("PA"),
+        hasPreseasonFlow: bodyText.includes("정규시즌") && bodyText.includes("5 / 720경기"),
+        clippingIssues,
+        hasPitchingSnapshot,
+        boxscoreCount,
+        scoringMomentCount,
+        scrollWidth,
+        clientWidth,
+        bodyClientWidth,
+        overflowPx,
+        appTextLength: bodyText.length
+      };
+    })()
+  `);
+
+  assert(result.title === "KBO GM Manager", `문서 title이 예상과 다릅니다: ${result.title}`, "index.html");
+  assert(result.appTextLength > 100, "앱 본문 렌더링 텍스트가 너무 적습니다.", "src/ui.js");
+  assert(result.missingNames.length === 0, `화면에서 팀명 누락: ${result.missingNames.join(", ")}`, "src/ui.js");
+  assert(
+    result.missingStandingNames.length === 0,
+    `순위표에서 팀명 누락: ${result.missingStandingNames.join(", ")}`,
+    "src/ui.js"
+  );
+  assert(result.missingLogos.length === 0, `로드된 로고 누락: ${result.missingLogos.join(", ")}`, "src/ui.js");
+  assert(result.visibleBrokenLogos.length === 0, `현재 화면의 로고 로드 실패: ${result.visibleBrokenLogos.join(", ")}`, "src/ui.js");
+  assert(result.hasContractsPanel && result.hasContractSummary, "계약/FA 패널을 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasPostseasonAction, "가을야구 진행 버튼을 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasPostseasonPanel && result.hasPostseasonBracket, "포스트시즌 브래킷 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.postseasonSeriesCards === 4, `포스트시즌 시리즈 카드 ${result.postseasonSeriesCards}/4`, "src/ui.js");
+  assert(result.hasAwardGrid, "시상식 award-grid UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasDraftAction, "드래프트 진행 버튼을 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasDraftPanel && result.hasDraftBoard, "드래프트 보드 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.draftCards >= 8, `드래프트 후보 카드 ${result.draftCards}/8`, "src/ui.js");
+  assert(result.hasSecondaryDraftAction, "2차 드래프트 진행 버튼을 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasSecondaryDraftPanel && result.hasSecondaryDraftBoard, "2차 드래프트 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.secondaryProtectionCards >= 8, `2차 드래프트 보호/비보호 카드 ${result.secondaryProtectionCards}/8`, "src/ui.js");
+  assert(result.hasTradeCommitAction, "트레이드 실행 버튼을 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasTradeCommandCard, "트레이드 command 카드를 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasTradeLedgerPanel && result.hasTradeLedgerTitle, "트레이드 원장 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasTradeSupplementalAsset, "트레이드 보조 자산 표시를 찾지 못했습니다.", "src/ui.js");
+  assert(!result.hasSeasonFastButton && result.hasWeekFastButton, "전체 시즌 버튼은 없어야 하고 빠른 주간 버튼은 있어야 합니다.", "src/ui.js");
+  assert(result.hasAutoOffseasonAction && result.hasNextSeasonAction, "자동 스토브/다음 시즌 버튼을 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasGamecastPanel && result.hasGamecastScreen && result.hasGamecastCanvas && result.hasGamecastFeed && result.hasGamecastScore, "빠른 도트 게임캐스트 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.gamecastCanvasCssWidth % 80 === 0 && result.gamecastCanvasCssHeight % 80 === 0, `픽셀 캔버스 CSS 크기가 80의 정수 배율이 아닙니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
+  assert(result.gamecastCanvasWidth >= result.gamecastCanvasCssWidth && result.gamecastCanvasHeight >= result.gamecastCanvasCssHeight, `픽셀 캔버스 버퍼가 CSS 표시 크기보다 작습니다: buffer ${result.gamecastCanvasWidth}x${result.gamecastCanvasHeight}, css ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
+  assert(/pixelated|crisp-edges/i.test(result.gamecastCanvasImageRendering), `픽셀 캔버스 image-rendering=${result.gamecastCanvasImageRendering}`, "src/styles.css");
+  assert(result.gamecastCanvasPixelUnique >= 6 && result.gamecastCanvasAlphaSamples > 0, `픽셀 캔버스가 비었거나 팔레트가 너무 단조롭습니다: unique=${result.gamecastCanvasPixelUnique}, alpha=${result.gamecastCanvasAlphaSamples}`, "src/ui.js");
+  assert(result.hasPreseasonFlow, "프리시즌에서 하루씩 개막 경기까지 이어지는 흐름을 확인하지 못했습니다.", "src/ui.js");
+  assert(result.hasFreeAgencyAction && result.hasSignFaAction && result.hasSignForeignAction, "FA/외국인 시장 버튼을 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasFreeAgencyPanel && result.hasFreeAgencyBoard, "FA/외국인 시장 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.faCards >= 6, `FA 카드 ${result.faCards}/6`, "src/ui.js");
+  assert(result.foreignCards >= 6, `외국인 카드 ${result.foreignCards}/6`, "src/ui.js");
+  assert(result.hasMarketLedger, "시장 장부 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.clippingIssues.length === 0, `텍스트 클리핑 ${result.clippingIssues.length}건: ${result.clippingIssues.slice(0, 5).map((item) => item.selector + "=" + item.text).join(" / ")}`, "src/styles.css");
+  assert(result.hasPitchingSnapshot, "선발 로테이션/불펜 역할 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasStatsPanel, "기록실 패널 #stats를 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasBatterStats && result.hasPitcherStats, "기록실의 타자/투수 섹션을 찾지 못했습니다.", "src/ui.js");
+  assert(result.boxscoreCount > 0, "최근 경기 박스스코어 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.overflowPx <= 1, `수평 overflow ${result.overflowPx}px (scroll=${result.scrollWidth}, client=${result.clientWidth})`, "src/styles.css");
+
+  return [
+    `${viewport.width}x${viewport.height}`,
+    `팀명 ${result.standingNames.length}/10`,
+    `로고 ${result.loadedLogoCount}/${result.logoCount}`,
+    "계약패널 OK",
+    "가을야구 OK",
+    "드래프트 OK",
+    "2차드래프트 OK",
+    "트레이드실행 OK",
+    "FA시장 OK",
+    "자동스토브 OK",
+    "다음시즌 OK",
+    "프리시즌 OK",
+    "빠른주간 OK",
+    "도트중계 OK",
+    `클리핑 ${result.clippingIssues.length}`,
+    "투수운용 OK",
+    "기록실 OK",
+    `박스스코어 ${result.boxscoreCount}`,
+    `body/client ${result.bodyClientWidth}/${result.clientWidth}`,
+    `overflow ${result.overflowPx}px`
+  ].join(", ");
+}
+
+function checkBrowserConsoleErrors() {
+  const uniqueErrors = uniqueStrings(browserErrors);
+  assert(uniqueErrors.length === 0, `브라우저 콘솔/런타임 에러 ${uniqueErrors.length}건: ${uniqueErrors.slice(0, 5).join(" / ")}`, "index.html");
+
+  const consoleSummary = consoleEvents.length ? `${consoleEvents.length}개 콘솔 이벤트 수집` : "콘솔 이벤트 없음";
+  return `${consoleSummary}, error 0건`;
+}
+
+function attachBrowserEventCollectors(client) {
+  client.on("Runtime.consoleAPICalled", (params) => {
+    const text = (params.args ?? []).map(formatRemoteObject).join(" ");
+    const eventText = `${params.type}: ${text}`.trim();
+    consoleEvents.push(eventText);
+    if (params.type === "error") {
+      browserErrors.push(eventText);
+    }
+  });
+
+  client.on("Runtime.exceptionThrown", (params) => {
+    const detail = params.exceptionDetails;
+    browserErrors.push(`exception: ${detail?.text ?? "Runtime exception"} ${detail?.exception?.description ?? ""}`.trim());
+  });
+
+  client.on("Log.entryAdded", (params) => {
+    const entry = params.entry ?? {};
+    if (entry.level === "error") {
+      browserErrors.push(`log: ${entry.text ?? "Unknown browser log error"}`);
+    }
+  });
+}
+
+async function waitForRenderedApp() {
+  const deadline = Date.now() + 10000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const rendered = await evaluateInBrowser(`
+        Boolean(
+          document.querySelector(".app-shell") &&
+          document.querySelectorAll(".standings-table .team-cell strong").length >= 10 &&
+          document.querySelectorAll("img.team-logo").length >= 10
+        )
+      `);
+      if (rendered) {
+        await delay(300);
+        return;
+      }
+    } catch (error) {
+      lastError = error?.message ?? String(error);
+    }
+    await delay(100);
+  }
+
+  throw new VerificationError(`앱 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function waitForStartScreen() {
+  const deadline = Date.now() + 5000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const rendered = await evaluateInBrowser(`
+        Boolean(
+          document.querySelector(".start-shell") &&
+          document.querySelector("[data-action='start-new']") &&
+          document.querySelector("[data-action='load-save-start']")
+        )
+      `);
+      if (rendered) {
+        await delay(100);
+        return;
+      }
+    } catch (error) {
+      lastError = error?.message ?? String(error);
+    }
+    await delay(80);
+  }
+
+  throw new VerificationError(`시작 화면 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function waitForTeamSelect() {
+  const deadline = Date.now() + 5000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const rendered = await evaluateInBrowser(`
+        Boolean(
+          document.querySelector(".team-select-stage") &&
+          document.querySelectorAll("[data-action='choose-start-team']").length === 10
+        )
+      `);
+      if (rendered) {
+        await delay(100);
+        return;
+      }
+    } catch (error) {
+      lastError = error?.message ?? String(error);
+    }
+    await delay(80);
+  }
+
+  throw new VerificationError(`팀 선택 화면 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function waitForBoxScore() {
+  const deadline = Date.now() + 5000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const rendered = await evaluateInBrowser(`
+        Boolean(
+          document.querySelector(".boxscore-mini") &&
+          document.querySelectorAll(".game-card").length >= 5
+        )
+      `);
+      if (rendered) {
+        await delay(100);
+        return;
+      }
+    } catch (error) {
+      lastError = error?.message ?? String(error);
+    }
+    await delay(80);
+  }
+
+  throw new VerificationError(`박스스코어 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function waitForFreeAgencyPanel() {
+  const deadline = Date.now() + 5000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const rendered = await evaluateInBrowser(`
+        Boolean(
+          document.querySelector("#free-agency.free-agency-panel") &&
+          document.querySelectorAll("#free-agency .fa-card").length >= 6 &&
+          document.querySelectorAll("#free-agency .foreign-card").length >= 6
+        )
+      `);
+      if (rendered) {
+        await delay(100);
+        return;
+      }
+    } catch (error) {
+      lastError = error?.message ?? String(error);
+    }
+    await delay(80);
+  }
+
+  throw new VerificationError(`FA/외국인 시장 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function evaluateInBrowser(expression) {
+  const result = await cdp.send("Runtime.evaluate", {
+    expression,
+    awaitPromise: true,
+    returnByValue: true,
+    userGesture: false
+  });
+
+  if (result.exceptionDetails) {
+    throw new Error(result.exceptionDetails.text ?? "브라우저 평가 중 예외 발생");
+  }
+
+  return result.result?.value;
+}
+
+async function waitForDevToolsEndpoint(profileDir, childProcess, stderrLines) {
+  const portFile = path.join(profileDir, "DevToolsActivePort");
+  const deadline = Date.now() + 12000;
+
+  while (Date.now() < deadline) {
+    if (childProcess.exitCode !== null) {
+      throw new VerificationError(
+        `${browserName || "브라우저"}가 시작 직후 종료되었습니다. ${stderrLines.slice(-3).join(" ")}`,
+        "tools/verify_browser.mjs"
+      );
+    }
+
+    if (fs.existsSync(portFile)) {
+      const [portLine, webSocketPath] = fs.readFileSync(portFile, "utf8").trim().split(/\r?\n/);
+      return { port: Number(portLine), webSocketPath };
+    }
+    await delay(100);
+  }
+
+  throw new VerificationError("DevToolsActivePort 파일을 찾지 못했습니다.", "tools/verify_browser.mjs");
+}
+
+async function openCdpTarget(port, url) {
+  const response = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, {
+    method: "PUT"
+  });
+
+  if (!response.ok) {
+    throw new VerificationError(`CDP target 생성 실패: HTTP ${response.status}`, "tools/verify_browser.mjs");
+  }
+
+  const target = await response.json();
+  assert(target.webSocketDebuggerUrl, "CDP target WebSocket URL이 없습니다.", "tools/verify_browser.mjs");
+  return target;
+}
+
+function findBrowserExecutable() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    process.env.BROWSER_PATH,
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    path.join(process.env.PROGRAMFILES ?? "", "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(process.env["PROGRAMFILES(X86)"] ?? "", "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(process.env.PROGRAMFILES ?? "", "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(process.env["PROGRAMFILES(X86)"] ?? "", "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(process.env.LOCALAPPDATA ?? "", "Microsoft", "Edge", "Application", "msedge.exe"),
+    which("chrome"),
+    which("chrome.exe"),
+    which("msedge"),
+    which("msedge.exe"),
+    which("chromium"),
+    which("chromium-browser")
+  ].filter(Boolean);
+
+  const executable = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!executable) {
+    throw new VerificationError(
+      "Chrome 또는 Edge 실행 파일을 찾지 못했습니다. CHROME_PATH 환경변수로 브라우저 경로를 지정하세요.",
+      "tools/verify_browser.mjs"
+    );
+  }
+
+  return executable;
+}
+
+function which(command) {
+  const executable = process.platform === "win32" ? "where.exe" : "which";
+  const result = spawnSync(executable, [command], { encoding: "utf8", shell: false });
+  if (result.status !== 0) return "";
+  return result.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+async function cleanup() {
+  if (cdp) {
+    cdp.close();
+    cdp = null;
+  }
+
+  if (browserProcess && browserProcess.exitCode === null) {
+    browserProcess.kill();
+    await new Promise((resolve) => {
+      const timeout = setTimeout(resolve, 2000);
+      browserProcess.once("exit", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+  }
+
+  if (server) {
+    await new Promise((resolve) => server.close(resolve));
+    server = null;
+  }
+
+  if (browserProfileDir) {
+    fs.rmSync(browserProfileDir, { recursive: true, force: true });
+    browserProfileDir = "";
+  }
+}
+
+function assert(condition, message, location) {
+  if (!condition) {
+    throw new VerificationError(message, location);
+  }
+}
+
+function assertFileExists(filePath, label) {
+  assert(fs.existsSync(filePath), `${label} 파일이 없습니다.`, relativePath(filePath));
+}
+
+function isInsideRoot(filePath) {
+  const relative = path.relative(ROOT_DIR, filePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function formatRemoteObject(remoteObject) {
+  if (remoteObject.value !== undefined) return String(remoteObject.value);
+  if (remoteObject.description) return remoteObject.description;
+  return remoteObject.type ?? "";
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function buildReport() {
+  const passed = results.filter((result) => result.status === "PASS").length;
+  const failed = results.length - passed;
+  const generatedAt = new Date().toISOString();
+
+  const lines = [
+    "# 브라우저/패키징 QA 보고서",
+    "",
+    `- 실행 시각: ${generatedAt}`,
+    `- 작업 폴더: ${ROOT_DIR}`,
+    `- 실행 Node: ${process.execPath} (${process.version})`,
+    `- 대상 URL: ${appUrl ?? "-"}`,
+    `- 브라우저: ${browserName || "-"}`,
+    `- 종합 결과: ${failed === 0 ? "통과" : "실패"} (${passed}/${results.length} 통과, 경고 ${warnings.length}건)`,
+    "",
+    "## 체크 결과",
+    "",
+    "| 항목 | 결과 | 상세 | 위치 |",
+    "| --- | --- | --- | --- |",
+    ...results.map(
+      (result) =>
+        `| ${escapeMarkdown(result.name)} | ${result.status} | ${escapeMarkdown(result.detail)} | ${escapeMarkdown(
+          result.location || "-"
+        )} |`
+    )
+  ];
+
+  if (warnings.length > 0) {
+    lines.push("", "## 경고", "", ...uniqueStrings(warnings).map((warning) => `- ${escapeMarkdown(warning)}`));
+  }
+
+  if (browserErrors.length > 0) {
+    lines.push("", "## 브라우저 에러", "", ...uniqueStrings(browserErrors).map((error) => `- ${escapeMarkdown(error)}`));
+  }
+
+  const failures = results.filter((result) => result.status === "FAIL");
+  if (failures.length > 0) {
+    lines.push("", "## 실패 원인", "", ...failures.map((result) => `- ${result.name}: ${result.detail} (${result.location || "위치 미상"})`));
+  }
+
+  lines.push(
+    "",
+    "## 실행 명령",
+    "",
+    "```powershell",
+    "npm run verify:browser",
+    "```",
+    ""
+  );
+
+  return `${lines.join("\n")}\n`;
+}
+
+function escapeMarkdown(value) {
+  return String(value ?? "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("|", "\\|")
+    .replaceAll("\n", " ");
+}
+
+function guessLocation(name) {
+  if (name.includes("Electron")) return "package.json";
+  if (name.includes("선수")) return "src/data.js";
+  if (name.includes("렌더링")) return "src/ui.js";
+  if (name.includes("콘솔")) return "index.html";
+  return "tools/verify_browser.mjs";
+}
+
+function relativePath(filePath) {
+  return path.relative(ROOT_DIR, filePath).replaceAll(path.sep, "/");
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+main().catch(async (error) => {
+  results.push({
+    name: "브라우저 QA 스크립트",
+    status: "FAIL",
+    detail: error?.stack ?? error?.message ?? String(error),
+    location: "tools/verify_browser.mjs"
+  });
+
+  try {
+    await cleanup();
+  } finally {
+    fs.mkdirSync(REPORT_DIR, { recursive: true });
+    fs.writeFileSync(REPORT_PATH, buildReport(), "utf8");
+    console.error(error);
+    process.exitCode = 1;
+  }
+});

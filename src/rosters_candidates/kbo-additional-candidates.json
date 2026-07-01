@@ -1,0 +1,4770 @@
+{
+  "metadata": {
+    "generatedAt": "2026-06-30T06:16:38.821304+00:00",
+    "sources": [
+      {
+        "name": "KBO 공식 선수조회",
+        "url": "https://www.koreabaseball.com/Player/Search.aspx",
+        "use": "팀+포지션 페이징 누락분 회수와 이름검색 보조 후보 수집"
+      },
+      {
+        "name": "KBO 선수 상세",
+        "urlPattern": "https://www.koreabaseball.com/Record/Player/*Detail*/Basic.aspx?playerId={playerId}",
+        "use": "이름, 생년월일, 포지션, 투타 확인"
+      },
+      {
+        "name": "KBO 퓨처스 선수 상세",
+        "urlPattern": "https://www.koreabaseball.com/Futures/Player/*Detail.aspx?playerId={playerId}",
+        "use": "퓨처스 상세 후보 확인"
+      }
+    ],
+    "baseRosterCount": 965,
+    "targetTotal": 1000,
+    "candidateCount": 108,
+    "projectedTotalIfMerged": 1073,
+    "candidateCounts": {
+      "kbo-current-team-paged": 28,
+      "kbo-name-search-supplemental": 80
+    },
+    "rejectedCount": 0,
+    "currentTeamPaged": {
+      "declaredPositionSearchRows": 1070,
+      "discoveredRows": 993,
+      "queries": [
+        {
+          "teamId": "doosan",
+          "teamCode": "OB",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 24,
+          "visibleCount": 24,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "lg",
+          "teamCode": "LG",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 11,
+          "visibleCount": 11,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "doosan",
+          "teamCode": "OB",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 11,
+          "visibleCount": 11,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "lg",
+          "teamCode": "LG",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 17,
+          "visibleCount": 17,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "doosan",
+          "teamCode": "OB",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 20,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "lg",
+          "teamCode": "LG",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 25,
+          "visibleCount": 25,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kia",
+          "teamCode": "HT",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 7,
+          "visibleCount": 7,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "samsung",
+          "teamCode": "SS",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 12,
+          "visibleCount": 12,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kia",
+          "teamCode": "HT",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 17,
+          "visibleCount": 17,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "doosan",
+          "teamCode": "OB",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46,
+          "visibleCount": 46,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kia",
+          "teamCode": "HT",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 28,
+          "visibleCount": 28,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "lg",
+          "teamCode": "LG",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 55,
+          "visibleCount": 55,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "lotte",
+          "teamCode": "LT",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 15,
+          "visibleCount": 15,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "samsung",
+          "teamCode": "SS",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 23,
+          "visibleCount": 23,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "samsung",
+          "teamCode": "SS",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 17,
+          "visibleCount": 17,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kia",
+          "teamCode": "HT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 57,
+          "visibleCount": 57,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "samsung",
+          "teamCode": "SS",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 57,
+          "visibleCount": 57,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "hanwha",
+          "teamCode": "HH",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 9,
+          "visibleCount": 9,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "lotte",
+          "teamCode": "LT",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 21,
+          "visibleCount": 21,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "lotte",
+          "teamCode": "LT",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 27,
+          "visibleCount": 27,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "ssg",
+          "teamCode": "SK",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 7,
+          "visibleCount": 7,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "hanwha",
+          "teamCode": "HH",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 21,
+          "visibleCount": 21,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "hanwha",
+          "teamCode": "HH",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 26,
+          "visibleCount": 26,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "hanwha",
+          "teamCode": "HH",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46,
+          "visibleCount": 46,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "lotte",
+          "teamCode": "LT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 56,
+          "visibleCount": 56,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "ssg",
+          "teamCode": "SK",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 21,
+          "visibleCount": 21,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "ssg",
+          "teamCode": "SK",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 24,
+          "visibleCount": 24,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "ssg",
+          "teamCode": "SK",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 51,
+          "visibleCount": 51,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kt",
+          "teamCode": "KT",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 12,
+          "visibleCount": 12,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "nc",
+          "teamCode": "NC",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 9,
+          "visibleCount": 9,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kt",
+          "teamCode": "KT",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 20,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kt",
+          "teamCode": "KT",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 21,
+          "visibleCount": 21,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "nc",
+          "teamCode": "NC",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 17,
+          "visibleCount": 17,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "nc",
+          "teamCode": "NC",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 26,
+          "visibleCount": 26,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kiwoom",
+          "teamCode": "WO",
+          "positionCode": "2",
+          "positionLabel": "포수",
+          "searchWord": "",
+          "declaredCount": 10,
+          "visibleCount": 10,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kiwoom",
+          "teamCode": "WO",
+          "positionCode": "7,8,9",
+          "positionLabel": "외야수",
+          "searchWord": "",
+          "declaredCount": 14,
+          "visibleCount": 14,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kt",
+          "teamCode": "KT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 54,
+          "visibleCount": 54,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kiwoom",
+          "teamCode": "WO",
+          "positionCode": "3,4,5,6",
+          "positionLabel": "내야수",
+          "searchWord": "",
+          "declaredCount": 29,
+          "visibleCount": 29,
+          "pagesFetched": 2,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "kiwoom",
+          "teamCode": "WO",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 56,
+          "visibleCount": 56,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "teamId": "nc",
+          "teamCode": "NC",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 51,
+          "visibleCount": 51,
+          "pagesFetched": 3,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        }
+      ]
+    },
+    "supplementalNameSearch": {
+      "enabled": true,
+      "tokens": [
+        "김",
+        "이",
+        "박",
+        "최",
+        "정",
+        "강",
+        "조",
+        "윤",
+        "장",
+        "임"
+      ],
+      "maxPagesPerToken": 1,
+      "rawRows": 120,
+      "queries": [
+        {
+          "searchWord": "김",
+          "declaredCount": 1037,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "searchWord": "이",
+          "declaredCount": 701,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "searchWord": "박",
+          "declaredCount": 430,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "searchWord": "최",
+          "declaredCount": 224,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "searchWord": "정",
+          "declaredCount": 404,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "searchWord": "강",
+          "declaredCount": 166,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "searchWord": "조",
+          "declaredCount": 163,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        },
+        {
+          "searchWord": "윤",
+          "declaredCount": 201,
+          "visibleCount": 20,
+          "pagesFetched": 1,
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx"
+        }
+      ],
+      "skipped": [
+        {
+          "playerId": "93314",
+          "name": "김갑중",
+          "sourceTeamText": "쌍방울",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "59356",
+          "name": "네이플턴",
+          "sourceTeamText": "멜버른",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "59345",
+          "name": "다이키",
+          "sourceTeamText": "멜버른",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "82116",
+          "name": "김재박",
+          "sourceTeamText": "태평양",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "66313",
+          "name": "박경택",
+          "sourceTeamText": "화성",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "82984",
+          "name": "박경호",
+          "sourceTeamText": "삼미",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "95488",
+          "name": "최계훈",
+          "sourceTeamText": "청보",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "80539",
+          "name": "최광묵",
+          "sourceTeamText": "청보",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "90371",
+          "name": "최광천",
+          "sourceTeamText": "태평양",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "67344",
+          "name": "최규보",
+          "sourceTeamText": "고양",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "62048",
+          "name": "강정민",
+          "sourceTeamText": "고양",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "59278",
+          "name": "김세정",
+          "sourceTeamText": "대학",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "79868",
+          "name": "김정남",
+          "sourceTeamText": "고양",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "62001",
+          "name": "김정록",
+          "sourceTeamText": "화성",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "90347",
+          "name": "강광회",
+          "sourceTeamText": "쌍방울",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "91870",
+          "name": "강남규",
+          "sourceTeamText": "쌍방울",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "64099",
+          "name": "강대진",
+          "sourceTeamText": "고양",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "95576",
+          "name": "권두조",
+          "sourceTeamText": "청보",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "80033",
+          "name": "김한조",
+          "sourceTeamText": "태평양",
+          "reason": "unmapped team text"
+        },
+        {
+          "playerId": "90001",
+          "name": "정인조",
+          "sourceTeamText": "쌍방울",
+          "reason": "unmapped team text"
+        }
+      ],
+      "note": "이름검색 보조 후보는 KBO 공식 선수조회에 존재하지만 현재 등록/보류/은퇴 상태가 섞일 수 있어 최종 병합 전 별도 검토가 필요합니다."
+    },
+    "notes": [
+      "기존 src/rosters/*.js는 읽기만 했고 수정하지 않았습니다.",
+      "중복 제거는 playerId 우선, 없으면 teamId+name+birthday 조합으로 처리했습니다.",
+      "광범위 포지션(P,C,IF,OF)이 확인되지 않는 경우 position을 unknown으로 남깁니다.",
+      "candidateType=kbo-current-team-paged는 팀+포지션 검색의 누락 페이지에서 온 후보입니다.",
+      "candidateType=kbo-name-search-supplemental은 KBO 이름검색 기반 보조 후보이며 현재 소속 상태 검토가 필요합니다."
+    ]
+  },
+  "players": [
+    {
+      "name": "원상훈",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "L",
+      "throws": "L",
+      "age": 22,
+      "jerseyNumber": "126",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "53101",
+      "birthday": "2004-10-23",
+      "body": "192cm, 95kg",
+      "handedness": "좌투좌타",
+      "school": "모산초(홍성리틀)-외산중-케이팝고",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Futures/Player/PitcherDetail.aspx?playerId=53101"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "LG",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 55
+        }
+      ]
+    },
+    {
+      "name": "최원준",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 32,
+      "jerseyNumber": "61",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "67263",
+      "birthday": "1994-12-21",
+      "body": "182cm, 91kg",
+      "handedness": "우언우타",
+      "school": "수유초-신일중-신일고-동국대",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=67263"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "OB",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46
+        }
+      ]
+    },
+    {
+      "name": "타무라",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "L",
+      "throws": "R",
+      "age": 32,
+      "jerseyNumber": "",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "56218",
+      "birthday": "1994-09-19",
+      "body": "173cm, 79kg",
+      "handedness": "우투좌타",
+      "school": "일본 릿쿄대-두산",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=56218"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "OB",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46
+        }
+      ]
+    },
+    {
+      "name": "타카다",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "L",
+      "throws": "L",
+      "age": 24,
+      "jerseyNumber": "12",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "56212",
+      "birthday": "2002-09-18",
+      "body": "179cm, 84kg",
+      "handedness": "좌투좌타",
+      "school": "일본 시즈오카상업고",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=56212"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "OB",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46
+        }
+      ]
+    },
+    {
+      "name": "플렉센",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 32,
+      "jerseyNumber": "77",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "50234",
+      "birthday": "1994-07-01",
+      "body": "190cm, 99kg",
+      "handedness": "우투우타",
+      "school": "미국 Newark Memorial(고)",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=50234"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "OB",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46
+        }
+      ]
+    },
+    {
+      "name": "김양수",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 25,
+      "jerseyNumber": "145",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "50613",
+      "birthday": "2001-01-23",
+      "body": "184cm, 90kg",
+      "handedness": "우언우타",
+      "school": "천안남산초-천안북중-북일고",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Futures/Player/PitcherDetail.aspx?playerId=50613"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "HT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 57
+        }
+      ]
+    },
+    {
+      "name": "김찬민",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 23,
+      "jerseyNumber": "110",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "52661",
+      "birthday": "2003-09-13",
+      "body": "184cm, 85kg",
+      "handedness": "우언우타",
+      "school": "부안동초-이평중-전주고",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Futures/Player/PitcherDetail.aspx?playerId=52661"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "HT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 57
+        }
+      ]
+    },
+    {
+      "name": "지현",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 19,
+      "jerseyNumber": "32",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "56633",
+      "birthday": "2007-07-13",
+      "body": "180cm, 86kg",
+      "handedness": "우투우타",
+      "school": "동막초-인천연수중-제물포고",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=56633"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "HT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 57
+        }
+      ]
+    },
+    {
+      "name": "석예헌",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 22,
+      "jerseyNumber": "139",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "56439",
+      "birthday": "2004-03-24",
+      "body": "190cm, 96kg",
+      "handedness": "우투우타",
+      "school": "안평초-잠신중-경기고-강릉영동대",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Futures/Player/PitcherDetail.aspx?playerId=56439"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "SS",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 57
+        }
+      ]
+    },
+    {
+      "name": "육선엽",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 21,
+      "jerseyNumber": "4",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "54404",
+      "birthday": "2005-07-13",
+      "body": "190cm, 90kg",
+      "handedness": "우투우타",
+      "school": "백마초-서울신월중-장충고",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=54404"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "SS",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 57
+        }
+      ]
+    },
+    {
+      "name": "천겸",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 20,
+      "jerseyNumber": "114",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "55414",
+      "birthday": "2006-01-25",
+      "body": "179cm, 88kg",
+      "handedness": "우투우타",
+      "school": "부산수영초-개성중-부산고",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Futures/Player/PitcherDetail.aspx?playerId=55414"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "SS",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 57
+        }
+      ]
+    },
+    {
+      "name": "최하늘",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 27,
+      "jerseyNumber": "37",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "68501",
+      "birthday": "1999-03-26",
+      "body": "190cm, 99kg",
+      "handedness": "우언우타",
+      "school": "서울학동초-자양중-경기고-롯데-상무",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=68501"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "SS",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 57
+        }
+      ]
+    },
+    {
+      "name": "조경민",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 22,
+      "jerseyNumber": "128",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "53504",
+      "birthday": "2004-09-17",
+      "body": "179cm, 78kg",
+      "handedness": "우언우타",
+      "school": "상원초-개군중-강릉고",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Futures/Player/PitcherDetail.aspx?playerId=53504"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "LT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 56
+        }
+      ]
+    },
+    {
+      "name": "쿄야마",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 28,
+      "jerseyNumber": "",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "56548",
+      "birthday": "1998-07-04",
+      "body": "183cm, 80kg",
+      "handedness": "우투우타",
+      "school": "일본 오미고-롯데",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=56548"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "LT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 56
+        }
+      ]
+    },
+    {
+      "name": "한현희",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 33,
+      "jerseyNumber": "1",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "62363",
+      "birthday": "1993-06-25",
+      "body": "182cm, 98kg",
+      "handedness": "우언우타",
+      "school": "동삼초-경남중-경남고-히어로즈-키움",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=62363"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "LT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 56
+        }
+      ]
+    },
+    {
+      "name": "배민서",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 27,
+      "jerseyNumber": "45",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "69974",
+      "birthday": "1999-11-18",
+      "body": "184cm, 90kg",
+      "handedness": "우언우타",
+      "school": "대구수창초-경운중-대구상원고-NC-상무-NC",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=69974"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "HH",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46
+        }
+      ]
+    },
+    {
+      "name": "엄상백",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 30,
+      "jerseyNumber": "11",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "65056",
+      "birthday": "1996-10-04",
+      "body": "187cm, 72kg",
+      "handedness": "우언우타",
+      "school": "역삼초-언북중-덕수고-KT-상무-KT",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=65056"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "HH",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46
+        }
+      ]
+    },
+    {
+      "name": "엄요셉",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 20,
+      "jerseyNumber": "108",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "55708",
+      "birthday": "2006-05-29",
+      "body": "190cm, 94kg",
+      "handedness": "우투우타",
+      "school": "오산광성초(오산시리틀)-성일중-구리인창고",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Futures/Player/PitcherDetail.aspx?playerId=55708"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "HH",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46
+        }
+      ]
+    },
+    {
+      "name": "여현승",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 20,
+      "jerseyNumber": "03",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "56703",
+      "birthday": "2006-02-20",
+      "body": "185cm, 95kg",
+      "handedness": "우투우타",
+      "school": "율하초-대구중-대구고",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Futures/Player/PitcherDetail.aspx?playerId=56703"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "HH",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46
+        }
+      ]
+    },
+    {
+      "name": "쿠싱",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 30,
+      "jerseyNumber": "",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "56760",
+      "birthday": "1996-12-03",
+      "body": "190cm, 92kg",
+      "handedness": "우투우타",
+      "school": "미국 Georgetown(대)-한화",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=56760"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "HH",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 46
+        }
+      ]
+    },
+    {
+      "name": "박종훈",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 35,
+      "jerseyNumber": "50",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "60841",
+      "birthday": "1991-08-13",
+      "body": "186cm, 90kg",
+      "handedness": "우언우타",
+      "school": "군산중앙초-군산중-군산상고-SK-상무-SK",
+      "sourceTeamText": "SSG",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=60841"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "SK",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 51
+        }
+      ]
+    },
+    {
+      "name": "천범석",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 20,
+      "jerseyNumber": "",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "55890",
+      "birthday": "2006-03-06",
+      "body": "183cm, 86kg",
+      "handedness": "우투우타",
+      "school": "과천문원초(안양시리틀)-수원북중-강릉고",
+      "sourceTeamText": "SSG",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=55890"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "SK",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 51
+        }
+      ]
+    },
+    {
+      "name": "김정운",
+      "teamId": "kt",
+      "teamName": "KT 위즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 22,
+      "jerseyNumber": "61",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "53029",
+      "birthday": "2004-04-21",
+      "body": "184cm, 84kg",
+      "handedness": "우언우타",
+      "school": "동천초-경주중-대구고-KT-상무",
+      "sourceTeamText": "KT",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=53029"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "KT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 54
+        }
+      ]
+    },
+    {
+      "name": "보쉴리",
+      "teamId": "kt",
+      "teamName": "KT 위즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 33,
+      "jerseyNumber": "36",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "56036",
+      "birthday": "1993-10-01",
+      "body": "190cm, 86kg",
+      "handedness": "우투우타",
+      "school": "미국 Hortonville(고)-미국 Wisconsin(대)",
+      "sourceTeamText": "KT",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=56036"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "KT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 54
+        }
+      ]
+    },
+    {
+      "name": "원상현",
+      "teamId": "kt",
+      "teamName": "KT 위즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 22,
+      "jerseyNumber": "63",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "54063",
+      "birthday": "2004-10-16",
+      "body": "183cm, 83kg",
+      "handedness": "우투우타",
+      "school": "가산초(부산진구리틀)-개성중-부산고",
+      "sourceTeamText": "KT",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=54063"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "KT",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 54
+        }
+      ]
+    },
+    {
+      "name": "이재학",
+      "teamId": "nc",
+      "teamName": "NC 다이노스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 36,
+      "jerseyNumber": "51",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "60263",
+      "birthday": "1990-10-04",
+      "body": "181cm, 84kg",
+      "handedness": "우언우타",
+      "school": "대구옥산초-경복중-대구고-두산",
+      "sourceTeamText": "NC",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=60263"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "NC",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 51
+        }
+      ]
+    },
+    {
+      "name": "김동혁",
+      "teamId": "kiwoom",
+      "teamName": "키움 히어로즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 25,
+      "jerseyNumber": "101",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "50360",
+      "birthday": "2001-12-27",
+      "body": "184cm, 80kg",
+      "handedness": "우언우타",
+      "school": "서울대왕초(강남구리틀)-영동중-덕수고-키움-상무",
+      "sourceTeamText": "고양",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Futures/Player/PitcherDetail.aspx?playerId=50360"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "WO",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 56
+        }
+      ]
+    },
+    {
+      "name": "와일스",
+      "teamId": "kiwoom",
+      "teamName": "키움 히어로즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "R",
+      "throws": "R",
+      "age": 28,
+      "jerseyNumber": "",
+      "status": "candidate",
+      "source": "KBO 선수조회 팀+포지션 페이징",
+      "candidateType": "kbo-current-team-paged",
+      "playerId": "56334",
+      "birthday": "1998-07-02",
+      "body": "193cm, 103kg",
+      "handedness": "우투우타",
+      "school": "미국 Oklahoma(대)-키움",
+      "sourceTeamText": "키움",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Player/PitcherDetail/Basic.aspx?playerId=56334"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "WO",
+          "positionCode": "1",
+          "positionLabel": "투수",
+          "searchWord": "",
+          "declaredCount": 56
+        }
+      ]
+    },
+    {
+      "name": "강정현",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 31,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "69158",
+      "birthday": "1995-09-23",
+      "body": "180cm, 90kg",
+      "handedness": "",
+      "school": "남부민초-대신중-부경고-원광대-LG-상무",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=69158"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김건우",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 63,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "86111",
+      "birthday": "1963-08-30",
+      "body": "176cm, 80kg",
+      "handedness": "",
+      "school": "선린상고-한양대-MBC-LG",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=86111"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박강우",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 46,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "74643",
+      "birthday": "1980-07-19",
+      "body": "177cm, 77kg",
+      "handedness": "",
+      "school": "광주상고-성균관대",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=74643"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김정민",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 56,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "93112",
+      "birthday": "1970-03-15",
+      "body": "184cm, 83kg",
+      "handedness": "",
+      "school": "대전가양초-대전한밭중-북일고-영남대",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=93112"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최달호",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 57,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "90000",
+      "birthday": "1969-09-02",
+      "body": "",
+      "handedness": "",
+      "school": "신일고",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=90000"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박가람",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 40,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "75174",
+      "birthday": "1986-11-07",
+      "body": "176cm, 72kg",
+      "handedness": "",
+      "school": "(서부리틀)-영남중-성남고",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=75174"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박건우",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 28,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "54123",
+      "birthday": "1998-10-19",
+      "body": "180cm, 85kg",
+      "handedness": "",
+      "school": "송정동초-광주동성중-광주동성고-단국대",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=54123"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최규하",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 56,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "93150",
+      "birthday": "1970-10-10",
+      "body": "",
+      "handedness": "",
+      "school": "고려대",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=93150"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강구성",
+      "teamId": "lg",
+      "teamName": "LG 트윈스",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 33,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "62917",
+      "birthday": "1993-06-09",
+      "body": "180cm, 82kg",
+      "handedness": "",
+      "school": "관산초-부천중-야탑고-NC-상무-NC",
+      "sourceTeamText": "LG",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=62917"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강관식",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 45,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "75259",
+      "birthday": "1981-04-12",
+      "body": "177cm, 65kg",
+      "handedness": "",
+      "school": "공주고-성균관대",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=75259"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강규성",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 57,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "88275",
+      "birthday": "1969-03-25",
+      "body": "",
+      "handedness": "",
+      "school": "동대문상고",
+      "sourceTeamText": "OB",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=88275"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강길용",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 58,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "91821",
+      "birthday": "1968-10-14",
+      "body": "175cm, 68kg",
+      "handedness": "",
+      "school": "광주제일고-동국대-쌍방울",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=91821"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김강익",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 65,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "86992",
+      "birthday": "1961-12-05",
+      "body": "",
+      "handedness": "",
+      "school": "대구고-중앙대",
+      "sourceTeamText": "OB",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=86992"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김이슬",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 42,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "77517",
+      "birthday": "1984-06-15",
+      "body": "180cm, 85kg",
+      "handedness": "",
+      "school": "순천북초-이수중-효천고-경희대-롯데",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=77517"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최경훈",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 47,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "71201",
+      "birthday": "1979-01-22",
+      "body": "190cm, 95kg",
+      "handedness": "",
+      "school": "내발산초-신월중-선린상고-고려대",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=71201"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최대성",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 41,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "74543",
+      "birthday": "1985-05-17",
+      "body": "183cm, 106kg",
+      "handedness": "",
+      "school": "동삼초-부산중-부산고-롯데-KT-두산",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=74543"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강규철",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 52,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "97204",
+      "birthday": "1974-05-05",
+      "body": "178cm, 82kg",
+      "handedness": "",
+      "school": "북일고-경희대",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=97204"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "계정웅",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 32,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "67206",
+      "birthday": "1994-02-16",
+      "body": "180cm, 80kg",
+      "handedness": "",
+      "school": "도신초-영남중-신일고-건국대",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=67206"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김강",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 38,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "77733",
+      "birthday": "1988-10-16",
+      "body": "188cm, 92kg",
+      "handedness": "",
+      "school": "광주화정초-무등중-광주제일고-한화-두산-상무",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=77733"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김정규",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 53,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "92210",
+      "birthday": "1973-08-27",
+      "body": "183cm, 80kg",
+      "handedness": "",
+      "school": "덕수상고",
+      "sourceTeamText": "두산",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=92210"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "도이석",
+      "teamId": "doosan",
+      "teamName": "두산 베어스",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 65,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "85701",
+      "birthday": "1961-09-13",
+      "body": "",
+      "handedness": "",
+      "school": "대구고-영남대",
+      "sourceTeamText": "OB",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=85701"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강대성",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 55,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "90613",
+      "birthday": "1971-05-09",
+      "body": "",
+      "handedness": "",
+      "school": "광주상고",
+      "sourceTeamText": "해태",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=90613"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "곽정철",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 40,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "75668",
+      "birthday": "1986-03-14",
+      "body": "186cm, 97kg",
+      "handedness": "",
+      "school": "송정동초-무등중-광주제일고",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=75668"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "그레이싱어",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 51,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "75659",
+      "birthday": "1975-07-29",
+      "body": "190cm, 90kg",
+      "handedness": "",
+      "school": "미국 버지니아대",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=75659"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "데이비스",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 51,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "78648",
+      "birthday": "1975-06-25",
+      "body": "192cm, 93kg",
+      "handedness": "",
+      "school": "미국",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=78648"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박건우",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 28,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "51645",
+      "birthday": "1998-06-03",
+      "body": "193cm, 97kg",
+      "handedness": "",
+      "school": "다솜초-언북중-덕수고-고려대-KIA",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=51645"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박경진",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 46,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "99657",
+      "birthday": "1980-10-15",
+      "body": "185cm, 85kg",
+      "handedness": "",
+      "school": "광주제일고-해태",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=99657"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박경태",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 39,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "76653",
+      "birthday": "1987-09-02",
+      "body": "185cm, 99kg",
+      "handedness": "",
+      "school": "인천숭의초-동산중-동산고-KIA",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=76653"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최건호",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 42,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "73650",
+      "birthday": "1984-08-12",
+      "body": "187cm, 80kg",
+      "handedness": "",
+      "school": "덕수정보고",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=73650"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강귀태",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 47,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "72312",
+      "birthday": "1979-08-12",
+      "body": "184cm, 88kg",
+      "handedness": "",
+      "school": "서화초-동산중-동산고-동국대-현대-우리-히어로즈-넥센-KIA",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=72312"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박경진",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 39,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "77602",
+      "birthday": "1987-06-16",
+      "body": "180cm, 82kg",
+      "handedness": "",
+      "school": "춘천초-춘천중-춘천고",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=77602"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강경학",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 34,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "61700",
+      "birthday": "1992-08-11",
+      "body": "180cm, 72kg",
+      "handedness": "",
+      "school": "광주대성초-광주동성중-광주동성고-한화-KIA",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=61700"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강정남",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 66,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "80002",
+      "birthday": "1960-08-14",
+      "body": "",
+      "handedness": "",
+      "school": "광주상고-동국대",
+      "sourceTeamText": "해태",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=80002"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최경환",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 54,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "70117",
+      "birthday": "1972-05-12",
+      "body": "181cm, 81kg",
+      "handedness": "",
+      "school": "남부초-성남중-성남고-경희대-LG-두산",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=70117"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최근태",
+      "teamId": "kia",
+      "teamName": "KIA 타이거즈",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 32,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "65623",
+      "birthday": "1994-04-26",
+      "body": "178cm, 73kg",
+      "handedness": "",
+      "school": "광주수창초-무등중-광주제일고-동강대",
+      "sourceTeamText": "KIA",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=65623"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김건필",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 38,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "78440",
+      "birthday": "1988-06-19",
+      "body": "187cm, 93kg",
+      "handedness": "",
+      "school": "제주신광초-경복중-대구고-(방송통신대)",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=78440"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "라이블리",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 34,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "69439",
+      "birthday": "1992-03-05",
+      "body": "193cm, 86kg",
+      "handedness": "",
+      "school": "미국 Central Florida(대)-삼성",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=69439"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "라이언",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 52,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "73424",
+      "birthday": "1974-11-01",
+      "body": "190cm, 91kg",
+      "handedness": "",
+      "school": "미국 버지니아대",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=73424"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김정민",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 57,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "92405",
+      "birthday": "1969-05-24",
+      "body": "",
+      "handedness": "",
+      "school": "동아대",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=92405"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최경철",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 46,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "73824",
+      "birthday": "1980-08-15",
+      "body": "180cm, 86kg",
+      "handedness": "",
+      "school": "효자초-전주동중-전주고-동의대-SK-상무-SK-넥센-LG",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=73824"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강기웅",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 62,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "89475",
+      "birthday": "1964-02-25",
+      "body": "",
+      "handedness": "",
+      "school": "대구고-영남대",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=89475"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김이수",
+      "teamId": "samsung",
+      "teamName": "삼성 라이온즈",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 66,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "80023",
+      "birthday": "1960-08-04",
+      "body": "",
+      "handedness": "",
+      "school": "부산상고-한양대",
+      "sourceTeamText": "삼성",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=80023"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "데이비슨",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 30,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "55536",
+      "birthday": "1996-03-25",
+      "body": "188cm, 97kg",
+      "handedness": "",
+      "school": "미국 Midland(대)-롯데",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=55536"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박건우",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 41,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "74363",
+      "birthday": "1985-04-06",
+      "body": "183cm, 87kg",
+      "handedness": "",
+      "school": "미평초-여수중-영흥고-현대-우리-히어로즈-LG-롯데",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=74363"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "고정식",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 61,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "88571",
+      "birthday": "1965-05-15",
+      "body": "185cm, 93kg",
+      "handedness": "",
+      "school": "봉천초-배문중-서울고-중앙대-롯데",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=88571"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박경진",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 50,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "99544",
+      "birthday": "1976-03-22",
+      "body": "178cm, 77kg",
+      "handedness": "",
+      "school": "부산고-경성대",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=99544"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최기문",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 53,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "96224",
+      "birthday": "1973-06-10",
+      "body": "182cm, 83kg",
+      "handedness": "",
+      "school": "화곡초-충암중-충암고-원광대-OB",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=96224"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강경선",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 36,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "64573",
+      "birthday": "1990-12-16",
+      "body": "179cm, 85kg",
+      "handedness": "",
+      "school": "역삼초-이수중-동성고-중앙대",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=64573"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강대호",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 52,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "97754",
+      "birthday": "1974-08-15",
+      "body": "",
+      "handedness": "",
+      "school": "계명대",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=97754"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김건우",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 25,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "50517",
+      "birthday": "2001-04-25",
+      "body": "176cm, 73kg",
+      "handedness": "",
+      "school": "광주서림초-광주동성중-제물포고",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=50517"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "라이온",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 55,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "74534",
+      "birthday": "1971-11-15",
+      "body": "188cm, 95kg",
+      "handedness": "",
+      "school": "미국 듀크대",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=74534"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최계영",
+      "teamId": "lotte",
+      "teamName": "롯데 자이언츠",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 63,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "86540",
+      "birthday": "1963-09-03",
+      "body": "",
+      "handedness": "",
+      "school": "부산고-건국대",
+      "sourceTeamText": "롯데",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=86540"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김강래",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 32,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "63797",
+      "birthday": "1994-12-09",
+      "body": "187cm, 92kg",
+      "handedness": "",
+      "school": "노암초-경포중-강릉고",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=63797"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박건우",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 34,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "61763",
+      "birthday": "1992-07-01",
+      "body": "193cm, 80kg",
+      "handedness": "",
+      "school": "서원초-세광중-세광고-한화",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=61763"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강정길",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 64,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "86780",
+      "birthday": "1962-07-25",
+      "body": "183cm, 78kg",
+      "handedness": "",
+      "school": "경북고-영남대-빙그레",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=86780"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김정수",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 35,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "64719",
+      "birthday": "1991-04-05",
+      "body": "180cm, 76kg",
+      "handedness": "",
+      "school": "칠성초-경복중-상원고-성균관대",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=64719"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "데이비스",
+      "teamId": "hanwha",
+      "teamName": "한화 이글스",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 57,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "99725",
+      "birthday": "1969-10-03",
+      "body": "183cm, 84kg",
+      "handedness": "",
+      "school": "미국 시카고ORR고-한화",
+      "sourceTeamText": "한화",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=99725"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김정민",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 34,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "65702",
+      "birthday": "1992-11-18",
+      "body": "184cm, 82kg",
+      "handedness": "",
+      "school": "합덕초-청주중-청주고-단국대-한화",
+      "sourceTeamText": "SK",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=65702"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "다이아몬드",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 40,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "67815",
+      "birthday": "1986-07-30",
+      "body": "191cm, 93kg",
+      "handedness": "",
+      "school": "미국 SUNY Binghamton(대)",
+      "sourceTeamText": "SK",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=67815"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최경태",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 28,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "68802",
+      "birthday": "1998-03-05",
+      "body": "184cm, 84kg",
+      "handedness": "",
+      "school": "양정초-경남중-포항제철고-SK",
+      "sourceTeamText": "SSG",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=68802"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김건이",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 25,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "53803",
+      "birthday": "2001-05-15",
+      "body": "183cm, 90kg",
+      "handedness": "",
+      "school": "강남초-선린중-선린인터넷고-강릉영동대",
+      "sourceTeamText": "SSG",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=53803"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        },
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박경완",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 54,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "92809",
+      "birthday": "1972-07-11",
+      "body": "178cm, 88kg",
+      "handedness": "",
+      "school": "전주중앙초-전주동중-전주고-쌍방울-현대",
+      "sourceTeamText": "SK",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=92809"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김건웅",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 26,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "53844",
+      "birthday": "2000-05-08",
+      "body": "186cm, 118kg",
+      "handedness": "",
+      "school": "광주대성초-광양진월중-화순고-연세대",
+      "sourceTeamText": "SSG",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=53844"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최경모",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 30,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "69802",
+      "birthday": "1996-06-17",
+      "body": "168cm, 73kg",
+      "handedness": "",
+      "school": "본리초-경운중-경북고-홍익대-SK-SSG",
+      "sourceTeamText": "SSG",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=69802"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최길성",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 48,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "70649",
+      "birthday": "1978-02-06",
+      "body": "186cm, 95kg",
+      "handedness": "",
+      "school": "중대초-배재중-배재고-연세대-해태-LG-롯데-SK",
+      "sourceTeamText": "SK",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=70649"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김강민",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 44,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "71837",
+      "birthday": "1982-09-13",
+      "body": "182cm, 87kg",
+      "handedness": "",
+      "school": "본리초-대구중-경북고-SK-SSG-한화-SSG",
+      "sourceTeamText": "SSG",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=71837"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김강석",
+      "teamId": "ssg",
+      "teamName": "SSG 랜더스",
+      "role": "hitter",
+      "position": "OF",
+      "positionGroup": "외야수",
+      "bats": "",
+      "throws": "",
+      "age": 41,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "79704",
+      "birthday": "1985-09-08",
+      "body": "177cm, 74kg",
+      "handedness": "",
+      "school": "화곡초-신월중-제물포고-경성대-한화-상무",
+      "sourceTeamText": "SK",
+      "sourcePositionText": "외야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=79704"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "데스파이네",
+      "teamId": "kt",
+      "teamName": "KT 위즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 39,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "50040",
+      "birthday": "1987-04-04",
+      "body": "182cm, 92kg",
+      "handedness": "",
+      "school": "미국 Hermanos Martinez Tamayo(고)-KT",
+      "sourceTeamText": "KT",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=50040"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박경수",
+      "teamId": "kt",
+      "teamName": "KT 위즈",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 42,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "73113",
+      "birthday": "1984-03-31",
+      "body": "178cm, 80kg",
+      "handedness": "",
+      "school": "미성초-성남중-성남고-LG",
+      "sourceTeamText": "KT",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=73113"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강건준",
+      "teamId": "nc",
+      "teamName": "NC 다이노스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 23,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "53994",
+      "birthday": "2003-07-14",
+      "body": "186cm, 84kg",
+      "handedness": "",
+      "school": "중대초-배명중-배명고-NC",
+      "sourceTeamText": "NC",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=53994"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "강",
+          "declaredCount": 166
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김건우",
+      "teamId": "nc",
+      "teamName": "NC 다이노스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 36,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "63997",
+      "birthday": "1990-04-06",
+      "body": "188cm, 85kg",
+      "handedness": "",
+      "school": "칠성초-경복중-대구고-성균관대",
+      "sourceTeamText": "NC",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=63997"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김건태",
+      "teamId": "nc",
+      "teamName": "NC 다이노스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 35,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "60339",
+      "birthday": "1991-10-02",
+      "body": "185cm, 85kg",
+      "handedness": "",
+      "school": "광주수창초-무등중-진흥고-히어로즈-상무-히어로즈",
+      "sourceTeamText": "NC",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=60339"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "김",
+          "declaredCount": 1037
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "라이트",
+      "teamId": "nc",
+      "teamName": "NC 다이노스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 36,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "50912",
+      "birthday": "1990-01-03",
+      "body": "198cm, 97kg",
+      "handedness": "",
+      "school": "미국 East Carolina(대)-NC",
+      "sourceTeamText": "NC",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=50912"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최금강",
+      "teamId": "nc",
+      "teamName": "NC 다이노스",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 37,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "62966",
+      "birthday": "1989-04-26",
+      "body": "195cm, 95kg",
+      "handedness": "",
+      "school": "서흥초-동산중-인천고-인하대-NC",
+      "sourceTeamText": "NC",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=62966"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "권정웅",
+      "teamId": "nc",
+      "teamName": "NC 다이노스",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 34,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "65412",
+      "birthday": "1992-11-15",
+      "body": "180cm, 88kg",
+      "handedness": "",
+      "school": "서울이수초-영동중-덕수고-한양대-삼성-상무-삼성",
+      "sourceTeamText": "NC",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=65412"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "박가람",
+      "teamId": "nc",
+      "teamName": "NC 다이노스",
+      "role": "hitter",
+      "position": "C",
+      "positionGroup": "포수",
+      "bats": "",
+      "throws": "",
+      "age": 32,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "62902",
+      "birthday": "1994-01-15",
+      "body": "178cm, 77kg",
+      "handedness": "",
+      "school": "백운초-휘문중-휘문고",
+      "sourceTeamText": "NC",
+      "sourcePositionText": "포수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=62902"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "박",
+          "declaredCount": 430
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "김정수",
+      "teamId": "nc",
+      "teamName": "NC 다이노스",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 36,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "63102",
+      "birthday": "1990-08-25",
+      "body": "178cm, 75kg",
+      "handedness": "",
+      "school": "성동초-신일중-청원고-원광대",
+      "sourceTeamText": "NC",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=63102"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "나이트",
+      "teamId": "kiwoom",
+      "teamName": "키움 히어로즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 51,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "79430",
+      "birthday": "1975-10-01",
+      "body": "183cm, 88kg",
+      "handedness": "",
+      "school": "미국 쿠퍼고-벤투라대-삼성",
+      "sourceTeamText": "넥센",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=79430"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "이",
+          "declaredCount": 701
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "최경환",
+      "teamId": "kiwoom",
+      "teamName": "키움 히어로즈",
+      "role": "pitcher",
+      "position": "P",
+      "positionGroup": "투수",
+      "bats": "",
+      "throws": "",
+      "age": 37,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "60360",
+      "birthday": "1989-12-19",
+      "body": "cm, kg",
+      "handedness": "",
+      "school": "충암고-송원대",
+      "sourceTeamText": "넥센",
+      "sourcePositionText": "투수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Pitcher.aspx?playerId=60360"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "최",
+          "declaredCount": 224
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    },
+    {
+      "name": "강정호",
+      "teamId": "kiwoom",
+      "teamName": "키움 히어로즈",
+      "role": "hitter",
+      "position": "IF",
+      "positionGroup": "내야수",
+      "bats": "",
+      "throws": "",
+      "age": 39,
+      "jerseyNumber": "#",
+      "status": "candidate",
+      "source": "KBO 선수조회 이름검색",
+      "candidateType": "kbo-name-search-supplemental",
+      "playerId": "76325",
+      "birthday": "1987-04-05",
+      "body": "183cm, 96kg",
+      "handedness": "",
+      "school": "화정초-무등중-광주제일고-(남부대)-현대-우리-히어로즈-넥센",
+      "sourceTeamText": "넥센",
+      "sourcePositionText": "내야수",
+      "sourceUrls": [
+        "https://www.koreabaseball.com/Player/Search.aspx",
+        "https://www.koreabaseball.com/Record/Retire/Hitter.aspx?playerId=76325"
+      ],
+      "sourceQueries": [
+        {
+          "source": "KBO 선수조회",
+          "sourceUrl": "https://www.koreabaseball.com/Player/Search.aspx",
+          "teamCode": "",
+          "positionCode": "",
+          "positionLabel": "",
+          "searchWord": "정",
+          "declaredCount": 404
+        }
+      ],
+      "reviewNote": "KBO 공식 선수조회 이름검색 후보입니다. 현재 등록/보류/은퇴 상태는 최종 병합 전 별도 확인이 필요합니다."
+    }
+  ],
+  "rejected": []
+}
