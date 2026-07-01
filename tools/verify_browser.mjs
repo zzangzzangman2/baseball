@@ -413,6 +413,45 @@ async function checkViewport(viewport) {
     `프리시즌 캠프 패널이 개막 전 경기 버튼을 막지 못했습니다: ${JSON.stringify(nextGameProbe)}`,
     "src/ui.js"
   );
+  const lineupProbe = await evaluateInBrowser(`
+    (() => {
+      const manager = document.querySelector("[data-lineup-manager]");
+      const form = document.querySelector("[data-lineup-form]");
+      const before = [...document.querySelectorAll("[data-lineup-slot]")].map((select) => select.value);
+      const reversed = before.slice(0, 9).reverse();
+      [...document.querySelectorAll("[data-lineup-slot]")].forEach((select, index) => {
+        select.value = reversed[index] ?? select.value;
+      });
+      form?.requestSubmit();
+      const afterManager = document.querySelector("[data-lineup-manager]");
+      const afterText = afterManager?.textContent ?? "";
+      const after = [...document.querySelectorAll("[data-lineup-slot]")].map((select) => select.value);
+      return {
+        hasManager: Boolean(manager),
+        hasForm: Boolean(form),
+        slotCount: before.length,
+        uniqueCount: new Set(before).size,
+        hasSave: Boolean(document.querySelector("[data-lineup-form] button[type='submit']")),
+        hasAuto: Boolean(document.querySelector("[data-action='auto-lineup']")),
+        hasBalance: afterText.includes("AVG OVR") && afterText.includes("컨디션 리스크"),
+        savedManual: afterText.includes("수동 저장"),
+        orderPersisted: after.slice(0, 9).join("|") === reversed.join("|")
+      };
+    })()
+  `);
+  assert(
+    lineupProbe.hasManager &&
+      lineupProbe.hasForm &&
+      lineupProbe.slotCount === 9 &&
+      lineupProbe.uniqueCount === 9 &&
+      lineupProbe.hasSave &&
+      lineupProbe.hasAuto &&
+      lineupProbe.hasBalance &&
+      lineupProbe.savedManual &&
+      lineupProbe.orderPersisted,
+    `라인업 보드 저장 검증 실패: ${JSON.stringify(lineupProbe)}`,
+    "src/ui.js"
+  );
   const playerDetailProbe = await evaluateInBrowser(`
     (() => {
       const row = [...document.querySelectorAll("[data-action='open-player-detail']")]
@@ -631,6 +670,14 @@ async function checkViewport(viewport) {
         ".schedule-day strong",
         ".schedule-day small",
         ".schedule-result",
+        ".lineup-section-head small",
+        ".lineup-slot label span",
+        ".lineup-slot-meta strong",
+        ".lineup-slot-meta small",
+        ".lineup-balance-card strong",
+        ".lineup-balance-card small",
+        ".lineup-risk-card small",
+        ".lineup-actions small",
         ".player-detail-identity p",
         ".player-detail-facts dd",
         ".player-detail-card-head small",
@@ -838,6 +885,7 @@ async function checkViewport(viewport) {
     "자동스토브 OK",
     "다음시즌 OK",
     "다음경기선택 OK",
+    "라인업보드 OK",
     "선수상세 OK",
     "프리시즌 OK",
     "빠른주간 OK",

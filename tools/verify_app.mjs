@@ -751,7 +751,18 @@ function checkOpeningLineupActiveRoster() {
     MODULE_PATHS.engine
   );
 
-  return `${summaries.join(", ")} 모두 active 로스터`;
+  const manualTeam = state.teams?.[0];
+  const recommended = engineModule.buildLineup(manualTeam);
+  const manualIds = recommended.map((player) => String(player.id)).reverse();
+  manualTeam.lineupCard = { mode: "manual", playerIds: manualIds, updatedAt: state.currentDate };
+  const manualLineup = engineModule.buildLineup(manualTeam);
+  assert(
+    manualLineup.map((player) => String(player.id)).join("|") === manualIds.join("|"),
+    "수동 저장 라인업이 buildLineup에 우선 적용되지 않았습니다.",
+    MODULE_PATHS.engine
+  );
+
+  return `${summaries.join(", ")} 모두 active 로스터, 수동 라인업 우선 적용`;
 }
 
 function advanceToRegularSeason(state) {

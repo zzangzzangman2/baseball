@@ -172,6 +172,9 @@ export function getSelectedTeam(state) {
 export function buildLineup(team) {
   const activeHitters = (team?.roster ?? []).filter((player) => player.role === "hitter" && isActiveRosterPlayer(player));
   const hitterPool = activeHitters.length >= 9 ? activeHitters : (team?.roster ?? []).filter((player) => player.role === "hitter");
+  const manualLineup = resolveManualLineup(team, hitterPool);
+  if (manualLineup.length === 9) return manualLineup;
+
   return [...hitterPool]
     .map((player, index) => ({ player, index, score: hitterScore(player) }))
     .sort((a, b) => {
@@ -183,6 +186,30 @@ export function buildLineup(team) {
     })
     .slice(0, 9)
     .map(({ player }) => player);
+}
+
+function resolveManualLineup(team, hitterPool) {
+  const card = team?.lineupCard;
+  const ids = Array.isArray(card?.playerIds)
+    ? card.playerIds
+    : Array.isArray(card?.slots)
+      ? card.slots.map((slot) => slot?.playerId)
+      : [];
+  if (ids.length < 9) return [];
+
+  const poolById = new Map((hitterPool ?? []).map((player) => [String(player.id ?? ""), player]));
+  const lineup = [];
+  const used = new Set();
+
+  for (const rawId of ids.slice(0, 9)) {
+    const id = String(rawId ?? "");
+    const player = poolById.get(id);
+    if (!player || used.has(id)) return [];
+    used.add(id);
+    lineup.push(player);
+  }
+
+  return lineup.length === 9 ? lineup : [];
 }
 
 export function buildPitchingSnapshot(team) {

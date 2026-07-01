@@ -288,33 +288,7 @@ function render(root, state) {
 
           ${renderSeasonStatsPanel(selectedTeam, seasonLeaders)}
 
-          <article class="panel team-panel" id="lineup">
-            <div class="panel-head">
-              <div>
-                <span class="mini-label">더그아웃 노트</span>
-                <h2>${escapeHtml(getTeamShortName(selectedTeam) ?? "Team")} 라인업</h2>
-              </div>
-              <span class="pill">${formatNumber(roster.length)}명</span>
-            </div>
-            <div class="lineup-grid">
-              <section>
-                <h3>선발 라인업</h3>
-                <ol class="player-list">
-                  ${lineup.length ? lineup.map(renderLineupPlayer).join("") : renderEmptyListItem("라인업을 기다리고 있어요.")}
-                </ol>
-              </section>
-              <section>
-                <h3>선발 로테이션</h3>
-                <ol class="player-list compact pitching-role-list">
-                  ${pitchingSnapshot.rotation.length ? pitchingSnapshot.rotation.map(renderPitchingRole).join("") : renderEmptyListItem("로테이션 준비 중입니다.")}
-                </ol>
-                <h3 class="pitching-subhead">불펜 역할</h3>
-                <ol class="player-list compact pitching-role-list">
-                  ${pitchingSnapshot.bullpen.length ? pitchingSnapshot.bullpen.slice(0, 5).map(renderPitchingRole).join("") : renderEmptyListItem("불펜 준비 중입니다.")}
-                </ol>
-              </section>
-            </div>
-          </article>
+          ${renderLineupManagerPanel(state, selectedTeam, roster, lineup, pitchingSnapshot)}
 
           <article class="panel news-panel" id="news">
             <div class="panel-head">
@@ -361,6 +335,215 @@ function renderOperationsBar() {
       </div>
     </section>
   `;
+}
+
+function renderLineupManagerPanel(state, selectedTeam, roster, lineup, pitchingSnapshot) {
+  const eligibleHitters = getLineupEligibleHitters(roster);
+  const selectedIds = buildLineupSelectionIds(selectedTeam, lineup, eligibleHitters);
+  const selectedLineup = selectedIds
+    .map((id) => eligibleHitters.find((player) => String(player.id) === String(id)))
+    .filter(Boolean);
+  const bench = eligibleHitters.filter((player) => !selectedIds.includes(String(player.id))).slice(0, 6);
+  const summary = summarizeLineup(selectedLineup);
+  const manual = isManualLineupActive(selectedTeam, lineup);
+  const teamName = getTeamShortName(selectedTeam) ?? "Team";
+
+  return `
+    <article class="panel lineup-manager-panel" id="lineup" data-lineup-manager>
+      <div class="panel-head lineup-manager-head">
+        <div>
+          <span class="mini-label">더그아웃 노트</span>
+          <h2>${escapeHtml(teamName)} 매치데이 라인업 보드</h2>
+        </div>
+        <span class="pill">${manual ? "수동 저장" : "자동 추천"}</span>
+      </div>
+      <form class="lineup-form" data-lineup-form>
+        <div class="lineup-control-grid">
+          <section class="lineup-order-board" aria-label="타순 편성">
+            <div class="lineup-section-head">
+              <h3>타순 카드</h3>
+              <small>${escapeHtml(selectedTeam?.lineupCard?.updatedAt ? `${selectedTeam.lineupCard.updatedAt} 저장` : "자동 추천 기준")}</small>
+            </div>
+            <ol class="lineup-slot-list">
+              ${Array.from({ length: 9 }, (_, index) => renderLineupSlot(index, selectedIds[index], eligibleHitters)).join("")}
+            </ol>
+          </section>
+
+          <aside class="lineup-command-board" aria-label="라인업 밸런스">
+            <div class="lineup-balance-grid">
+              ${renderLineupBalanceMetric("AVG OVR", formatNumber(summary.avgOvr), "타선 평균")}
+              ${renderLineupBalanceMetric("좌/스위치", `${formatNumber(summary.leftBats)}명`, "상대 우완 대응")}
+              ${renderLineupBalanceMetric("스피드", formatNumber(summary.speed), "주루 압박")}
+              ${renderLineupBalanceMetric("수비", formatNumber(summary.defense), "센터라인 포함")}
+            </div>
+            <div class="lineup-risk-card ${summary.fatigueRisk > 0 ? "is-warning" : ""}">
+              <span>컨디션 리스크</span>
+              <strong>${summary.fatigueRisk > 0 ? `${formatNumber(summary.fatigueRisk)}명 관리` : "정상"}</strong>
+              <small>${escapeHtml(summary.fatigueRisk > 0 ? "피로/부상 선수를 타순에서 확인하세요." : "선발 출전 체력 기준 양호")}</small>
+            </div>
+            <section class="lineup-bench-board">
+              <h3>벤치 후보</h3>
+              <ol class="player-list compact">
+                ${bench.length ? bench.map(renderBenchCandidate).join("") : renderEmptyListItem("가용 벤치가 부족합니다.")}
+              </ol>
+            </section>
+          </aside>
+
+          <section class="lineup-pitching-board" aria-label="투수 운용">
+            <div class="lineup-section-head">
+              <h3>투수 운용</h3>
+              <small>오늘 기준</small>
+            </div>
+            <h4>선발 로테이션</h4>
+            <ol class="player-list compact pitching-role-list">
+              ${pitchingSnapshot.rotation.length ? pitchingSnapshot.rotation.map(renderPitchingRole).join("") : renderEmptyListItem("로테이션 준비 중입니다.")}
+            </ol>
+            <h4>불펜 역할</h4>
+            <ol class="player-list compact pitching-role-list">
+              ${pitchingSnapshot.bullpen.length ? pitchingSnapshot.bullpen.slice(0, 5).map(renderPitchingRole).join("") : renderEmptyListItem("불펜 준비 중입니다.")}
+            </ol>
+          </section>
+        </div>
+        <div class="lineup-actions">
+          <button class="button button-primary" type="submit">라인업 저장</button>
+          <button class="button button-soft" data-action="auto-lineup" type="button">자동 추천</button>
+          <small>다음 경기 적용 대기</small>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
+function renderLineupSlot(index, selectedId, eligibleHitters) {
+  const player = eligibleHitters.find((entry) => String(entry.id) === String(selectedId));
+  const order = index + 1;
+  const group = lineupOrderGroup(order);
+  return `
+    <li class="lineup-slot is-${escapeAttribute(group.key)}">
+      <span class="lineup-order">${formatNumber(order)}</span>
+      <label>
+        <span>${escapeHtml(group.label)}</span>
+        <select data-lineup-slot name="lineup-${order}" aria-label="${formatNumber(order)}번 타자">
+          ${eligibleHitters.map((candidate) => `
+            <option value="${escapeAttribute(candidate.id)}" ${String(candidate.id) === String(selectedId) ? "selected" : ""}>
+              ${escapeHtml(candidate.name)} · ${escapeHtml(candidate.position ?? "-")} · OVR ${formatNumber(candidate.ovr)}
+            </option>
+          `).join("")}
+        </select>
+      </label>
+      <div class="lineup-slot-meta">
+        <strong>${escapeHtml(player?.name ?? "선수 선택")}</strong>
+        <small>${escapeHtml(player ? `${player.position ?? "-"} · ${formatBatsThrows(player)} · CON ${formatNumber(player.contact ?? player.contactR)} · POW ${formatNumber(player.power ?? player.powerR)}` : "가용 타자를 선택하세요.")}</small>
+      </div>
+      <div class="lineup-bars" aria-hidden="true">
+        ${renderMiniLineupBar("타격", lineupBatValue(player))}
+        ${renderMiniLineupBar("주루", player?.speed)}
+        ${renderMiniLineupBar("수비", player?.defense)}
+      </div>
+    </li>
+  `;
+}
+
+function renderMiniLineupBar(label, value) {
+  const score = Math.max(0, Math.min(20, Number(value ?? 0)));
+  const percent = Math.max(4, Math.round(score / 20 * 100));
+  return `
+    <span class="lineup-mini-bar">
+      <b>${escapeHtml(label)}</b>
+      <i style="--meter: ${percent}%"></i>
+    </span>
+  `;
+}
+
+function renderLineupBalanceMetric(label, value, detail) {
+  return `
+    <div class="lineup-balance-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(detail)}</small>
+    </div>
+  `;
+}
+
+function renderBenchCandidate(player) {
+  return `
+    <li class="is-clickable" data-action="open-player-detail" data-player-id="${escapeAttribute(player.id ?? "")}" data-team-id="${escapeAttribute(player.teamId ?? "")}" tabindex="0" role="button">
+      <span class="order">${escapeHtml(player.position ?? "-")}</span>
+      <span>
+        <strong>${escapeHtml(player.name)}</strong>
+        <small>${formatBatsThrows(player)} · OVR ${formatNumber(player.ovr)} · 피로 ${formatNumber(player.fatigue)}</small>
+      </span>
+      <b>${formatNumber(lineupUiScore(player))}</b>
+    </li>
+  `;
+}
+
+function getLineupEligibleHitters(roster) {
+  const hitters = (roster ?? []).filter((player) => player.role === "hitter");
+  const active = hitters.filter((player) =>
+    (player.status === "active" || player.status === "registered") &&
+    Number(player.injuredDays ?? 0) <= 0 &&
+    player.militaryStatus?.availability !== "unavailable"
+  );
+  const pool = active.length >= 9 ? active : hitters;
+  return [...pool].sort((a, b) => lineupUiScore(b) - lineupUiScore(a) || sortByOvr(a, b));
+}
+
+function buildLineupSelectionIds(team, lineup, eligibleHitters) {
+  const eligibleIds = new Set(eligibleHitters.map((player) => String(player.id)));
+  const manualIds = Array.isArray(team?.lineupCard?.playerIds) ? team.lineupCard.playerIds.map(String) : [];
+  const manualValid = manualIds.length >= 9 && manualIds.slice(0, 9).every((id, index, ids) => eligibleIds.has(id) && ids.indexOf(id) === index);
+  const source = manualValid ? manualIds : lineup.map((player) => String(player.id));
+  const result = [];
+  for (const id of source) {
+    if (eligibleIds.has(String(id)) && !result.includes(String(id))) result.push(String(id));
+    if (result.length === 9) break;
+  }
+  for (const player of eligibleHitters) {
+    if (!result.includes(String(player.id))) result.push(String(player.id));
+    if (result.length === 9) break;
+  }
+  return result.slice(0, 9);
+}
+
+function summarizeLineup(players) {
+  const count = Math.max(1, players.length);
+  const avg = (selector) => Math.round(players.reduce((total, player) => total + Number(selector(player) ?? 0), 0) / count);
+  return {
+    avgOvr: avg((player) => player.ovr),
+    leftBats: players.filter((player) => ["L", "S"].includes(String(player.bats ?? "").toUpperCase())).length,
+    speed: avg((player) => player.speed),
+    defense: avg((player) => player.defense),
+    fatigueRisk: players.filter((player) => Number(player.fatigue ?? 0) >= 42 || Number(player.injuredDays ?? 0) > 0).length
+  };
+}
+
+function lineupOrderGroup(order) {
+  if (order <= 2) return { key: "table", label: "테이블세터" };
+  if (order <= 5) return { key: "core", label: "클린업" };
+  if (order <= 7) return { key: "bridge", label: "연결" };
+  return { key: "bottom", label: "하위" };
+}
+
+function lineupBatValue(player) {
+  if (!player) return 0;
+  return Math.round((Number(player.contact ?? player.contactR ?? 0) * 0.45) + (Number(player.power ?? player.powerR ?? 0) * 0.35) + (Number(player.eye ?? 0) * 0.2));
+}
+
+function lineupUiScore(player) {
+  return Math.round(
+    Number(player.ovr ?? 0) * 0.66 +
+    lineupBatValue(player) * 2.1 +
+    Number(player.speed ?? 0) * 0.7 +
+    Number(player.defense ?? 0) * 0.36 -
+    Number(player.fatigue ?? 0) * 0.12
+  );
+}
+
+function isManualLineupActive(team, lineup) {
+  const ids = Array.isArray(team?.lineupCard?.playerIds) ? team.lineupCard.playerIds.map(String) : [];
+  if (ids.length < 9 || lineup.length < 9) return false;
+  return ids.slice(0, 9).every((id, index) => String(lineup[index]?.id ?? "") === id);
 }
 
 function renderManagerBriefingPanel(state, selectedTeam, manager) {
@@ -1390,6 +1573,50 @@ function bindActions(root, state) {
       render(root, state);
       setStatus(root, result.message || "긴급 보고를 처리했습니다.");
     });
+  });
+
+  root.querySelector("[data-lineup-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const selectedTeam = getSelectedTeam(state);
+    if (!selectedTeam) return;
+    const playerIds = [...event.currentTarget.querySelectorAll("[data-lineup-slot]")]
+      .map((select) => String(select.value ?? ""))
+      .filter(Boolean);
+    const uniqueIds = new Set(playerIds);
+    const eligibleIds = new Set(getLineupEligibleHitters(selectedTeam.roster ?? []).map((player) => String(player.id)));
+
+    if (playerIds.length !== 9 || uniqueIds.size !== 9 || playerIds.some((id) => !eligibleIds.has(id))) {
+      setStatus(root, "라인업 저장 실패: 1~9번 타자는 중복 없이 가용 타자 9명으로 채워야 합니다.");
+      return;
+    }
+
+    selectedTeam.lineupCard = {
+      mode: "manual",
+      playerIds,
+      updatedAt: state.currentDate,
+      source: "manager-lineup-board-v1"
+    };
+    state.logs = [
+      {
+        date: state.currentDate,
+        type: "front-office",
+        tag: "라인업",
+        source: "감독실",
+        headline: `${getTeamShortName(selectedTeam) ?? selectedTeam.name} 선발 타순 저장`,
+        text: `감독실이 ${playerIds.length}명 선발 오더를 확정했습니다. 다음 경기부터 수동 타순이 우선 적용됩니다.`
+      },
+      ...((state.logs ?? []))
+    ].slice(0, 80);
+    render(root, state);
+    setStatus(root, "라인업을 저장했습니다. 다음 경기 시뮬레이션에 이 타순이 적용됩니다.");
+  });
+
+  root.querySelector("[data-action='auto-lineup']")?.addEventListener("click", () => {
+    const selectedTeam = getSelectedTeam(state);
+    if (!selectedTeam) return;
+    selectedTeam.lineupCard = null;
+    render(root, state);
+    setStatus(root, "자동 추천 라인업으로 되돌렸습니다.");
   });
 
   root.querySelectorAll("[data-action='next-day']").forEach((button) => {
@@ -2971,10 +3198,10 @@ function renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, f
               <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
               <small>${featured ? escapeHtml(gamecastNowDetail(featured)) : "타석 이벤트 대기"}</small>
             </div>
+            <ol class="gamecast-feed gamecast-broadcast-feed">
+              ${feedEvents.length ? feedEvents.map((event) => renderGamecastEvent(event, state)).join("") : `<li><span>경기 이벤트 대기</span><small>PA 기록 없음</small></li>`}
+            </ol>
           </div>
-          <ol class="gamecast-feed gamecast-broadcast-feed">
-            ${feedEvents.length ? feedEvents.map((event) => renderGamecastEvent(event, state)).join("") : `<li><span>경기 이벤트 대기</span><small>PA 기록 없음</small></li>`}
-          </ol>
         </div>
       </section>
     </div>

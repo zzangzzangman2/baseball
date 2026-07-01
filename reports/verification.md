@@ -1,6 +1,6 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-01T06:19:12.402Z
+- 실행 시각: 2026-07-01T06:25:44.038Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Program Files\nodejs\node.exe (v24.18.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
@@ -22,7 +22,7 @@
 | ratings.js validateRatingWeights optional 실행 | PASS | validateRatingWeights 호출 통과 (valid, issues) | - |
 | 영문-only 선수명 없음 | PASS | 선수명은 모두 한글 표기 포함 | - |
 | 가짜 이름 생성 잔재 없음 | PASS | 현재 src ESM 앱과 생성된 선수명에서 placeholder/name-generator 잔재 미검출 | - |
-| 개막 라인업 active 로스터 검증 | PASS | LG 타선 9명/투수 12명, 두산 타선 9명/투수 12명, KIA 타선 9명/투수 12명, 삼성 타선 9명/투수 12명, 롯데 타선 9명/투수 12명, 한화 타선 9명/투수 12명, SSG 타선 9명/투수 12명, KT 타선 9명/투수 12명, NC 타선 9명/투수 12명, 키움 타선 9명/투수 12명 모두 active 로스터 | - |
+| 개막 라인업 active 로스터 검증 | PASS | LG 타선 9명/투수 12명, 두산 타선 9명/투수 12명, KIA 타선 9명/투수 12명, 삼성 타선 9명/투수 12명, 롯데 타선 9명/투수 12명, 한화 타선 9명/투수 12명, SSG 타선 9명/투수 12명, KT 타선 9명/투수 12명, NC 타선 9명/투수 12명, 키움 타선 9명/투수 12명 모두 active 로스터, 수동 라인업 우선 적용 | - |
 | simulateDay 실행 및 하루 5경기 | PASS | 2026-03-29로 진행, 누적 5경기, 최근 경기 5건 | - |
 | 다음 경기 보기/시뮬레이션 플로우 | PASS | 프리시즌 차단 후 2026-03-28 KT@LG, Gamecast PA 85개 포커스 | - |
 | 선수 누적 기록 모델 | PASS | 타자 90명/투수 38명 기록, 득점 42, PA 418 | - |
