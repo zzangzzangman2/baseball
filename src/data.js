@@ -265,7 +265,7 @@ export function createInitialState() {
     manager: null,
     gamesPlayed: 0,
     phase: "preseason",
-    ui: { screen: "welcome" },
+    ui: { screen: "welcome", gamecastEngine: "phaser" },
     dataSource: ROSTER_SOURCE_LABEL,
     weather: { label: "맑음", temperature: 18, runFactor: 1, homerFactor: 1 },
     lastGames: [],
