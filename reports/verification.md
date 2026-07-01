@@ -1,6 +1,6 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-01T04:22:26.440Z
+- 실행 시각: 2026-07-01T04:36:47.129Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Users\godho\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe (v24.14.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
@@ -24,18 +24,18 @@
 | 가짜 이름 생성 잔재 없음 | PASS | 현재 src ESM 앱과 생성된 선수명에서 placeholder/name-generator 잔재 미검출 | - |
 | 개막 라인업 active 로스터 검증 | PASS | LG 타선 9명/투수 12명, 두산 타선 9명/투수 12명, KIA 타선 9명/투수 12명, 삼성 타선 9명/투수 12명, 롯데 타선 9명/투수 12명, 한화 타선 9명/투수 12명, SSG 타선 9명/투수 12명, KT 타선 9명/투수 12명, NC 타선 9명/투수 12명, 키움 타선 9명/투수 12명 모두 active 로스터 | - |
 | simulateDay 실행 및 하루 5경기 | PASS | 2026-03-29로 진행, 누적 5경기, 최근 경기 5건 | - |
-| 선수 누적 기록 모델 | PASS | 타자 90명/투수 41명 기록, 득점 62, PA 427 | - |
-| 경기 박스스코어/eventLog | PASS | game.final 5개, 박스스코어 5경기, PA 이벤트 427개 | - |
-| 로테이션/불펜 운용 snapshot | PASS | 7일 선발 40명, 등판 투수 87명, W-L 28-28, SV 15, HLD 18 | - |
+| 선수 누적 기록 모델 | PASS | 타자 90명/투수 38명 기록, 득점 42, PA 418 | - |
+| 경기 박스스코어/eventLog | PASS | game.final 5개, 박스스코어 5경기, PA 이벤트 418개, 실책 1, 병살 1 | - |
+| 로테이션/불펜 운용 snapshot | PASS | 7일 선발 38명, 등판 투수 92명, W-L 28-28, SV 11, HLD 11 | - |
 | simulateDays 실행 | PASS | 7일 진행 후 day=35, gamesPlayed=30 | - |
 | simulateRegularSeason 종료 상태 | PASS | 정규시즌 종료: 720/720경기, day=196, phase=complete | - |
-| 포스트시즌/시상식 자동 생성 | PASS | KT 위즈 우승, PS 18경기, MVP 오스틴, GG 10명 | - |
-| 신인 드래프트 v1 | PASS | 2027 드래프트 150명 풀, 110픽, 팀당 11명, 보류권 110명, 코드형 신인 54명 roster 반영 | - |
+| 포스트시즌/시상식 자동 생성 | PASS | 한화 이글스 우승, PS 17경기, MVP 올러, GG 10명 | - |
+| 신인 드래프트 v1 | PASS | 2027 드래프트 150명 풀, 110픽, 팀당 11명, 보류권 110명, 코드형 신인 55명 roster 반영 | - |
 | 2차 드래프트 v1 | PASS | 2027 2차 드래프트 보호 35명x10팀, 비보호 128명, 36/36픽, 36명 실제 이동 | - |
 | 트레이드 v2 command | PASS | LG 트윈스 이용현 영입, KT 위즈 서영준 영입, 자산 player+cash+conditional+ptbnl, 자산타입 player/cash/draftPick/conditional/ptbnl, 조건부/현금/PTBNL ledger | - |
 | 트레이드 안전 게이트 23케이스 | PASS | 23개 reject 케이스 + 1개 성공 케이스 | - |
 | FA/외국인 시장 command | PASS | FA 30명/오퍼 30건, 외국인 코드 30명, roster 531명 유지 | - |
-| 자동 오프시즌/시즌 롤오버 | PASS | 자동 스토브 roster +54, 신인입단 54/보류권 110, FA 30건, CPU 트레이드 4건, 2027 프리시즌 롤오버 | - |
+| 자동 오프시즌/시즌 롤오버 | PASS | 자동 스토브 roster +55, 신인입단 55/보류권 110, FA 30건, CPU 트레이드 4건, 2027 프리시즌 롤오버 | - |
 | 프런트오피스 selector 실행 | PASS | LG 트윈스 요약 55명, 스카우트 후보 24명 | - |
 | GM 데스크 데이터 실행 | PASS | LG 트윈스 시장 후보 42명, 제안 10건, 업무 6개, 알림 6건 | - |
 | JSON 저장 roundtrip | PASS | roundtrip 10팀/531명, kbo-gm-2026-03-01-day1-lg.json | - |

@@ -1773,7 +1773,7 @@ function renderGamecastEvent(event, state) {
 }
 
 function isGamecastFeedEvent(event) {
-  return ["single", "double", "triple", "homeRun", "walk", "strikeout"].includes(event?.outcome);
+  return ["single", "double", "triple", "homeRun", "walk", "strikeout", "error"].includes(event?.outcome);
 }
 
 function eventTeamLabel(event, state) {
@@ -1877,6 +1877,7 @@ function gamecastOutcomeClass(outcome) {
   if (outcome === "homeRun") return "is-homer";
   if (["single", "double", "triple"].includes(outcome)) return "is-hit";
   if (outcome === "walk") return "is-walk";
+  if (outcome === "error") return "is-error";
   if (outcome === "strikeout") return "is-out";
   return "is-ball";
 }
@@ -2461,7 +2462,7 @@ function gamecastAdvanceCount(outcome) {
   if (outcome === "homeRun") return 4;
   if (outcome === "triple") return 3;
   if (outcome === "double") return 2;
-  if (outcome === "single" || outcome === "walk") return 1;
+  if (outcome === "single" || outcome === "walk" || outcome === "error") return 1;
   return 0;
 }
 
@@ -3161,6 +3162,7 @@ function outcomeLabel(outcome) {
   if (outcome === "double") return "2루타";
   if (outcome === "single") return "안타";
   if (outcome === "walk") return "볼넷";
+  if (outcome === "error") return "실책 출루";
   if (outcome === "strikeout") return "삼진";
   return "타구";
 }

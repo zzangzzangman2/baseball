@@ -120,14 +120,14 @@
 필요 데이터:
 
 - 실제 또는 생성형 시즌 캘린더
-- 구장 park factor, 날씨 factor, 관중/흥행 factor
+- KBO 홈구장 park factor, 날씨 factor, 관중/흥행 factor
 - 선수별 타격/투구/수비/주루 세부 능력치
 - 투수 팔 상태, 등판 간격, 불펜 소모, 포수/야수 피로
 
 구현 메모:
 
 - 바로 타석 엔진으로 뛰기 전에 `CalendarGame`, `GameRoster`, `LineupSnapshot`, `PitchingPlanSnapshot`을 먼저 만든다.
-- 타석 결과는 `plateAppearanceEvents`로 남기고, 박스스코어/시즌 기록은 event에서 파생한다.
+- 타석 결과는 `plateAppearanceEvents`로 남기고, 좌우 split/타구유형/수비/실책/병살/구장 컨텍스트를 함께 싣는다.
 - 초기 P2 목표는 실제 야구 완전 재현이 아니라, 리그 평균에 맞는 결과와 로스터 운영 피드백을 만드는 것이다.
 
 ### 3.4 밸런스 튜닝

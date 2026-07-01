@@ -850,6 +850,7 @@ function checkGameBoxScoreEventLog() {
   const problems = [];
   const gameIds = new Set(state.lastGames.map((game) => game.id));
   let multiRunnerBaseStateSeen = false;
+  let ballparkContextSeen = false;
   let paSchemaCount = 0;
 
   if (!Array.isArray(state.eventLog)) {
@@ -889,6 +890,9 @@ function checkGameBoxScoreEventLog() {
     if (lineAway.hits !== game.awayHits || lineHome.hits !== game.homeHits) {
       problems.push(`${game.id}: linescore 안타 불일치`);
     }
+    if (safeInteger(lineAway.errors) !== safeInteger(game.awayErrors) || safeInteger(lineHome.errors) !== safeInteger(game.homeErrors)) {
+      problems.push(`${game.id}: linescore 실책 불일치`);
+    }
     if (sumArray(lineAway.runsByInning) !== lineAway.runs || sumArray(lineHome.runsByInning) !== lineHome.runs) {
       problems.push(`${game.id}: 이닝별 득점 합계 불일치`);
     }
@@ -900,6 +904,14 @@ function checkGameBoxScoreEventLog() {
     }
     if (safeInteger(boxScore.totals?.plateAppearances) !== paEvents.length) {
       problems.push(`${game.id}: PA 이벤트 ${paEvents.length}/${boxScore.totals?.plateAppearances}`);
+    }
+    if (!game.ballpark?.parkId) {
+      problems.push(`${game.id}: ballpark 컨텍스트 누락`);
+    } else {
+      ballparkContextSeen = true;
+    }
+    if (!Number.isFinite(Number(boxScore.totals?.errors)) || !Number.isFinite(Number(boxScore.totals?.doublePlays))) {
+      problems.push(`${game.id}: 수비/병살 totals 누락`);
     }
     if (!Array.isArray(game.scoringEvents)) {
       problems.push(`${game.id}: scoringEvents 배열 누락`);
@@ -923,6 +935,12 @@ function checkGameBoxScoreEventLog() {
       if (safeInteger(event.outsAfter) % 3 === 0 && safeInteger(event.outsAfter) !== safeInteger(event.outsBefore) && event.inningEnded !== true) {
         problems.push(`${game.id}: PA ${event.sequence} inningEnded 누락`);
       }
+      if (!Object.hasOwn(event, "battedBallType") || !Object.hasOwn(event, "doublePlay") || !Object.hasOwn(event, "reachedOnError")) {
+        problems.push(`${game.id}: PA ${event.sequence} KBO 타구/수비 확장 필드 누락`);
+      }
+      if (!event.ballparkId || !event.ballparkName) {
+        problems.push(`${game.id}: PA ${event.sequence} 구장 컨텍스트 누락`);
+      }
       if ((event.basesAfter ?? []).filter(Boolean).length >= 2) {
         multiRunnerBaseStateSeen = true;
       }
@@ -932,6 +950,9 @@ function checkGameBoxScoreEventLog() {
   if (paSchemaCount > 0 && !multiRunnerBaseStateSeen) {
     problems.push("하루 경기 PA 이벤트에서 2명 이상 누상 상태가 한 번도 감지되지 않음");
   }
+  if (!ballparkContextSeen) {
+    problems.push("경기 구장 컨텍스트가 감지되지 않음");
+  }
 
   assert(
     problems.length === 0,
@@ -940,7 +961,9 @@ function checkGameBoxScoreEventLog() {
   );
 
   const totalPaEvents = sumNumbers(state.lastGames, (game) => game.plateAppearanceEvents.length);
-  return `game.final ${state.eventLog.length}개, 박스스코어 ${state.lastGames.length}경기, PA 이벤트 ${totalPaEvents}개`;
+  const totalErrors = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.errors);
+  const totalDoublePlays = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.doublePlays);
+  return `game.final ${state.eventLog.length}개, 박스스코어 ${state.lastGames.length}경기, PA 이벤트 ${totalPaEvents}개, 실책 ${totalErrors}, 병살 ${totalDoublePlays}`;
 }
 
 function checkPitchingSnapshotUsage() {

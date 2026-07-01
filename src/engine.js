@@ -59,6 +59,19 @@ const ACTIVE_PITCHER_TARGET = 13;
 const ACTIVE_HITTER_TARGET = ACTIVE_ROSTER_TARGET - ACTIVE_PITCHER_TARGET;
 const ACTIVE_PITCHER_MIN_REQUIRED = 12;
 const PAYROLL_TARGET_RATIO = 1.08;
+const KBO_BALLPARK_RULE_SOURCE = "KBO 구장 성향 v1: 2024 스탯티즈 홈런 파크팩터 기반, 한화 신구장 2026은 중립 임시값";
+const KBO_BALLPARK_FACTORS = {
+  lg: { parkId: "jamsil", name: "잠실야구장", homeRunFactor: 0.732, sourceSeason: 2024 },
+  doosan: { parkId: "jamsil", name: "잠실야구장", homeRunFactor: 0.732, sourceSeason: 2024 },
+  kia: { parkId: "gwangju", name: "광주-기아 챔피언스 필드", homeRunFactor: 0.953, sourceSeason: 2024 },
+  samsung: { parkId: "daegu", name: "대구 삼성 라이온즈 파크", homeRunFactor: 1.522, sourceSeason: 2024 },
+  lotte: { parkId: "sajik", name: "사직야구장", homeRunFactor: 0.729, sourceSeason: 2024 },
+  hanwha: { parkId: "daejeon-hanwha-life", name: "대전 한화생명 볼파크", homeRunFactor: 1.0, sourceSeason: 2026, provisional: true },
+  ssg: { parkId: "incheon", name: "인천 SSG 랜더스필드", homeRunFactor: 1.489, sourceSeason: 2024 },
+  kt: { parkId: "suwon", name: "수원 KT 위즈 파크", homeRunFactor: 1.01, sourceSeason: 2024 },
+  nc: { parkId: "changwon", name: "창원 NC 파크", homeRunFactor: 1.085, sourceSeason: 2024 },
+  kiwoom: { parkId: "gocheok", name: "고척스카이돔", homeRunFactor: 0.822, sourceSeason: 2024 }
+};
 const NEXT_SEASON_START_MONTH_DAY = "03-01";
 const TRADE_COMMIT_MIN_ACCEPTANCE = 74;
 const TRADE_COMMIT_MIN_ELITE_ACCEPTANCE = 86;
@@ -1000,6 +1013,7 @@ function createRookiePlayerFromProspect(prospect, pick, team, year, rosterIndex)
   player.faStatus = createBasicFaStatus(player, team.id, year, source);
   player.militaryStatus = createBasicMilitaryStatus(player, team.id, source);
   player.foreignPlayer = createDomesticForeignState(source);
+  normalizeAnonymousDraftTools(player);
   return player;
 }
 
@@ -1736,10 +1750,61 @@ function isAnonymousDraftPlayer(player) {
     /^DRF-\d{4}-\d{3}$/.test(String(player?.name ?? ""));
 }
 
+function anonymousReadinessPenalty(player) {
+  if (!isAnonymousDraftPlayer(player)) return 0;
+  const ovr = safeNumber(player?.ovr, 115);
+  const pot = safeNumber(player?.pot, ovr);
+  const service = safeNumber(player?.serviceTime?.seasonsAccrued);
+  const readiness = clamp((ovr - 105) * 0.62 + Math.max(0, pot - 160) * 0.08 + service * 1.4, 0, 22);
+  return roundNumber(Math.max(0, 22 - readiness), 1);
+}
+
+function anonymousPerformanceProfile(player) {
+  if (!isAnonymousDraftPlayer(player)) {
+    return { walkScale: 1, singleScale: 1, extraBaseScale: 1, homerScale: 1, strikeoutAdd: 0 };
+  }
+  const ovr = safeNumber(player?.ovr, 115);
+  const pot = safeNumber(player?.pot, ovr);
+  const service = safeNumber(player?.serviceTime?.seasonsAccrued);
+  const readiness = clamp((ovr - 104) / 46 + Math.max(0, pot - 170) / 180 + Math.min(service, 5) * 0.018, 0, 1);
+  const base = clamp(0.72 + readiness * 0.24, 0.72, 0.96);
+  return {
+    walkScale: clamp(0.84 + readiness * 0.12, 0.84, 0.96),
+    singleScale: base,
+    extraBaseScale: clamp(base - 0.04, 0.66, 0.92),
+    homerScale: clamp(base - 0.08, 0.58, 0.88),
+    strikeoutAdd: roundNumber((1 - readiness) * 0.035, 3)
+  };
+}
+
+function normalizeAnonymousDraftTools(player) {
+  if (!isAnonymousDraftPlayer(player)) return;
+  const ovr = safeNumber(player?.ovr, 115);
+  const pot = safeNumber(player?.pot, ovr);
+  const primaryCeiling = clamp(Math.round(ovr / 10 + 2 + Math.max(0, pot - 175) / 45), 9, 18);
+  const secondaryCeiling = clamp(primaryCeiling + 1, 10, 19);
+  const fields = player.role === "pitcher"
+    ? {
+        primary: ["stuff", "control", "velocity", "movement", "hrSuppression", "pitchingIQ"],
+        secondary: ["stamina", "gbTendency", "repertoire", "holdRunners", "fielding", "vsLHB", "vsRHB"]
+      }
+    : {
+        primary: ["contactL", "contactR", "powerL", "powerR", "eye", "battedBall", "patience", "contact", "power"],
+        secondary: ["situational", "bunting", "vsLHP", "vsRHP", "defense", "range", "arm", "catching", "speed", "stealing", "baserunning"]
+      };
+  for (const field of fields.primary) {
+    if (Number.isFinite(Number(player[field]))) player[field] = Math.min(safeNumber(player[field]), primaryCeiling);
+  }
+  for (const field of fields.secondary) {
+    if (Number.isFinite(Number(player[field]))) player[field] = Math.min(safeNumber(player[field]), secondaryCeiling);
+  }
+}
+
 function advancePlayerForSeason(player, team, season) {
   const previousAge = safeNumber(player.age, 26);
   player.age = previousAge + 1;
   applyPlayerDevelopment(player, team, season, previousAge);
+  normalizeAnonymousDraftTools(player);
   player.seasonStats = createEmptySeasonStats();
   player.fatigue = clamp(Math.round(safeNumber(player.fatigue) * 0.18), 0, 30);
   player.form = clamp(52 + deterministicRange(season, player.id, "form", -5, 7), 35, 92);
@@ -2325,15 +2390,17 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
   const gameId = options.gameType === "postseason"
     ? makePostseasonGameId(dateKey, options, away.id, home.id)
     : makeGameId(dateKey, gameIndex, away.id, home.id, state.gamesPlayed);
+  const gameEnvironment = buildGameEnvironment(weather, home);
 
   const awayOffense = simulateOffense({
     gameId,
     offense: away,
     defense: home,
     lineup: awayLineup,
+    defenseLineup: homeLineup,
     pitchingPlan: homePitchingPlan,
     seed: seed + 11,
-    weather,
+    weather: gameEnvironment,
     side: "away"
   });
   const homeOffense = simulateOffense({
@@ -2341,9 +2408,10 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
     offense: home,
     defense: away,
     lineup: homeLineup,
+    defenseLineup: awayLineup,
     pitchingPlan: awayPitchingPlan,
     seed: seed + 37,
-    weather,
+    weather: gameEnvironment,
     side: "home"
   });
   let awayRuns = awayOffense.runs;
@@ -2392,7 +2460,8 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
   const result = {
     id: gameId,
     date: dateKey,
-    weather: weather.label,
+    weather: gameEnvironment.label,
+    ballpark: gameEnvironment.ballpark,
     awayTeamId: away.id,
     homeTeamId: home.id,
     away: away.shortName ?? away.name,
@@ -2401,6 +2470,8 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
     homeScore: homeRuns,
     awayHits: awayOffense.hits,
     homeHits: homeOffense.hits,
+    awayErrors: homeOffense.defenseErrors,
+    homeErrors: awayOffense.defenseErrors,
     awayHomeRuns: awayOffense.homeRuns,
     homeHomeRuns: homeOffense.homeRuns,
     awayStarter: awayPitchingPlan.starter?.name ?? "",
@@ -3623,7 +3694,7 @@ function applyGameStats(home, away, homeRuns, awayRuns, attendance) {
   }
 }
 
-function simulateOffense({ gameId, offense, defense, lineup, pitchingPlan, seed, weather, side }) {
+function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitchingPlan, seed, weather, side }) {
   const result = {
     runs: 0,
     hits: 0,
@@ -3632,6 +3703,9 @@ function simulateOffense({ gameId, offense, defense, lineup, pitchingPlan, seed,
     triples: 0,
     walks: 0,
     strikeouts: 0,
+    reachedOnErrors: 0,
+    defenseErrors: 0,
+    doublePlays: 0,
     atBats: 0,
     stolenBases: 0,
     caughtStealing: 0,
@@ -3649,10 +3723,14 @@ function simulateOffense({ gameId, offense, defense, lineup, pitchingPlan, seed,
 
   if (!lineup.length) return result;
 
-  const defenseQuality = teamDefenseQuality(defense);
+  const defenseContext = buildDefenseContext(defense, defenseLineup);
+  const defenseQuality = defenseContext.overall;
 
   for (const hitter of lineup) {
     ensureBattingStats(hitter).games += 1;
+  }
+  for (const defender of defenseContext.defenders) {
+    ensureSeasonStats(defender).fielding.games += 1;
   }
 
   let outs = 0;
@@ -3672,10 +3750,13 @@ function simulateOffense({ gameId, offense, defense, lineup, pitchingPlan, seed,
       hitter,
       pitcher,
       defenseQuality,
+      defenseContext,
       weather,
       seed,
       plateAppearance: result.plateAppearances,
-      side
+      side,
+      bases,
+      outs
     });
     const basesBeforePlay = [Boolean(bases[0]), Boolean(bases[1]), Boolean(bases[2])];
     const advancement = applyPlateAppearanceOutcome({
@@ -3695,10 +3776,16 @@ function simulateOffense({ gameId, offense, defense, lineup, pitchingPlan, seed,
     result.triples += outcome.type === "triple" ? 1 : 0;
     result.walks += outcome.type === "walk" ? 1 : 0;
     result.strikeouts += outcome.type === "strikeout" ? 1 : 0;
+    result.reachedOnErrors += outcome.type === "error" ? 1 : 0;
+    result.defenseErrors += outcome.type === "error" ? 1 : 0;
+    result.doublePlays += outcome.doublePlay ? 1 : 0;
     result.atBats += outcome.isAtBat ? 1 : 0;
     result.pitches += pitchEstimate(outcome);
     result.runsByInning[inningIndex] += advancement.runs;
 
+    if (outcome.type === "error") {
+      applyFieldingError(outcome.defender);
+    }
     applyBattingEvent(hitter, outcome, advancement);
     applyPitchingEvent(pitcher, outcome, advancement);
     applyGamePitchingEvent(result, pitcher, pitchingPlan, outcome, advancement);
@@ -3717,7 +3804,8 @@ function simulateOffense({ gameId, offense, defense, lineup, pitchingPlan, seed,
       outsAfter: outs,
       basesBefore: basesBeforePlay,
       basesAfter: [Boolean(bases[0]), Boolean(bases[1]), Boolean(bases[2])],
-      inningEnded: inningEnded(outsBeforePlay, outs)
+      inningEnded: inningEnded(outsBeforePlay, outs),
+      ballpark: weather?.ballpark
     });
 
     if (inningEnded(outsBeforePlay, outs)) {
@@ -3755,9 +3843,11 @@ function simulateOffense({ gameId, offense, defense, lineup, pitchingPlan, seed,
   return result;
 }
 
-function resolvePlateAppearance({ hitter, pitcher, defenseQuality, weather, seed, plateAppearance, side }) {
-  const contact = averageNumbers(safeNumber(hitter.contactL, hitter.contact), safeNumber(hitter.contactR, hitter.contact));
-  const power = averageNumbers(safeNumber(hitter.powerL, hitter.power), safeNumber(hitter.powerR, hitter.power));
+function resolvePlateAppearance({ hitter, pitcher, defenseQuality, defenseContext, weather, seed, plateAppearance, side, bases, outs }) {
+  const pitcherHand = normalizeGameHand(pitcher?.throws, "R");
+  const batterSide = effectiveBatterSide(hitter, pitcherHand);
+  const contact = hitterSplitRating(hitter, "contact", pitcherHand);
+  const power = hitterSplitRating(hitter, "power", pitcherHand);
   const eye = safeNumber(hitter.eye, 10);
   const patience = safeNumber(hitter.patience, eye);
   const battedBall = safeNumber(hitter.battedBall, power);
@@ -3770,26 +3860,42 @@ function resolvePlateAppearance({ hitter, pitcher, defenseQuality, weather, seed
   const pitcherFreshness = (safeNumber(pitcher?.armFreshness, 80) - 75) * 0.001;
   const weatherRun = safeNumber(weather?.runFactor, 1);
   const weatherHomer = safeNumber(weather?.homerFactor, 1);
+  const weatherHit = safeNumber(weather?.hitFactor, weatherRun);
+  const anonymousProfile = anonymousPerformanceProfile(hitter);
+  const pitcherPlatoon = pitcherSplitRating(pitcher, batterSide);
+  const platoonPressure = (pitcherPlatoon - 10) * 0.0026;
+  const battedBallType = chooseBattedBallType({ hitter, pitcher, contact, power, movement, seed, plateAppearance, side });
+  const fielding = fieldingContextForBattedBall(defenseContext, battedBallType, seed, plateAppearance, hitter);
+  const battedBallDefense = safeNumber(fielding.quality, defenseQuality);
+  const infieldDefense = safeNumber(defenseContext?.infieldQuality, defenseQuality);
+  const outfieldDefense = safeNumber(defenseContext?.outfieldQuality, defenseQuality);
+  const groundBallPenalty = battedBallType === "groundBall" ? 0.006 : 0;
+  const lineDriveBoost = battedBallType === "lineDrive" ? 0.018 : 0;
+  const flyBallBoost = battedBallType === "flyBall" ? 0.006 : 0;
 
-  const walkRate = clamp(0.086 + (eye + patience - 20) * 0.004 - (control - 10) * 0.0052, 0.035, 0.165);
+  const walkRate = clamp((0.086 + (eye + patience - 20) * 0.004 - (control - 10) * 0.0052) * anonymousProfile.walkScale, 0.035, 0.165);
   const strikeoutRate = clamp(
-    0.182 + (stuff - 10) * 0.0092 + (velocity - 10) * 0.0036 - (contact - 10) * 0.0078 - (eye - 10) * 0.0023,
+    clamp(
+      0.182 + (stuff - 10) * 0.0092 + (velocity - 10) * 0.0036 - (contact - 10) * 0.0078 - (eye - 10) * 0.0023 + platoonPressure,
+      0.078,
+      0.35
+    ) + anonymousProfile.strikeoutAdd,
     0.078,
-    0.35
+    0.39
   );
   const homeRunRate = clamp(
-    (0.029 + (power - 10) * 0.0038 + (battedBall - 10) * 0.002 - (hrSuppression - 10) * 0.0032) * weatherHomer,
+    (0.029 + (power - 10) * 0.0038 + (battedBall - 10) * 0.002 - (hrSuppression - 10) * 0.0032 - platoonPressure * 0.7 + flyBallBoost) * weatherHomer * anonymousProfile.homerScale,
     0.005,
     0.09
   );
-  const tripleRate = clamp(0.003 + (safeNumber(hitter.speed, 10) - 10) * 0.00055, 0.001, 0.014);
+  const tripleRate = clamp((0.003 + (safeNumber(hitter.speed, 10) - 10) * 0.00055 - (outfieldDefense - 10) * 0.00038) * weatherHit, 0.001, 0.014);
   const doubleRate = clamp(
-    (0.047 + (power - 10) * 0.0023 + (contact - 10) * 0.001 - (movement - 10) * 0.0019) * weatherRun,
+    (0.047 + (power - 10) * 0.0023 + (contact - 10) * 0.001 - (movement - 10) * 0.0019 - (outfieldDefense - 10) * 0.0012 - platoonPressure * 0.5 + lineDriveBoost) * weatherRun * anonymousProfile.extraBaseScale,
     0.02,
     0.084
   );
   const singleRate = clamp(
-    (0.107 + (contact - 10) * 0.0045 + condition + pitcherFreshness - (stuff - 10) * 0.005 - (movement - 10) * 0.0031 - (defenseQuality - 10) * 0.0029) * weatherRun,
+    (0.107 + (contact - 10) * 0.0045 + condition + pitcherFreshness - (stuff - 10) * 0.005 - (movement - 10) * 0.0031 - (battedBallDefense - 10) * 0.0029 - platoonPressure * 0.8 + lineDriveBoost - groundBallPenalty) * weatherHit * anonymousProfile.singleScale,
     0.058,
     0.18
   );
@@ -3797,30 +3903,130 @@ function resolvePlateAppearance({ hitter, pitcher, defenseQuality, weather, seed
 
   if (roll < walkRate) return { type: "walk", isAtBat: false, bases: 0 };
   if (roll < walkRate + strikeoutRate) return { type: "strikeout", isAtBat: true, bases: 0 };
-  if (roll < walkRate + strikeoutRate + homeRunRate) return { type: "homeRun", isAtBat: true, bases: 4 };
-  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate) return { type: "triple", isAtBat: true, bases: 3 };
-  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate + doubleRate) return { type: "double", isAtBat: true, bases: 2 };
-  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate + doubleRate + singleRate) return { type: "single", isAtBat: true, bases: 1 };
-  return { type: "out", isAtBat: true, bases: 0 };
+  if (roll < walkRate + strikeoutRate + homeRunRate) return { type: "homeRun", isAtBat: true, bases: 4, battedBallType: "flyBall", ballpark: weather?.ballpark };
+  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate) return { type: "triple", isAtBat: true, bases: 3, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, ballpark: weather?.ballpark };
+  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate + doubleRate) return { type: "double", isAtBat: true, bases: 2, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, ballpark: weather?.ballpark };
+  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate + doubleRate + singleRate) return { type: "single", isAtBat: true, bases: 1, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, ballpark: weather?.ballpark };
+
+  const errorRate = fieldingErrorRate({ fielding, hitter, battedBallType });
+  if (rollUnit(seed, side, "fielding-error", plateAppearance, hitter.id, fielding.defender?.id ?? fielding.position) < errorRate) {
+    return { type: "error", isAtBat: true, bases: 1, reachedOnError: true, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, ballpark: weather?.ballpark };
+  }
+
+  const doublePlay = shouldTurnDoublePlay({ bases, outs, hitter, pitcher, defenseContext, seed, plateAppearance, side, battedBallType });
+  return { type: "out", isAtBat: true, bases: 0, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, doublePlay, ballpark: weather?.ballpark };
+}
+
+function normalizeGameHand(value, fallback = "R") {
+  const text = String(value ?? "").trim();
+  const hand = text.toUpperCase();
+  if (hand.includes("S") || text.includes("양") || text.includes("스위치")) return "S";
+  if (hand.includes("L") || text.includes("좌")) return "L";
+  if (hand.includes("R") || text.includes("우")) return "R";
+  return fallback;
+}
+
+function effectiveBatterSide(hitter, pitcherHand) {
+  const bats = normalizeBatterHand(hitter);
+  if (bats === "S") return pitcherHand === "L" ? "R" : "L";
+  return bats;
+}
+
+function normalizeBatterHand(hitter) {
+  const bats = normalizeGameHand(hitter?.bats, "");
+  if (bats) return bats;
+  const handedness = String(hitter?.handedness ?? "");
+  if (handedness.includes("양타") || handedness.includes("스위치")) return "S";
+  if (handedness.includes("좌타")) return "L";
+  if (handedness.includes("우타")) return "R";
+  return "R";
+}
+
+function hitterSplitRating(hitter, key, pitcherHand) {
+  const splitKey = pitcherHand === "L" ? `${key}L` : `${key}R`;
+  const fallback = safeNumber(hitter?.[key], 10);
+  return safeNumber(hitter?.[splitKey], fallback);
+}
+
+function pitcherSplitRating(pitcher, batterSide) {
+  if (!pitcher) return 10;
+  const splitKey = batterSide === "L" ? "vsLHB" : "vsRHB";
+  return safeNumber(pitcher?.[splitKey], averageNumbers(safeNumber(pitcher?.stuff, 10), safeNumber(pitcher?.movement, 10)));
+}
+
+function chooseBattedBallType({ hitter, pitcher, contact, power, movement, seed, plateAppearance, side }) {
+  const speed = safeNumber(hitter?.speed, 10);
+  const flyBias = clamp(0.31 + (power - 10) * 0.012 - (movement - 10) * 0.009, 0.18, 0.48);
+  const lineBias = clamp(0.18 + (contact - 10) * 0.008 + (speed - 10) * 0.002, 0.1, 0.3);
+  const roll = rollUnit(seed, side, "batted-ball", plateAppearance, hitter?.id ?? "", pitcher?.id ?? "");
+  if (roll < lineBias) return "lineDrive";
+  if (roll < lineBias + flyBias) return "flyBall";
+  return "groundBall";
+}
+
+function fieldingContextForBattedBall(defenseContext, battedBallType, seed, plateAppearance, hitter) {
+  if (battedBallType === "flyBall") {
+    return chooseFieldingTarget(defenseContext, "outfield", seed, plateAppearance, hitter, "OF");
+  }
+  if (battedBallType === "lineDrive") {
+    const group = rollUnit(seed, "line-drive-zone", plateAppearance, hitter?.id ?? "") < 0.42 ? "infield" : "outfield";
+    return chooseFieldingTarget(defenseContext, group, seed, plateAppearance, hitter, group === "infield" ? "IF" : "OF");
+  }
+  return chooseFieldingTarget(defenseContext, "infield", seed, plateAppearance, hitter, "IF");
+}
+
+function chooseFieldingTarget(defenseContext, group, seed, plateAppearance, hitter, fallbackPosition) {
+  const options = defenseContext?.[group] ?? [];
+  if (!options.length) {
+    return {
+      position: fallbackPosition,
+      defender: null,
+      quality: safeNumber(defenseContext?.overall, 10)
+    };
+  }
+  const index = hashParts(seed, plateAppearance, hitter?.id ?? "", group, "fielding-target") % options.length;
+  return options[index];
+}
+
+function fieldingErrorRate({ fielding, hitter, battedBallType }) {
+  const quality = safeNumber(fielding?.quality, 10);
+  const speedPressure = battedBallType === "groundBall" ? Math.max(0, safeNumber(hitter?.speed, 10) - 11) * 0.0012 : 0;
+  const baseRate = battedBallType === "flyBall" ? 0.006 : battedBallType === "lineDrive" ? 0.008 : 0.013;
+  return clamp(baseRate + (10 - quality) * 0.0022 + speedPressure, 0.003, 0.034);
+}
+
+function shouldTurnDoublePlay({ bases, outs, hitter, pitcher, defenseContext, seed, plateAppearance, side, battedBallType }) {
+  if (battedBallType !== "groundBall" || outs % 3 > 1 || !bases?.[0]) return false;
+  const speed = safeNumber(hitter?.speed, 10);
+  const baserunning = safeNumber(hitter?.baserunning, speed);
+  const movement = safeNumber(pitcher?.movement, 10);
+  const infield = safeNumber(defenseContext?.doublePlayQuality, defenseContext?.infieldQuality);
+  const rate = clamp(0.085 + (infield - 10) * 0.008 + (movement - 10) * 0.004 - (speed + baserunning - 20) * 0.0042, 0.035, 0.24);
+  return rollUnit(seed, side, "double-play", plateAppearance, hitter?.id ?? "", bases[0]?.id ?? "") < rate;
 }
 
 function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed, plateAppearance }) {
   const advancement = {
     runs: 0,
+    earnedRuns: 0,
     hits: outcome.bases > 0 ? 1 : 0,
     outs: 0,
     rbi: 0,
+    reachedOnError: outcome.type === "error",
+    doublePlay: Boolean(outcome.doublePlay),
     scoredRunners: []
   };
 
-  const scoreRunner = (runner, rbiCredit = true) => {
+  const scoreRunner = (runner, rbiCredit = true, earnedRun = true) => {
     if (!runner) return;
     ensureBattingStats(runner).runs += 1;
     advancement.runs += 1;
+    if (earnedRun) advancement.earnedRuns += 1;
     advancement.scoredRunners.push({
       id: runner.id ?? runner.name,
       name: runner.name ?? "",
-      rbiCredit
+      rbiCredit,
+      earnedRun
     });
     if (rbiCredit) advancement.rbi += 1;
   };
@@ -3831,11 +4037,26 @@ function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed, plate
   }
 
   if (outcome.type === "out") {
+    if (outcome.doublePlay && outs % 3 <= 1 && bases[0]) {
+      advancement.outs = Math.min(2, 3 - (outs % 3));
+      bases[0] = null;
+      return advancement;
+    }
     advancement.outs = 1;
-    if (outs < 2 && bases[2] && rollUnit(seed, "sac-fly", plateAppearance, hitter.id) < 0.1) {
+    if (outs % 3 < 2 && bases[2] && rollUnit(seed, "sac-fly", plateAppearance, hitter.id) < 0.1) {
       scoreRunner(bases[2], true);
       bases[2] = null;
     }
+    return advancement;
+  }
+
+  if (outcome.type === "error") {
+    advancement.hits = 0;
+    const [first, second, third] = bases;
+    if (first && second && third) scoreRunner(third, false, false);
+    bases[2] = first && second ? second : third;
+    bases[1] = first ? first : second;
+    bases[0] = hitter;
     return advancement;
   }
 
@@ -3953,6 +4174,8 @@ function applyBattingEvent(hitter, outcome, advancement) {
   if (outcome.isAtBat) stats.atBats += 1;
   if (outcome.type === "walk") stats.walks += 1;
   if (outcome.type === "strikeout") stats.strikeouts += 1;
+  if (outcome.doublePlay) stats.groundedDoublePlays = safeNumber(stats.groundedDoublePlays) + 1;
+  if (outcome.type === "error") stats.reachedOnErrors = safeNumber(stats.reachedOnErrors) + 1;
   if (advancement.hits > 0) {
     stats.hits += 1;
     stats.totalBases += outcome.bases;
@@ -3974,7 +4197,7 @@ function applyPitchingEvent(pitcher, outcome, advancement) {
   if (outcome.type === "walk") stats.walksAllowed += 1;
   if (outcome.type === "strikeout") stats.strikeouts += 1;
   stats.runsAllowed += advancement.runs;
-  stats.earnedRuns += advancement.runs;
+  stats.earnedRuns += safeNumber(advancement.earnedRuns, advancement.runs);
 }
 
 function choosePitcherForPlateAppearance(pitchingPlan, result, outs) {
@@ -4011,7 +4234,7 @@ function applyGamePitchingEvent(result, pitcher, pitchingPlan, outcome, advancem
   if (outcome.type === "walk") line.walksAllowed += 1;
   if (outcome.type === "strikeout") line.strikeouts += 1;
   line.runsAllowed += advancement.runs;
-  line.earnedRuns += advancement.runs;
+  line.earnedRuns += safeNumber(advancement.earnedRuns, advancement.runs);
 }
 
 function creditPitcherOuts(pitcher, result, outs) {
@@ -4066,6 +4289,8 @@ function applyGameBatterEvent(result, hitter, outcome, advancement) {
   line.rbi += advancement.rbi;
   line.walks += outcome.type === "walk" ? 1 : 0;
   line.strikeouts += outcome.type === "strikeout" ? 1 : 0;
+  line.reachedOnErrors += outcome.type === "error" ? 1 : 0;
+  line.groundedDoublePlays += outcome.doublePlay ? 1 : 0;
 }
 
 function applyGameStealEvent(result, steal) {
@@ -4098,6 +4323,8 @@ function getGameBatterLine(result, player) {
       rbi: 0,
       walks: 0,
       strikeouts: 0,
+      reachedOnErrors: 0,
+      groundedDoublePlays: 0,
       stolenBases: 0,
       caughtStealing: 0
     });
@@ -4119,7 +4346,16 @@ function addPlateAppearanceEvent(result, input) {
     pitcherId: input.pitcher?.id ?? "",
     pitcherName: input.pitcher?.name ?? "",
     outcome: input.outcome.type,
+    battedBallType: input.outcome.battedBallType ?? "",
+    fieldingPosition: input.outcome.fieldingPosition ?? "",
+    defenderId: input.outcome.defender?.id ?? "",
+    defenderName: input.outcome.defender?.name ?? "",
+    doublePlay: Boolean(input.outcome.doublePlay),
+    reachedOnError: Boolean(input.outcome.reachedOnError),
+    ballparkId: input.outcome.ballpark?.parkId ?? input.ballpark?.parkId ?? "",
+    ballparkName: input.outcome.ballpark?.name ?? input.ballpark?.name ?? "",
     runs: input.advancement.runs,
+    earnedRuns: safeNumber(input.advancement.earnedRuns, input.advancement.runs),
     rbi: input.advancement.rbi,
     outsBefore: input.outsBefore,
     outsAfter: input.outsAfter,
@@ -4247,6 +4483,7 @@ function pitchEstimate(outcome) {
   if (outcome.type === "walk") return 5;
   if (outcome.type === "strikeout") return 4;
   if (outcome.type === "homeRun") return 3;
+  if (outcome.type === "error") return 3;
   if (outcome.bases > 0) return 3;
   return 4;
 }
@@ -4266,6 +4503,8 @@ function ensureSeasonStats(player) {
     rbi: 0,
     walks: 0,
     strikeouts: 0,
+    reachedOnErrors: 0,
+    groundedDoublePlays: 0,
     stolenBases: 0,
     caughtStealing: 0,
     totalBases: 0,
@@ -4307,12 +4546,100 @@ function ensurePitchingStats(player) {
 }
 
 function teamDefenseQuality(team) {
-  const defenders = (team?.roster ?? []).filter((player) => player.role === "hitter");
-  if (!defenders.length) return 10;
-  const topDefenders = [...defenders]
-    .sort((a, b) => (safeNumber(b.defense) + safeNumber(b.range)) - (safeNumber(a.defense) + safeNumber(a.range)))
-    .slice(0, 9);
-  return averageNumbers(...topDefenders.map((player) => averageNumbers(safeNumber(player.defense, 10), safeNumber(player.range, 10))));
+  return buildDefenseContext(team).overall;
+}
+
+function buildDefenseContext(team, lineup = null) {
+  const players = (Array.isArray(lineup) && lineup.length ? lineup : team?.roster ?? [])
+    .filter((player) => player?.role === "hitter");
+  if (!players.length) {
+    return {
+      defenders: [],
+      catcher: [],
+      infield: [],
+      outfield: [],
+      overall: 10,
+      infieldQuality: 10,
+      outfieldQuality: 10,
+      catcherQuality: 10,
+      doublePlayQuality: 10
+    };
+  }
+
+  const catcher = topFielders(players, (player) => player.position === "C", "C", 1);
+  const infield = topFielders(players, (player) => ["IF", "1B", "2B", "3B", "SS"].includes(player.position), "IF", 4);
+  const outfield = topFielders(players, (player) => ["OF", "LF", "CF", "RF"].includes(player.position), "OF", 3);
+  const defenders = uniquePlayers([...catcher, ...infield, ...outfield].map((entry) => entry.defender).filter(Boolean));
+  const infieldQuality = averageNumbers(...infield.map((entry) => entry.quality));
+  const outfieldQuality = averageNumbers(...outfield.map((entry) => entry.quality));
+  const catcherQuality = averageNumbers(...catcher.map((entry) => entry.quality));
+  const doublePlayQuality = averageNumbers(
+    infieldQuality,
+    ...infield
+      .filter((entry) => ["2B", "SS", "IF"].includes(entry.position))
+      .map((entry) => entry.quality)
+  );
+
+  return {
+    defenders,
+    catcher,
+    infield,
+    outfield,
+    overall: averageNumbers(infieldQuality, outfieldQuality, catcherQuality),
+    infieldQuality,
+    outfieldQuality,
+    catcherQuality,
+    doublePlayQuality
+  };
+}
+
+function topFielders(players, predicate, fallbackPosition, count) {
+  const pool = players.filter(predicate);
+  const candidates = pool.length ? pool : players;
+  return [...candidates]
+    .map((player) => ({
+      position: normalizeDefensePosition(player, fallbackPosition),
+      defender: player,
+      quality: playerDefenseQuality(player, fallbackPosition)
+    }))
+    .sort((a, b) => safeNumber(b.quality) - safeNumber(a.quality) || safeNumber(b.defender?.ovr) - safeNumber(a.defender?.ovr))
+    .slice(0, count);
+}
+
+function normalizeDefensePosition(player, fallbackPosition) {
+  const position = String(player?.position ?? fallbackPosition);
+  if (fallbackPosition === "OF" && ["LF", "CF", "RF", "OF"].includes(position)) return position;
+  if (fallbackPosition === "IF" && ["1B", "2B", "3B", "SS", "IF"].includes(position)) return position;
+  if (fallbackPosition === "C" && position === "C") return "C";
+  return fallbackPosition;
+}
+
+function playerDefenseQuality(player, fallbackPosition) {
+  const defense = safeNumber(player?.defense, 10);
+  const range = safeNumber(player?.range, defense);
+  const arm = safeNumber(player?.arm, defense);
+  const speed = safeNumber(player?.speed, 10);
+  const catching = safeNumber(player?.catching, defense);
+  if (fallbackPosition === "C") return defense * 0.4 + catching * 0.38 + arm * 0.22;
+  if (fallbackPosition === "OF") return range * 0.44 + defense * 0.3 + arm * 0.18 + speed * 0.08;
+  return defense * 0.43 + range * 0.36 + arm * 0.13 + speed * 0.08;
+}
+
+function uniquePlayers(players) {
+  const seen = new Set();
+  const unique = [];
+  for (const player of players) {
+    const key = String(player?.id ?? player?.name ?? unique.length);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(player);
+  }
+  return unique;
+}
+
+function applyFieldingError(defender) {
+  if (!defender) return;
+  ensureSeasonStats(defender).fielding.errors += 1;
 }
 
 function buildBoxScore({ away, home, awayPitchingPlan, homePitchingPlan, awayOffense, homeOffense }) {
@@ -4325,7 +4652,7 @@ function buildBoxScore({ away, home, awayPitchingPlan, homePitchingPlan, awayOff
         runsByInning: awayOffense.runsByInning,
         runs: awayOffense.runs,
         hits: awayOffense.hits,
-        errors: 0,
+        errors: homeOffense.defenseErrors,
         leftOnBase: awayOffense.leftOnBase
       },
       home: {
@@ -4334,7 +4661,7 @@ function buildBoxScore({ away, home, awayPitchingPlan, homePitchingPlan, awayOff
         runsByInning: homeOffense.runsByInning,
         runs: homeOffense.runs,
         hits: homeOffense.hits,
-        errors: 0,
+        errors: awayOffense.defenseErrors,
         leftOnBase: homeOffense.leftOnBase
       }
     },
@@ -4355,6 +4682,9 @@ function buildBoxScore({ away, home, awayPitchingPlan, homePitchingPlan, awayOff
       pitches: awayOffense.pitches + homeOffense.pitches,
       homeRuns: awayOffense.homeRuns + homeOffense.homeRuns,
       stolenBases: awayOffense.stolenBases + homeOffense.stolenBases,
+      reachedOnErrors: awayOffense.reachedOnErrors + homeOffense.reachedOnErrors,
+      doublePlays: awayOffense.doublePlays + homeOffense.doublePlays,
+      errors: awayOffense.defenseErrors + homeOffense.defenseErrors,
       pitchersUsed: awayOffense.pitchingLines.length + homeOffense.pitchingLines.length
     }
   };
@@ -4651,7 +4981,8 @@ function hitterScore(player) {
     safeNumber(player.battedBall, power) * 0.18 +
     running * 0.12 -
     safeNumber(player.fatigue) * 0.55 -
-    injuryPenalty
+    injuryPenalty -
+    anonymousReadinessPenalty(player)
   );
 }
 
@@ -4672,7 +5003,8 @@ function pitcherScore(player) {
     safeNumber(player.hrSuppression, player.movement) * 0.14 +
     safeNumber(player.pitchingIQ, player.control) * 0.14 -
     safeNumber(player.fatigue) * 0.62 -
-    injuryPenalty
+    injuryPenalty -
+    anonymousReadinessPenalty(player)
   );
 }
 
@@ -4706,6 +5038,37 @@ function estimateAttendance(home, away, weather, totalRuns) {
   const weatherBoost = Math.round((weather.temperature - 12) * 180 + (weather.runFactor - 1) * 3500);
   const base = 7000 + market * 120 + fan * 110 + morale * 45 + opponentDraw + totalRuns * 160 + weatherBoost;
   return Math.round(clamp(base, 4500, 28500));
+}
+
+function buildGameEnvironment(weather, homeTeam) {
+  const ballpark = ballparkFactorForTeam(homeTeam);
+  return {
+    ...weather,
+    runFactor: safeNumber(weather?.runFactor, 1) * ballpark.runFactor,
+    homerFactor: safeNumber(weather?.homerFactor, 1) * ballpark.homerFactor,
+    hitFactor: safeNumber(weather?.runFactor, 1) * ballpark.hitFactor,
+    ballpark
+  };
+}
+
+function ballparkFactorForTeam(team) {
+  const base = KBO_BALLPARK_FACTORS[String(team?.id ?? "")] ?? {
+    parkId: String(team?.home ?? "neutral"),
+    name: team?.home ?? "중립 구장",
+    homeRunFactor: 1,
+    sourceSeason: 2026,
+    provisional: true
+  };
+  const homerFactor = clamp(safeNumber(base.homeRunFactor, 1), 0.68, 1.58);
+  return {
+    ...base,
+    teamId: team?.id ?? "",
+    teamName: team?.name ?? "",
+    source: KBO_BALLPARK_RULE_SOURCE,
+    homerFactor,
+    runFactor: clamp(1 + (homerFactor - 1) * 0.16, 0.94, 1.08),
+    hitFactor: clamp(1 + (homerFactor - 1) * 0.055, 0.975, 1.03)
+  };
 }
 
 function buildWeather(state, date) {

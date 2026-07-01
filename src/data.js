@@ -686,6 +686,8 @@ function createSeasonStats() {
       rbi: 0,
       walks: 0,
       strikeouts: 0,
+      reachedOnErrors: 0,
+      groundedDoublePlays: 0,
       stolenBases: 0,
       caughtStealing: 0,
       totalBases: 0

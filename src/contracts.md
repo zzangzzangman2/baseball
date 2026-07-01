@@ -71,7 +71,7 @@ This app is a static HTML/ES module prototype. All paths are under:
   contact, power, eye, speed, defense,
   stuff, control, stamina, movement,
   seasonStats: {
-    batting: { games, plateAppearances, atBats, runs, hits, doubles, triples, homeRuns, rbi, walks, strikeouts, stolenBases, caughtStealing, totalBases },
+    batting: { games, plateAppearances, atBats, runs, hits, doubles, triples, homeRuns, rbi, walks, strikeouts, reachedOnErrors, groundedDoublePlays, stolenBases, caughtStealing, totalBases },
     pitching: { games, gamesStarted, wins, losses, saves, holds, blownSaves, inningsOuts, battersFaced, hitsAllowed, runsAllowed, earnedRuns, homeRunsAllowed, walksAllowed, strikeouts, pitches },
     fielding: { games, errors }
   },
@@ -93,10 +93,11 @@ Real salary/military/FA data is not claimed unless `source.kind` is `official` o
 
 ```js
 {
-  id, date, weather,
+  id, date, weather, ballpark,
   awayTeamId, homeTeamId,
   awayScore, homeScore,
   awayHits, homeHits,
+  awayErrors, homeErrors,
   awayHomeRuns, homeHomeRuns,
   awayStarter, homeStarter,
   gameType: "regular" | "postseason",
@@ -116,9 +117,19 @@ Real salary/military/FA data is not claimed unless `source.kind` is `official` o
       away: { starter, bullpen, starterTargetOuts, starterPitchLimit },
       home: { starter, bullpen, starterTargetOuts, starterPitchLimit }
     },
-    totals: { plateAppearances, pitches, homeRuns, stolenBases, pitchersUsed }
+    totals: { plateAppearances, pitches, homeRuns, stolenBases, reachedOnErrors, doublePlays, errors, pitchersUsed }
   },
-  plateAppearanceEvents: [],
+  plateAppearanceEvents: [
+    {
+      outcome: "single" | "double" | "triple" | "homeRun" | "walk" | "strikeout" | "out" | "error",
+      battedBallType: "" | "groundBall" | "lineDrive" | "flyBall",
+      fieldingPosition, defenderId, defenderName,
+      doublePlay, reachedOnError,
+      ballparkId, ballparkName,
+      earnedRuns,
+      basesBefore, basesAfter, inningEnded
+    }
+  ],
   scoringEvents: [],
   totalRuns,
   attendance
