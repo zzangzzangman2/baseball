@@ -1755,6 +1755,13 @@ img {
   background: linear-gradient(135deg, rgba(255, 244, 239, 0.92), rgba(239, 250, 245, 0.88));
 }
 
+.gamecast-feed li.is-live {
+  border-color: rgba(198, 75, 116, 0.58);
+  background:
+    linear-gradient(135deg, rgba(255, 244, 248, 0.94), rgba(239, 250, 245, 0.9));
+  box-shadow: inset 3px 0 0 rgba(198, 75, 116, 0.62);
+}
+
 .gamecast-feed span,
 .gamecast-feed small,
 .gamecast-empty strong,

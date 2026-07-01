@@ -32,6 +32,7 @@ const VIEWPORTS = [
   { label: "desktop", width: 1280, height: 900, deviceScaleFactor: 1, mobile: false },
   { label: "mobile", width: 390, height: 844, deviceScaleFactor: 3, mobile: true }
 ];
+const GAMECAST_REPLAY_WAIT_MS = 8600;
 
 const MIME_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -354,6 +355,7 @@ async function checkViewport(viewport) {
   await waitForTeamSelect();
   await evaluateInBrowser(`document.querySelector("[data-action='choose-start-team'][data-team-id='kia']")?.click(); true`);
   await waitForRenderedApp();
+  await installGamecastRafProbe();
   const preseasonProbe = await evaluateInBrowser(`
     (() => {
       const before = document.body.innerText;
@@ -384,6 +386,36 @@ async function checkViewport(viewport) {
   await evaluateInBrowser(`for (let i = 0; i < 20; i += 1) { document.querySelector("[data-action='next-day']")?.click(); } true`);
   await waitForBoxScore();
   await waitForFreeAgencyPanel();
+  await evaluateInBrowser(`document.querySelector("#gamecast")?.scrollIntoView({ block: "center", inline: "nearest" }); true`);
+  await delay(250);
+  const liveProbe = await evaluateInBrowser(`
+    (() => {
+      const score = [...document.querySelectorAll(".gamecast-scoreline strong")].map((node) => node.textContent.trim()).join("-");
+      return {
+        liveCount: document.querySelectorAll(".gamecast-feed li.is-live").length,
+        feedCount: document.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]").length,
+        nowText: document.querySelector(".gamecast-now")?.textContent?.trim() ?? "",
+        score
+      };
+    })()
+  `);
+  await delay(GAMECAST_REPLAY_WAIT_MS);
+  const playbackProbe = await evaluateInBrowser(`
+    (() => {
+      const scoreline = [...document.querySelectorAll(".gamecast-scoreline strong")].map((node) => node.textContent.trim());
+      const firstGame = document.querySelector(".game-card");
+      const gameScore = [...(firstGame?.querySelectorAll(".game-team strong") ?? [])].map((node) => node.textContent.trim());
+      return {
+        liveCount: document.querySelectorAll(".gamecast-feed li.is-live").length,
+        rafActive: window.__gamecastRafProbe?.activeCount ?? -1,
+        rafRequested: window.__gamecastRafProbe?.requested ?? 0,
+        nowText: document.querySelector(".gamecast-now")?.textContent?.trim() ?? "",
+        scoreMatchesGameCard: scoreline.length === 2 && gameScore.length === 2 && scoreline[0] === gameScore[0] && scoreline[1] === gameScore[1],
+        scoreline: scoreline.join("-"),
+        gameScore: gameScore.join("-")
+      };
+    })()
+  `);
 
   const result = await evaluateInBrowser(`
     (() => {
@@ -607,6 +639,11 @@ async function checkViewport(viewport) {
   assert(!result.hasSeasonFastButton && result.hasWeekFastButton, "전체 시즌 버튼은 없어야 하고 빠른 주간 버튼은 있어야 합니다.", "src/ui.js");
   assert(result.hasAutoOffseasonAction && result.hasNextSeasonAction, "자동 스토브/다음 시즌 버튼을 찾지 못했습니다.", "src/ui.js");
   assert(result.hasGamecastPanel && result.hasGamecastScreen && result.hasGamecastCanvas && result.hasGamecastFeed && result.hasGamecastScore, "빠른 도트 게임캐스트 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(liveProbe.feedCount > 0 && liveProbe.liveCount <= 1, `게임캐스트 live 행 수가 비정상입니다: ${liveProbe.liveCount}/${liveProbe.feedCount}`, "src/ui.js");
+  assert(playbackProbe.liveCount === 0, `게임캐스트 재생 종료 후 is-live가 남았습니다: ${playbackProbe.liveCount}`, "src/ui.js");
+  assert(playbackProbe.rafRequested > 0 && playbackProbe.rafActive === 0, `게임캐스트 rAF 정지 실패: active=${playbackProbe.rafActive}, requested=${playbackProbe.rafRequested}`, "src/ui.js");
+  assert(playbackProbe.scoreMatchesGameCard, `게임캐스트 최종 점수 불일치: gamecast=${playbackProbe.scoreline}, card=${playbackProbe.gameScore}`, "src/ui.js");
+  assert(liveProbe.feedCount <= 1 || liveProbe.nowText !== playbackProbe.nowText || liveProbe.score !== playbackProbe.scoreline, "게임캐스트 재생 중 현재 타석/스코어 동기화 변화가 감지되지 않았습니다.", "src/ui.js");
   assert(result.gamecastCanvasCssWidth % 80 === 0 && result.gamecastCanvasCssHeight % 80 === 0, `픽셀 캔버스 CSS 크기가 80의 정수 배율이 아닙니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
   assert(result.gamecastCanvasWidth >= result.gamecastCanvasCssWidth && result.gamecastCanvasHeight >= result.gamecastCanvasCssHeight, `픽셀 캔버스 버퍼가 CSS 표시 크기보다 작습니다: buffer ${result.gamecastCanvasWidth}x${result.gamecastCanvasHeight}, css ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
   assert(/pixelated|crisp-edges/i.test(result.gamecastCanvasImageRendering), `픽셀 캔버스 image-rendering=${result.gamecastCanvasImageRendering}`, "src/styles.css");
@@ -703,6 +740,40 @@ async function waitForRenderedApp() {
   }
 
   throw new VerificationError(`앱 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function installGamecastRafProbe() {
+  await evaluateInBrowser(`
+    (() => {
+      if (window.__gamecastRafProbeInstalled) return true;
+      const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+      const nativeCancelAnimationFrame = window.cancelAnimationFrame.bind(window);
+      const active = new Set();
+      const stats = { requested: 0, fired: 0, canceled: 0 };
+      window.__gamecastRafProbeInstalled = true;
+      window.__gamecastRafProbe = {
+        get activeCount() { return active.size; },
+        get requested() { return stats.requested; },
+        get fired() { return stats.fired; },
+        get canceled() { return stats.canceled; }
+      };
+      window.requestAnimationFrame = (callback) => {
+        const id = nativeRequestAnimationFrame((timestamp) => {
+          active.delete(id);
+          stats.fired += 1;
+          callback(timestamp);
+        });
+        active.add(id);
+        stats.requested += 1;
+        return id;
+      };
+      window.cancelAnimationFrame = (id) => {
+        if (active.delete(id)) stats.canceled += 1;
+        return nativeCancelAnimationFrame(id);
+      };
+      return true;
+    })()
+  `);
 }
 
 async function waitForStartScreen() {

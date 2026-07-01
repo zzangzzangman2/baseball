@@ -65,7 +65,11 @@ const POSITION_GROUP_LABELS = {
 
 const GAMECAST_PIXEL_SIZE = 80;
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
+const GAMECAST_PLAYBACK_COUNT = 8;
+const GAMECAST_PA_MS = 850;
+const GAMECAST_PA_GAP_MS = 120;
 let cleanupGamecastPixelScreen = null;
+let latestGamecastSequence = null;
 
 export function mountApp(root, state) {
   render(root, state);
@@ -1687,6 +1691,7 @@ function renderGames(state) {
 function renderGamecastPanel(state) {
   const game = state.lastGames?.[0];
   if (!game) {
+    latestGamecastSequence = null;
     return `
       <article class="panel gamecast-panel" id="gamecast">
         <div class="panel-head">
@@ -1706,13 +1711,13 @@ function renderGamecastPanel(state) {
 
   const away = normalizeGameTeam(game.away ?? game.awayTeamId, state);
   const home = normalizeGameTeam(game.home ?? game.homeTeamId, state);
-  const awayRuns = Number(game.awayRuns ?? game.awayScore ?? 0);
-  const homeRuns = Number(game.homeRuns ?? game.homeScore ?? 0);
   const events = Array.isArray(game.plateAppearanceEvents) ? game.plateAppearanceEvents : [];
-  const scoringEvents = Array.isArray(game.scoringEvents) ? game.scoringEvents : [];
-  const feedEvents = (scoringEvents.length ? scoringEvents : events.filter(isGamecastFeedEvent)).slice(-6);
-  const featured = feedEvents[feedEvents.length - 1] ?? events[events.length - 1];
-  const featuredPayload = featured ? escapeAttribute(JSON.stringify(toGamecastPixelPayload(featured))) : "";
+  const sequence = buildGamecastSequence(game, state);
+  latestGamecastSequence = sequence;
+  const feedEvents = sequence.events.length
+    ? sequence.events
+    : sortGamecastEvents(events).slice(-GAMECAST_PLAYBACK_COUNT).map((event) => normalizeGamecastEvent(event, state));
+  const featured = feedEvents[0] ?? sequence.events[0] ?? null;
 
   return `
     <article class="panel gamecast-panel" id="gamecast">
@@ -1729,20 +1734,20 @@ function renderGamecastPanel(state) {
             <span>
               ${renderTeamLogo(away, "team-logo mini-logo")}
               <b>${escapeHtml(getTeamShortName(away) ?? "Away")}</b>
-              <strong>${formatNumber(awayRuns)}</strong>
+              <strong>${formatNumber(sequence.startAway)}</strong>
             </span>
             <span>
               ${renderTeamLogo(home, "team-logo mini-logo")}
               <b>${escapeHtml(getTeamShortName(home) ?? "Home")}</b>
-              <strong>${formatNumber(homeRuns)}</strong>
+              <strong>${formatNumber(sequence.startHome)}</strong>
             </span>
           </div>
-          <div class="gamecast-screen ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen data-featured="${featuredPayload}" aria-hidden="true">
+          <div class="gamecast-screen ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen aria-hidden="true">
             <canvas id="${GAMECAST_CANVAS_ID}" class="gamecast-pixel-canvas" width="${GAMECAST_PIXEL_SIZE}" height="${GAMECAST_PIXEL_SIZE}" aria-hidden="true"></canvas>
           </div>
           <div class="gamecast-now">
-            <strong>${featured ? `${formatNumber(featured.inning)}회 ${escapeHtml(eventTeamLabel(featured, state))}` : "경기 종료"}</strong>
-            <small>${featured ? `${escapeHtml(featured.hitterName || "타자")} ${escapeHtml(outcomeLabel(featured.outcome))} · ${formatNumber(featured.runs)}득점` : "타석 이벤트 대기"}</small>
+            <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
+            <small>${featured ? escapeHtml(gamecastNowDetail(featured)) : "타석 이벤트 대기"}</small>
           </div>
         </div>
         <ol class="gamecast-feed">
@@ -1754,13 +1759,14 @@ function renderGamecastPanel(state) {
 }
 
 function renderGamecastEvent(event, state) {
+  const normalized = event?.id ? event : normalizeGamecastEvent(event, state);
   return `
-    <li class="${event.runs > 0 ? "is-scoring" : ""}">
+    <li class="${normalized.runs > 0 ? "is-scoring" : ""}" data-gamecast-event-id="${escapeAttribute(normalized.id)}">
       <span>
-        <b>${formatNumber(event.inning)}회</b>
-        ${escapeHtml(eventTeamLabel(event, state))}
+        <b>${formatNumber(normalized.inning)}회 ${normalized.side === "home" ? "말" : "초"}</b>
+        ${escapeHtml(normalized.offenseLabel || eventTeamLabel(normalized, state))}
       </span>
-      <small>${escapeHtml(event.hitterName || "타자")} ${escapeHtml(outcomeLabel(event.outcome))}${event.runs > 0 ? ` · ${formatNumber(event.runs)}득점` : ""}</small>
+      <small>${escapeHtml(gamecastNowDetail(normalized))}</small>
     </li>
   `;
 }
@@ -1773,24 +1779,105 @@ function eventTeamLabel(event, state) {
   return getTeamShortName(normalizeGameTeam(event?.offenseTeamId, state)) ?? (event?.side === "home" ? "홈" : "원정");
 }
 
+function buildGamecastSequence(game, state) {
+  const all = Array.isArray(game?.plateAppearanceEvents) ? game.plateAppearanceEvents : [];
+  const chrono = sortGamecastEvents(all);
+  const tail = chrono.slice(-GAMECAST_PLAYBACK_COUNT);
+  const tailSet = new Set(tail);
+  let startAway = 0;
+  let startHome = 0;
+
+  for (const event of chrono) {
+    if (tailSet.has(event)) continue;
+    if (event.side === "home") startHome += Number(event.runs || 0);
+    else startAway += Number(event.runs || 0);
+  }
+
+  return {
+    id: game?.id ?? `${game?.awayTeamId ?? "away"}-${game?.homeTeamId ?? "home"}`,
+    awayId: game?.awayTeamId ?? "",
+    homeId: game?.homeTeamId ?? "",
+    finalAway: Number(game?.awayScore ?? game?.awayRuns ?? 0),
+    finalHome: Number(game?.homeScore ?? game?.homeRuns ?? 0),
+    startAway,
+    startHome,
+    events: tail.map((event) => normalizeGamecastEvent(event, state))
+  };
+}
+
+function sortGamecastEvents(events) {
+  return [...(events ?? [])].sort((a, b) =>
+    (Number(a?.inning ?? 0) - Number(b?.inning ?? 0)) ||
+    ((a?.side === "home" ? 1 : 0) - (b?.side === "home" ? 1 : 0)) ||
+    (Number(a?.sequence ?? 0) - Number(b?.sequence ?? 0))
+  );
+}
+
+function normalizeGamecastEvent(event, state) {
+  const side = event?.side === "home" ? "home" : "away";
+  const runs = Number(event?.runs ?? 0);
+  const outsBefore = Number(event?.outsBefore ?? 0);
+  const outsAfter = Number(event?.outsAfter ?? 0);
+  const scoredRunners = normalizeScoredRunners(event?.scoredRunners, runs);
+  const inningEnded = Boolean(event?.inningEnded) || (outsAfter % 3 === 0 && outsAfter !== outsBefore);
+  const sequence = Number(event?.sequence ?? 0);
+  const inning = Number(event?.inning ?? 1);
+
+  return {
+    id: `${event?.gameId ?? "game"}-${side}-${inning}-${sequence}-${event?.outcome ?? "idle"}`,
+    outcome: String(event?.outcome ?? "out"),
+    inning,
+    side,
+    sequence,
+    offenseTeamId: event?.offenseTeamId ?? "",
+    offenseLabel: eventTeamLabel(event, state),
+    hitterName: String(event?.hitterName ?? "타자"),
+    runs,
+    rbi: Number(event?.rbi ?? 0),
+    outsBefore,
+    outsAfter,
+    basesBefore: toBaseTriple(event?.basesBefore),
+    basesAfter: toBaseTriple(event?.basesAfter),
+    scoredRunners,
+    scoredRunnerCount: scoredRunners.length,
+    inningEnded
+  };
+}
+
+function normalizeScoredRunners(value, runs) {
+  if (Array.isArray(value)) {
+    return value.map((runner, index) => ({
+      id: String(runner?.id ?? `run-${index + 1}`),
+      name: String(runner?.name ?? "")
+    }));
+  }
+  return Array.from({ length: Math.max(0, Number(runs) || 0) }, (_, index) => ({
+    id: `run-${index + 1}`,
+    name: ""
+  }));
+}
+
+function toBaseTriple(value) {
+  return Array.isArray(value)
+    ? [Boolean(value[0]), Boolean(value[1]), Boolean(value[2])]
+    : [false, false, false];
+}
+
+function gamecastNowTitle(event) {
+  return `${formatNumber(event?.inning ?? 1)}회 ${event?.side === "home" ? "말" : "초"} · ${event?.offenseLabel ?? ""}`;
+}
+
+function gamecastNowDetail(event) {
+  const runs = Number(event?.runs ?? 0);
+  return `${event?.hitterName || "타자"} ${outcomeLabel(event?.outcome)}${runs > 0 ? ` · ${formatNumber(runs)}득점` : ""}`;
+}
+
 function gamecastOutcomeClass(outcome) {
   if (outcome === "homeRun") return "is-homer";
   if (["single", "double", "triple"].includes(outcome)) return "is-hit";
   if (outcome === "walk") return "is-walk";
   if (outcome === "strikeout") return "is-out";
   return "is-ball";
-}
-
-function toGamecastPixelPayload(event) {
-  return {
-    id: `${event?.gameId ?? "game"}-${event?.sequence ?? event?.inning ?? "pa"}-${event?.outcome ?? "idle"}-${event?.outsAfter ?? 0}-${event?.runs ?? 0}`,
-    outcome: event?.outcome ?? "idle",
-    inning: Number(event?.inning ?? 1),
-    side: event?.side ?? "away",
-    runs: Number(event?.runs ?? 0),
-    outsBefore: Number(event?.outsBefore ?? 0),
-    outsAfter: Number(event?.outsAfter ?? 0)
-  };
 }
 
 function initGamecastPixelScreen(root) {
@@ -1806,29 +1893,24 @@ function initGamecastPixelScreen(root) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  const payload = parseGamecastPayload(screen.dataset.featured);
-  const controller = createGamecastPixelController({ screen, canvas, ctx, payload });
+  const scoreNodes = [...root.querySelectorAll(".gamecast-scoreline strong")];
+  const nowTitle = root.querySelector(".gamecast-now strong");
+  const nowDetail = root.querySelector(".gamecast-now small");
+  const feedItems = [...root.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")];
+  const controller = createGamecastPixelController({
+    screen,
+    canvas,
+    ctx,
+    sequence: latestGamecastSequence,
+    scoreNodes,
+    nowTitle,
+    nowDetail,
+    feedItems
+  });
   cleanupGamecastPixelScreen = controller.cleanup;
 }
 
-function parseGamecastPayload(value) {
-  try {
-    const parsed = JSON.parse(value || "{}");
-    return {
-      id: String(parsed.id ?? "idle"),
-      outcome: String(parsed.outcome ?? "idle"),
-      inning: Number(parsed.inning ?? 1),
-      side: parsed.side === "home" ? "home" : "away",
-      runs: Number(parsed.runs ?? 0),
-      outsBefore: Number(parsed.outsBefore ?? 0),
-      outsAfter: Number(parsed.outsAfter ?? 0)
-    };
-  } catch {
-    return { id: "idle", outcome: "idle", inning: 1, side: "away", runs: 0, outsBefore: 0, outsAfter: 0 };
-  }
-}
-
-function createGamecastPixelController({ screen, canvas, ctx, payload }) {
+function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, feedItems }) {
   const palette = {
     outline: "#2b2830",
     grassD: "#4f8a73",
@@ -1854,34 +1936,76 @@ function createGamecastPixelController({ screen, canvas, ctx, payload }) {
     hidden: typeof document !== "undefined" ? document.hidden : false,
     scale: 1,
     dpr: 1,
-    startTime: 0,
+    elapsedMs: 0,
+    lastTimestamp: 0,
+    done: false,
     shakeTimer: 0,
-    payload,
+    sequence: normalizeGamecastSequenceForPlayback(sequence),
+    scoreNodes,
+    nowTitle,
+    nowDetail,
+    feedItems,
     palette,
-    prefersReducedMotion
+    prefersReducedMotion,
+    shakenEventId: ""
   };
 
   const resize = () => resizeGamecastCanvas(screen, canvas, ctx, state);
-  const drawStill = () => drawGamecastFrame(ctx, state, 999999);
   const stop = () => {
     if (state.animationFrame) {
       window.cancelAnimationFrame(state.animationFrame);
       state.animationFrame = 0;
     }
+    state.lastTimestamp = 0;
+  };
+  const renderCurrentFrame = (forceFinal = false) => {
+    const frame = buildGamecastFrameState(state, forceFinal);
+    drawGamecastFrame(ctx, state, frame);
+    syncGamecastDom(state, frame);
+    return frame;
+  };
+  const finish = () => {
+    state.done = true;
+    state.elapsedMs = state.sequence.events.length * (GAMECAST_PA_MS + GAMECAST_PA_GAP_MS);
+    stop();
+    renderCurrentFrame(true);
+  };
+  const pauseOffscreen = () => {
+    stop();
+    const frame = buildGamecastFrameState(state, false);
+    drawGamecastFrame(ctx, state, frame);
+    syncGamecastDom(state, { ...frame, done: true });
   };
   const loop = (timestamp) => {
-    if (!state.startTime) state.startTime = timestamp;
-    if (state.visible && !state.hidden) {
-      drawGamecastFrame(ctx, state, timestamp - state.startTime);
-      state.animationFrame = window.requestAnimationFrame(loop);
-    } else {
-      stop();
+    if (state.hidden) {
+      finish();
+      return;
     }
+    if (!state.visible) {
+      pauseOffscreen();
+      return;
+    }
+    if (!state.lastTimestamp) state.lastTimestamp = timestamp;
+    const delta = Math.min(80, Math.max(0, timestamp - state.lastTimestamp));
+    state.lastTimestamp = timestamp;
+    state.elapsedMs += delta;
+    const frame = renderCurrentFrame(false);
+    if (frame.event?.outcome === "homeRun" && !state.prefersReducedMotion && state.shakenEventId !== frame.event.id) {
+      triggerGamecastShake(screen, state);
+      state.shakenEventId = frame.event.id;
+    }
+    if (frame.done) {
+      state.done = true;
+      stop();
+      return;
+    }
+    state.animationFrame = window.requestAnimationFrame(loop);
   };
   const start = () => {
-    if (state.prefersReducedMotion) {
+    if (state.prefersReducedMotion || !state.sequence.events.length || state.done) {
       stop();
-      drawStill();
+      state.done = true;
+      renderCurrentFrame(true);
       return;
     }
     if (!state.animationFrame && state.visible && !state.hidden) {
@@ -1890,28 +2014,23 @@ function createGamecastPixelController({ screen, canvas, ctx, payload }) {
   };
   const onVisibilityChange = () => {
     state.hidden = Boolean(document.hidden);
-    if (state.hidden) stop();
+    if (state.hidden) finish();
     else start();
   };
 
   resize();
-  drawStill();
-
-  if (payload.outcome === "homeRun" && !state.prefersReducedMotion) {
-    screen.classList.add("is-shaking");
-    state.shakeTimer = window.setTimeout(() => screen.classList.remove("is-shaking"), 190);
-  }
+  renderCurrentFrame(state.prefersReducedMotion || !state.sequence.events.length);
 
   const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
     resize();
-    drawStill();
+    renderCurrentFrame(state.done || state.prefersReducedMotion);
   }) : null;
   resizeObserver?.observe(screen);
 
   const intersectionObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver((entries) => {
     state.visible = entries.some((entry) => entry.isIntersecting);
     if (state.visible) start();
-    else stop();
+    else pauseOffscreen();
   }, { threshold: 0.05 }) : null;
   intersectionObserver?.observe(screen);
 
@@ -1930,8 +2049,26 @@ function createGamecastPixelController({ screen, canvas, ctx, payload }) {
         document.removeEventListener("visibilitychange", onVisibilityChange);
       }
       screen.classList.remove("is-shaking");
+      for (const item of state.feedItems ?? []) item.classList.remove("is-live");
     }
   };
+}
+
+function normalizeGamecastSequenceForPlayback(sequence) {
+  return {
+    id: String(sequence?.id ?? "gamecast-idle"),
+    startAway: Number(sequence?.startAway ?? sequence?.finalAway ?? 0),
+    startHome: Number(sequence?.startHome ?? sequence?.finalHome ?? 0),
+    finalAway: Number(sequence?.finalAway ?? sequence?.startAway ?? 0),
+    finalHome: Number(sequence?.finalHome ?? sequence?.startHome ?? 0),
+    events: Array.isArray(sequence?.events) ? sequence.events : []
+  };
+}
+
+function triggerGamecastShake(screen, state) {
+  screen.classList.add("is-shaking");
+  if (state.shakeTimer) window.clearTimeout(state.shakeTimer);
+  state.shakeTimer = window.setTimeout(() => screen.classList.remove("is-shaking"), 190);
 }
 
 function resizeGamecastCanvas(screen, canvas, ctx, state) {
@@ -1955,18 +2092,15 @@ function resizeGamecastCanvas(screen, canvas, ctx, state) {
   ctx.setTransform(canvas.width / GAMECAST_PIXEL_SIZE, 0, 0, canvas.height / GAMECAST_PIXEL_SIZE, 0, 0);
 }
 
-function drawGamecastFrame(ctx, state, elapsedMs) {
+function drawGamecastFrame(ctx, state, frame) {
   const palette = state.palette;
-  const payload = state.payload;
-  const reduced = state.prefersReducedMotion;
   clearPixelCanvas(ctx, palette);
-  drawPixelField(ctx, palette, elapsedMs);
-  const baseState = gamecastBaseState(payload);
-  const animation = reduced ? finalGamecastAnimation(payload) : gamecastAnimationState(payload, elapsedMs);
-  drawPixelDiamond(ctx, palette, baseState, payload);
-  drawPixelOutPips(ctx, palette, payload);
-  drawPixelSideIcon(ctx, palette, payload);
-  drawPixelAction(ctx, palette, animation, payload);
+  drawPixelField(ctx, palette);
+  drawPixelDiamond(ctx, palette, frame.bases);
+  drawPixelOutPips(ctx, palette, frame);
+  drawPixelSideIcon(ctx, palette, frame);
+  drawPixelAction(ctx, palette, frame);
+  if (frame.scoreFlash) drawPixelScoreBurst(ctx, palette, frame);
 }
 
 function clearPixelCanvas(ctx, palette) {
@@ -1974,12 +2108,14 @@ function clearPixelCanvas(ctx, palette) {
   ctx.fillRect(0, 0, GAMECAST_PIXEL_SIZE, GAMECAST_PIXEL_SIZE);
 }
 
-function drawPixelField(ctx, palette, elapsedMs) {
+function drawPixelField(ctx, palette) {
   ctx.fillStyle = palette.grassL;
-  for (let y = 0; y < GAMECAST_PIXEL_SIZE; y += 4) {
-    for (let x = (y / 4) % 2 === 0 ? 0 : 4; x < GAMECAST_PIXEL_SIZE; x += 8) {
-      ctx.fillRect(x, y, 4, 4);
-    }
+  for (let y = 0; y < GAMECAST_PIXEL_SIZE; y += 8) {
+    ctx.fillRect(0, y, GAMECAST_PIXEL_SIZE, 4);
+  }
+  ctx.fillStyle = palette.grassD;
+  for (let y = 4; y < GAMECAST_PIXEL_SIZE; y += 12) {
+    ctx.fillRect(0, y, GAMECAST_PIXEL_SIZE, 2);
   }
   ctx.fillStyle = palette.grassD;
   for (let y = 44; y < GAMECAST_PIXEL_SIZE; y += 8) {
@@ -1987,65 +2123,80 @@ function drawPixelField(ctx, palette, elapsedMs) {
       ctx.fillRect(x, y, 2, 2);
     }
   }
-  if (Math.floor(elapsedMs / 620) % 3 === 0) {
-    ctx.fillStyle = palette.dirtL;
-    ctx.fillRect(39, 45, 1, 1);
-  }
+  drawPixelLine(ctx, 40, 66, 6, 24, palette.base, 1);
+  drawPixelLine(ctx, 40, 66, 74, 24, palette.base, 1);
 }
 
-function drawPixelDiamond(ctx, palette, baseState, payload) {
+function drawPixelDiamond(ctx, palette, baseState) {
   fillPixelDiamond(ctx, 40, 48, 27, 24, palette.outline);
   fillPixelDiamond(ctx, 40, 48, 25, 22, palette.dirtM);
   fillPixelDiamond(ctx, 40, 48, 18, 16, palette.dirtL);
-  fillPixelDiamond(ctx, 40, 48, 13, 11, palette.dirtM);
+  fillPixelDiamond(ctx, 40, 48, 12, 10, palette.dirtM);
 
   const bases = gamecastBasePositions();
-  drawPixelLine(ctx, bases.home.x, bases.home.y, bases.first.x, bases.first.y, palette.dirtL);
-  drawPixelLine(ctx, bases.first.x, bases.first.y, bases.second.x, bases.second.y, palette.dirtL);
-  drawPixelLine(ctx, bases.second.x, bases.second.y, bases.third.x, bases.third.y, palette.dirtL);
-  drawPixelLine(ctx, bases.third.x, bases.third.y, bases.home.x, bases.home.y, palette.dirtL);
+  drawPixelLine(ctx, bases.home.x, bases.home.y, bases.first.x, bases.first.y, palette.dirtD, 1);
+  drawPixelLine(ctx, bases.first.x, bases.first.y, bases.second.x, bases.second.y, palette.dirtD, 1);
+  drawPixelLine(ctx, bases.second.x, bases.second.y, bases.third.x, bases.third.y, palette.dirtD, 1);
+  drawPixelLine(ctx, bases.third.x, bases.third.y, bases.home.x, bases.home.y, palette.dirtD, 1);
 
   ctx.fillStyle = palette.dirtD;
-  ctx.fillRect(37, 45, 7, 2);
-  ctx.fillRect(36, 47, 9, 3);
-  ctx.fillRect(38, 50, 5, 2);
+  ctx.fillRect(36, 45, 9, 4);
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(39, 45, 3, 1);
+  ctx.fillRect(40, 46, 1, 1);
 
-  drawPixelBase(ctx, palette, bases.home, baseState.home);
-  drawPixelBase(ctx, palette, bases.first, baseState.first);
-  drawPixelBase(ctx, palette, bases.second, baseState.second);
-  drawPixelBase(ctx, palette, bases.third, baseState.third);
+  drawPixelBatterBoxes(ctx, palette);
+  drawPixelHomePlate(ctx, palette, bases.home);
 
-  if (payload.runs > 0) {
-    ctx.fillStyle = payload.outcome === "homeRun" ? palette.homerL : palette.runnerL;
-    ctx.fillRect(5, 67, Math.min(18, payload.runs * 6), 2);
-  }
+  drawBaseAndRunner(ctx, palette, bases.first, baseState[0]);
+  drawBaseAndRunner(ctx, palette, bases.second, baseState[1]);
+  drawBaseAndRunner(ctx, palette, bases.third, baseState[2]);
 }
 
-function drawPixelBase(ctx, palette, position, occupied) {
-  ctx.fillStyle = palette.baseSh;
-  ctx.fillRect(position.x - 1, position.y + 1, 4, 3);
-  ctx.fillStyle = occupied ? palette.runner : palette.base;
-  ctx.fillRect(position.x - 1, position.y - 1, 3, 3);
+function drawPixelBatterBoxes(ctx, palette) {
+  ctx.fillStyle = palette.dirtL;
+  ctx.fillRect(34, 62, 2, 4);
+  ctx.fillRect(44, 62, 2, 4);
+}
+
+function drawPixelHomePlate(ctx, palette, position) {
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(position.x - 2, position.y - 2, 1, 5);
-  ctx.fillRect(position.x + 2, position.y - 2, 1, 5);
+  ctx.fillRect(position.x - 2, position.y - 2, 5, 3);
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(position.x - 1, position.y - 2, 3, 1);
+  ctx.fillRect(position.x - 1, position.y - 1, 3, 1);
+  ctx.fillRect(position.x, position.y, 1, 1);
 }
 
-function drawPixelOutPips(ctx, palette, payload) {
-  const outs = Math.min(2, Math.max(0, Number(payload.outsAfter ?? 0) % 3));
-  for (let index = 0; index < 2; index += 1) {
+function drawBaseAndRunner(ctx, palette, position, occupied) {
+  ctx.fillStyle = palette.baseSh;
+  ctx.fillRect(position.x - 1, position.y + 1, 3, 1);
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(position.x - 1, position.y - 1, 3, 3);
+  if (!occupied) return;
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(position.x - 1, position.y - 3, 3, 3);
+  ctx.fillStyle = palette.runner;
+  ctx.fillRect(position.x, position.y - 3, 1, 2);
+  ctx.fillStyle = palette.runnerL;
+  ctx.fillRect(position.x, position.y - 3, 1, 1);
+}
+
+function drawPixelOutPips(ctx, palette, frame) {
+  const outs = Math.min(3, Math.max(0, Number(frame.outs ?? 0)));
+  for (let index = 0; index < 3; index += 1) {
     ctx.fillStyle = palette.outline;
-    ctx.fillRect(56 + index * 8, 70, 5, 5);
+    ctx.fillRect(52 + index * 8, 70, 5, 5);
     ctx.fillStyle = index < outs ? palette.out : palette.baseSh;
-    ctx.fillRect(57 + index * 8, 71, 3, 3);
+    ctx.fillRect(53 + index * 8, 71, 3, 3);
   }
 }
 
-function drawPixelSideIcon(ctx, palette, payload) {
+function drawPixelSideIcon(ctx, palette, frame) {
   const x = 9;
   const y = 8;
   ctx.fillStyle = palette.outline;
-  if (payload.side === "home") {
+  if (frame.side === "home") {
     ctx.fillRect(x + 2, y, 3, 1);
     ctx.fillRect(x + 1, y + 1, 5, 1);
     ctx.fillRect(x, y + 2, 7, 1);
@@ -2054,116 +2205,25 @@ function drawPixelSideIcon(ctx, palette, payload) {
     ctx.fillRect(x + 1, y + 1, 5, 1);
     ctx.fillRect(x + 2, y + 2, 3, 1);
   }
-  ctx.fillStyle = payload.side === "home" ? palette.runner : palette.walk;
+  ctx.fillStyle = frame.side === "home" ? palette.runner : palette.walk;
   ctx.fillRect(x + 2, y + 4, 3, 2);
 }
 
-function drawPixelAction(ctx, palette, animation, payload) {
-  const outcome = payload.outcome;
-  if (outcome === "homeRun") {
-    if (animation.flash) {
-      ctx.fillStyle = palette.base;
-      for (let y = 0; y < GAMECAST_PIXEL_SIZE; y += 2) {
-        ctx.fillRect(0, y, GAMECAST_PIXEL_SIZE, 1);
-      }
+function drawPixelAction(ctx, palette, frame) {
+  if (frame.flash) {
+    ctx.fillStyle = palette.base;
+    for (let y = 0; y < GAMECAST_PIXEL_SIZE; y += 4) {
+      ctx.fillRect(0, y, GAMECAST_PIXEL_SIZE, 1);
     }
-    drawTrail(ctx, palette.homerL, animation.trail);
-    drawPixelBall(ctx, palette, animation.position, palette.homer);
-    return;
   }
-  if (["single", "double", "triple", "walk"].includes(outcome)) {
-    drawTrail(ctx, outcome === "walk" ? palette.walk : palette.hit, animation.trail);
-    drawPixelRunner(ctx, palette, animation.position, animation.squash, outcome === "walk" ? palette.walk : palette.runner);
-    return;
+  if (frame.ballTrail?.length) drawTrail(ctx, palette.homerL, frame.ballTrail);
+  for (const runner of frame.runners ?? []) {
+    drawTrail(ctx, runner.trailColor ?? palette.runnerL, runner.trail);
   }
-  if (["strikeout", "out"].includes(outcome)) {
-    if (animation.visible) {
-      drawPixelRunner(ctx, palette, animation.position, false, palette.out);
-    }
-    return;
+  if (frame.ball) drawPixelBall(ctx, palette, frame.ball, frame.ballColor ?? palette.base);
+  for (const runner of frame.runners ?? []) {
+    drawPixelRunner(ctx, palette, runner.position, runner.squash, runner.color);
   }
-  drawPixelRunner(ctx, palette, gamecastBasePositions().home, false, palette.runner);
-}
-
-function gamecastAnimationState(payload, elapsedMs) {
-  const bases = gamecastBasePositions();
-  const outcome = payload.outcome;
-  if (outcome === "homeRun") return homeRunAnimationState(elapsedMs);
-  if (outcome === "walk") return pathAnimationState([bases.home, bases.first], elapsedMs, 1100, "linear");
-  if (["single", "double", "triple"].includes(outcome)) {
-    const count = outcome === "single" ? 1 : outcome === "double" ? 2 : 3;
-    return pathAnimationState([bases.home, bases.first, bases.second, bases.third].slice(0, count + 1), elapsedMs, 290, "easeOutBack");
-  }
-  if (["strikeout", "out"].includes(outcome)) {
-    return {
-      position: { ...bases.home },
-      trail: [],
-      visible: Math.floor(elapsedMs / 130) % 2 === 0 || elapsedMs > 620
-    };
-  }
-  return { position: { ...bases.home }, trail: [], visible: true };
-}
-
-function finalGamecastAnimation(payload) {
-  const bases = gamecastBasePositions();
-  const outcome = payload.outcome;
-  if (outcome === "homeRun") return { position: { x: 40, y: 12 }, trail: [], flash: false };
-  if (outcome === "triple") return { position: { ...bases.third }, trail: [], squash: false };
-  if (outcome === "double") return { position: { ...bases.second }, trail: [], squash: false };
-  if (outcome === "single" || outcome === "walk") return { position: { ...bases.first }, trail: [], squash: false };
-  if (outcome === "strikeout" || outcome === "out") return { position: { ...bases.home }, trail: [], visible: true };
-  return { position: { ...bases.home }, trail: [], visible: true };
-}
-
-function pathAnimationState(path, elapsedMs, segmentMs, mode) {
-  const totalMs = Math.max(segmentMs, segmentMs * (path.length - 1));
-  const time = Math.min(elapsedMs, totalMs);
-  const segment = Math.min(path.length - 2, Math.floor(time / segmentMs));
-  const local = Math.min(1, (time - segment * segmentMs) / segmentMs);
-  const eased = mode === "linear" ? local : easeOutBack(local);
-  const from = path[segment] ?? path[0];
-  const to = path[segment + 1] ?? path[path.length - 1];
-  const position = {
-    x: Math.round(lerp(from.x, to.x, eased)),
-    y: Math.round(lerp(from.y, to.y, eased))
-  };
-  const trail = [
-    { x: Math.round(lerp(from.x, to.x, Math.max(0, eased - 0.15))), y: Math.round(lerp(from.y, to.y, Math.max(0, eased - 0.15))) },
-    { x: Math.round(lerp(from.x, to.x, Math.max(0, eased - 0.3))), y: Math.round(lerp(from.y, to.y, Math.max(0, eased - 0.3))) }
-  ];
-  return {
-    position,
-    trail,
-    squash: elapsedMs >= totalMs && elapsedMs <= totalMs + 110,
-    visible: true
-  };
-}
-
-function homeRunAnimationState(elapsedMs) {
-  const duration = 700;
-  const t = Math.min(1, elapsedMs / duration);
-  const eased = easeOutCubic(t);
-  const x = Math.round(40 + Math.sin(t * Math.PI) * 20);
-  const y = Math.round(65 - 48 * eased - Math.sin(t * Math.PI) * 18);
-  const trail = [
-    { x: Math.round(40 + Math.sin(Math.max(0, t - 0.08) * Math.PI) * 20), y: Math.round(65 - 48 * Math.max(0, eased - 0.08) - Math.sin(Math.max(0, t - 0.08) * Math.PI) * 18) },
-    { x: Math.round(40 + Math.sin(Math.max(0, t - 0.16) * Math.PI) * 20), y: Math.round(65 - 48 * Math.max(0, eased - 0.16) - Math.sin(Math.max(0, t - 0.16) * Math.PI) * 18) }
-  ];
-  return {
-    position: { x, y },
-    trail,
-    flash: elapsedMs >= duration && elapsedMs < duration + 42,
-    visible: true
-  };
-}
-
-function gamecastBaseState(payload) {
-  return {
-    home: payload.outcome === "homeRun" && payload.runs > 0,
-    first: ["single", "walk"].includes(payload.outcome),
-    second: payload.outcome === "double",
-    third: payload.outcome === "triple"
-  };
 }
 
 function gamecastBasePositions() {
@@ -2173,6 +2233,232 @@ function gamecastBasePositions() {
     second: { x: 40, y: 28 },
     third: { x: 18, y: 48 }
   };
+}
+
+function buildGamecastFrameState(state, forceFinal = false) {
+  const seq = state.sequence;
+  const events = seq.events;
+  if (!events.length) {
+    return {
+      done: true,
+      event: null,
+      side: "away",
+      bases: [false, false, false],
+      outs: 0,
+      score: { away: seq.finalAway, home: seq.finalHome },
+      runners: []
+    };
+  }
+
+  const slotMs = GAMECAST_PA_MS + GAMECAST_PA_GAP_MS;
+  const totalMs = events.length * slotMs;
+  if (forceFinal || state.prefersReducedMotion || state.elapsedMs >= totalMs) {
+    const last = events[events.length - 1];
+    return {
+      done: true,
+      event: last,
+      side: last.side,
+      bases: last.inningEnded ? [false, false, false] : last.basesAfter,
+      outs: last.inningEnded ? 0 : outsInInning(last.outsAfter),
+      score: { away: seq.finalAway, home: seq.finalHome },
+      runners: [],
+      progress: 1
+    };
+  }
+
+  const index = Math.min(events.length - 1, Math.floor(state.elapsedMs / slotMs));
+  const localMs = state.elapsedMs - index * slotMs;
+  const event = events[index];
+  const progress = Math.max(0, Math.min(1, localMs / GAMECAST_PA_MS));
+  const settling = progress >= 0.72;
+  const clearingInning = event.inningEnded && progress >= 0.92;
+  const baseOccupancy = settling
+    ? (clearingInning ? [false, false, false] : event.basesAfter)
+    : baseOccupancyDuringMove(event, progress);
+  const score = scoreForGamecastFrame(seq, events, index, progress >= 0.68);
+
+  return {
+    done: false,
+    event,
+    side: event.side,
+    bases: baseOccupancy,
+    outs: displayOutsForEvent(event, progress),
+    score,
+    runners: buildRunnerSprites(event, progress, state.palette),
+    ball: buildBallSprite(event, progress),
+    ballTrail: buildBallTrail(event, progress),
+    ballColor: event.outcome === "homeRun" ? state.palette.homer : state.palette.base,
+    scoreFlash: event.runs > 0 && progress >= 0.62 && progress <= 0.84,
+    flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
+    progress
+  };
+}
+
+function baseOccupancyDuringMove(event, progress) {
+  const advance = gamecastAdvanceCount(event.outcome);
+  if (progress < 0.15 || advance <= 0) return event.basesBefore;
+  return [false, false, false];
+}
+
+function scoreForGamecastFrame(seq, events, currentIndex, includeCurrent) {
+  let away = seq.startAway;
+  let home = seq.startHome;
+  for (let index = 0; index < events.length; index += 1) {
+    if (index > currentIndex || (index === currentIndex && !includeCurrent)) break;
+    if (events[index].side === "home") home += Number(events[index].runs || 0);
+    else away += Number(events[index].runs || 0);
+  }
+  return { away, home };
+}
+
+function displayOutsForEvent(event, progress) {
+  if (event.inningEnded && progress >= 0.72 && progress < 0.92) return 3;
+  if (event.inningEnded && progress >= 0.92) return 0;
+  return outsInInning(progress >= 0.72 ? event.outsAfter : event.outsBefore);
+}
+
+function outsInInning(value) {
+  const outs = Math.max(0, Math.floor(Number(value ?? 0)));
+  return outs % 3;
+}
+
+function buildRunnerSprites(event, progress, palette) {
+  const advance = gamecastAdvanceCount(event.outcome);
+  if (progress < 0.15 || progress >= 0.72) return [];
+
+  const moveT = Math.max(0, Math.min(1, (progress - 0.15) / 0.57));
+  const eased = easeOutCubic(moveT);
+  const runners = [];
+
+  if (advance > 0) {
+    event.basesBefore.forEach((occupied, index) => {
+      if (!occupied) return;
+      const startBase = index + 1;
+      const targetBase = Math.min(4, startBase + advance);
+      runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, palette.runner, palette.runnerL, moveT));
+    });
+    const batterTarget = Math.min(4, advance);
+    runners.push(makeRunnerSprite(gamecastPathBetween(0, batterTarget), eased, event.outcome === "walk" ? palette.walk : palette.runner, palette.runnerL, moveT));
+    return runners;
+  }
+
+  const bases = gamecastBasePositions();
+  const outT = Math.min(1, moveT * 1.3);
+  runners.push({
+    position: {
+      x: Math.round(lerp(bases.home.x, bases.home.x + 7, outT)),
+      y: Math.round(lerp(bases.home.y, bases.home.y - 3, outT))
+    },
+    trail: [],
+    color: palette.out,
+    squash: progress > 0.55
+  });
+  return runners;
+}
+
+function makeRunnerSprite(path, eased, color, trailColor, moveT) {
+  const position = positionAlongPath(path, eased);
+  return {
+    position,
+    trail: [
+      positionAlongPath(path, Math.max(0, eased - 0.12)),
+      positionAlongPath(path, Math.max(0, eased - 0.24))
+    ],
+    color,
+    trailColor,
+    squash: moveT > 0.92
+  };
+}
+
+function buildBallSprite(event, progress) {
+  const bases = gamecastBasePositions();
+  if (progress < 0.15) {
+    const t = progress / 0.15;
+    return {
+      x: Math.round(lerp(40, bases.home.x, t)),
+      y: Math.round(lerp(46, bases.home.y - 4, t))
+    };
+  }
+  if (event.outcome !== "homeRun" || progress >= 0.72) return null;
+  const t = Math.max(0, Math.min(1, (progress - 0.15) / 0.57));
+  const eased = easeOutCubic(t);
+  return {
+    x: Math.round(40 + Math.sin(t * Math.PI) * 22),
+    y: Math.round(63 - 48 * eased - Math.sin(t * Math.PI) * 12)
+  };
+}
+
+function buildBallTrail(event, progress) {
+  if (event.outcome !== "homeRun" || progress < 0.18 || progress >= 0.72) return [];
+  const points = [];
+  for (const offset of [0.08, 0.16]) {
+    const p = Math.max(0.15, progress - offset);
+    const t = Math.max(0, Math.min(1, (p - 0.15) / 0.57));
+    const eased = easeOutCubic(t);
+    points.push({
+      x: Math.round(40 + Math.sin(t * Math.PI) * 22),
+      y: Math.round(63 - 48 * eased - Math.sin(t * Math.PI) * 12)
+    });
+  }
+  return points;
+}
+
+function gamecastAdvanceCount(outcome) {
+  if (outcome === "homeRun") return 4;
+  if (outcome === "triple") return 3;
+  if (outcome === "double") return 2;
+  if (outcome === "single" || outcome === "walk") return 1;
+  return 0;
+}
+
+function gamecastPathBetween(startBase, targetBase) {
+  const bases = gamecastBasePositions();
+  const points = [bases.home, bases.first, bases.second, bases.third, { x: 40, y: 70 }];
+  const start = Math.max(0, Math.min(4, startBase));
+  const target = Math.max(start, Math.min(4, targetBase));
+  return points.slice(start, target + 1).map((point) => ({ ...point }));
+}
+
+function positionAlongPath(path, t) {
+  if (!path.length) return { x: 40, y: 66 };
+  if (path.length === 1) return { ...path[0] };
+  const scaled = t * (path.length - 1);
+  const index = Math.min(path.length - 2, Math.floor(scaled));
+  const local = scaled - index;
+  const from = path[index];
+  const to = path[index + 1];
+  return {
+    x: Math.round(lerp(from.x, to.x, local)),
+    y: Math.round(lerp(from.y, to.y, local))
+  };
+}
+
+function syncGamecastDom(state, frame) {
+  if (state.scoreNodes?.[0]) state.scoreNodes[0].textContent = formatNumber(frame.score?.away ?? 0);
+  if (state.scoreNodes?.[1]) state.scoreNodes[1].textContent = formatNumber(frame.score?.home ?? 0);
+  if (state.nowTitle) state.nowTitle.textContent = frame.event ? gamecastNowTitle(frame.event) : "경기 종료";
+  if (state.nowDetail) state.nowDetail.textContent = frame.event ? gamecastNowDetail(frame.event) : "타석 이벤트 대기";
+  for (const item of state.feedItems ?? []) {
+    item.classList.toggle("is-live", Boolean(frame.event?.id && !frame.done && item.dataset.gamecastEventId === frame.event.id));
+  }
+}
+
+function drawPixelScoreBurst(ctx, palette, frame) {
+  const count = Math.max(1, Math.min(4, Number(frame.event?.runs ?? 1)));
+  const x = 8;
+  const y = 63;
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x + 2, y, 1, 7);
+  ctx.fillRect(x, y + 3, 5, 1);
+  ctx.fillRect(x + 7, y, 2, 7);
+  ctx.fillStyle = palette.homerL;
+  ctx.fillRect(x + 2, y + 1, 1, 5);
+  ctx.fillRect(x + 1, y + 3, 3, 1);
+  ctx.fillRect(x + 8, y + 1, 1, 5);
+  ctx.fillStyle = palette.runnerL;
+  for (let index = 1; index < count; index += 1) {
+    ctx.fillRect(x + 11 + index * 2, y + 5, 1, 1);
+  }
 }
 
 function drawPixelRunner(ctx, palette, position, squash, color) {
@@ -2210,7 +2496,7 @@ function fillPixelDiamond(ctx, cx, cy, rx, ry, color) {
   }
 }
 
-function drawPixelLine(ctx, x0, y0, x1, y1, color) {
+function drawPixelLine(ctx, x0, y0, x1, y1, color, size = 1) {
   let x = Math.round(x0);
   let y = Math.round(y0);
   const targetX = Math.round(x1);
@@ -2222,7 +2508,7 @@ function drawPixelLine(ctx, x0, y0, x1, y1, color) {
   let error = dx + dy;
   ctx.fillStyle = color;
   while (true) {
-    ctx.fillRect(x, y, 2, 2);
+    ctx.fillRect(x, y, size, size);
     if (x === targetX && y === targetY) break;
     const e2 = 2 * error;
     if (e2 >= dy) {

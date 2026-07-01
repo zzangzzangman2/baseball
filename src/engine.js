@@ -3395,6 +3395,7 @@ function simulateOffense({ gameId, offense, defense, lineup, pitchingPlan, seed,
       plateAppearance: result.plateAppearances,
       side
     });
+    const basesBeforePlay = [Boolean(bases[0]), Boolean(bases[1]), Boolean(bases[2])];
     const advancement = applyPlateAppearanceOutcome({
       outcome,
       hitter,
@@ -3431,7 +3432,10 @@ function simulateOffense({ gameId, offense, defense, lineup, pitchingPlan, seed,
       outcome,
       advancement,
       outsBefore: outsBeforePlay,
-      outsAfter: outs
+      outsAfter: outs,
+      basesBefore: basesBeforePlay,
+      basesAfter: [Boolean(bases[0]), Boolean(bases[1]), Boolean(bases[2])],
+      inningEnded: inningEnded(outsBeforePlay, outs)
     });
 
     if (inningEnded(outsBeforePlay, outs)) {
@@ -3836,7 +3840,14 @@ function addPlateAppearanceEvent(result, input) {
     runs: input.advancement.runs,
     rbi: input.advancement.rbi,
     outsBefore: input.outsBefore,
-    outsAfter: input.outsAfter
+    outsAfter: input.outsAfter,
+    basesBefore: toBaseOccupancy(input.basesBefore),
+    basesAfter: toBaseOccupancy(input.basesAfter),
+    scoredRunners: (input.advancement?.scoredRunners ?? []).map((runner) => ({
+      id: runner.id ?? "",
+      name: runner.name ?? ""
+    })),
+    inningEnded: Boolean(input.inningEnded)
   };
 
   result.plateAppearanceEvents.push(event);
@@ -4082,6 +4093,8 @@ function mergeGameEvents(...eventGroups) {
     .sort((a, b) => {
       const inningDiff = safeNumber(a.inning) - safeNumber(b.inning);
       if (inningDiff !== 0) return inningDiff;
+      const halfDiff = (a.side === "home" ? 1 : 0) - (b.side === "home" ? 1 : 0);
+      if (halfDiff !== 0) return halfDiff;
       return safeNumber(a.sequence) - safeNumber(b.sequence);
     });
 }
@@ -4155,6 +4168,12 @@ function makeGameId(dateKey, gameIndex, awayTeamId, homeTeamId, gamesPlayed) {
 
 function countOccupiedBases(bases) {
   return bases.filter(Boolean).length;
+}
+
+function toBaseOccupancy(value) {
+  return Array.isArray(value)
+    ? [Boolean(value[0]), Boolean(value[1]), Boolean(value[2])]
+    : [false, false, false];
 }
 
 function buildPitchingPlan(team) {

@@ -849,6 +849,8 @@ function checkGameBoxScoreEventLog() {
   engineModule.simulateDay(state);
   const problems = [];
   const gameIds = new Set(state.lastGames.map((game) => game.id));
+  let multiRunnerBaseStateSeen = false;
+  let paSchemaCount = 0;
 
   if (!Array.isArray(state.eventLog)) {
     problems.push("state.eventLog가 배열이 아님");
@@ -905,6 +907,30 @@ function checkGameBoxScoreEventLog() {
     if (scoringEvents.some((event) => safeInteger(event.runs) <= 0)) {
       problems.push(`${game.id}: 득점 이벤트 runs 값 오류`);
     }
+    for (const event of paEvents) {
+      paSchemaCount += 1;
+      if (!isBooleanTriple(event.basesBefore)) {
+        problems.push(`${game.id}: PA ${event.sequence} basesBefore schema 오류`);
+      }
+      if (!isBooleanTriple(event.basesAfter)) {
+        problems.push(`${game.id}: PA ${event.sequence} basesAfter schema 오류`);
+      }
+      const runs = safeInteger(event.runs);
+      const scoredRunners = Array.isArray(event.scoredRunners) ? event.scoredRunners : [];
+      if (runs > 0 && scoredRunners.length !== runs) {
+        problems.push(`${game.id}: PA ${event.sequence} scoredRunners ${scoredRunners.length}/${runs}`);
+      }
+      if (safeInteger(event.outsAfter) % 3 === 0 && safeInteger(event.outsAfter) !== safeInteger(event.outsBefore) && event.inningEnded !== true) {
+        problems.push(`${game.id}: PA ${event.sequence} inningEnded 누락`);
+      }
+      if ((event.basesAfter ?? []).filter(Boolean).length >= 2) {
+        multiRunnerBaseStateSeen = true;
+      }
+    }
+  }
+
+  if (paSchemaCount > 0 && !multiRunnerBaseStateSeen) {
+    problems.push("하루 경기 PA 이벤트에서 2명 이상 누상 상태가 한 번도 감지되지 않음");
   }
 
   assert(
@@ -1827,6 +1853,10 @@ function sumArray(values) {
 function safeInteger(value) {
   const number = Number(value ?? 0);
   return Number.isFinite(number) ? Math.trunc(number) : 0;
+}
+
+function isBooleanTriple(value) {
+  return Array.isArray(value) && value.length === 3 && value.every((item) => typeof item === "boolean");
 }
 
 function isPositiveNumber(value) {
