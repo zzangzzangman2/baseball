@@ -2756,6 +2756,106 @@ img {
   min-width: 56px;
 }
 
+.gamecast-matchup {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "state hitter result"
+    "state pitcher result";
+  gap: 3px 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(232, 223, 213, 0.86);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(35, 32, 42, 0.92), rgba(49, 82, 136, 0.72)),
+    #23202a;
+  color: #fffefa;
+  box-shadow: 0 12px 22px rgba(28, 32, 36, 0.11);
+}
+
+.gamecast-matchup span {
+  grid-area: state;
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgba(255, 254, 251, 0.12);
+  color: rgba(255, 254, 251, 0.76);
+  font-size: 0.7rem;
+  font-weight: 950;
+  line-height: 1.12;
+  white-space: nowrap;
+}
+
+.gamecast-matchup strong {
+  grid-area: hitter;
+  min-width: 0;
+  overflow: hidden;
+  color: #fffefa;
+  font-size: 0.95rem;
+  font-weight: 950;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gamecast-matchup small {
+  grid-area: pitcher;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(255, 254, 251, 0.72);
+  font-size: 0.75rem;
+  font-weight: 850;
+  line-height: 1.16;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gamecast-matchup b {
+  grid-area: result;
+  max-width: 112px;
+  min-width: 58px;
+  padding: 6px 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 254, 251, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 254, 251, 0.1);
+  color: #fffefa;
+  font-size: 0.76rem;
+  font-weight: 950;
+  line-height: 1.18;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gamecast-matchup b.is-hit,
+.gamecast-matchup b.is-homer {
+  border-color: rgba(255, 227, 154, 0.52);
+  background: rgba(255, 211, 63, 0.18);
+  color: #fff0a8;
+}
+
+.gamecast-matchup b.is-out {
+  border-color: rgba(221, 236, 255, 0.34);
+  color: #ddecff;
+}
+
+.gamecast-matchup b.is-walk {
+  border-color: rgba(185, 217, 247, 0.42);
+  background: rgba(185, 217, 247, 0.14);
+  color: #ddecff;
+}
+
+.gamecast-matchup b.is-error {
+  border-color: rgba(255, 143, 131, 0.46);
+  background: rgba(255, 143, 131, 0.15);
+  color: #ffb3a6;
+}
+
 .gamecast-screen {
   position: relative;
   display: grid;
@@ -2982,6 +3082,7 @@ img {
   grid-template-areas:
     "score screen"
     "controls screen"
+    "matchup screen"
     "now screen"
     "feed screen";
   grid-template-columns: minmax(220px, 286px) minmax(0, 1fr);
@@ -3003,6 +3104,10 @@ img {
 .gamecast-controls.is-broadcast {
   grid-area: controls;
   justify-content: flex-start;
+}
+
+.gamecast-broadcast-board .gamecast-matchup {
+  grid-area: matchup;
 }
 
 .gamecast-controls.is-broadcast .gamecast-speed-button {
@@ -4639,6 +4744,7 @@ img {
     grid-template-areas:
       "score"
       "controls"
+      "matchup"
       "screen"
       "now"
       "feed";

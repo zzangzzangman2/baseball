@@ -3419,6 +3419,7 @@ function renderGamecastPanel(state) {
             </span>
           </div>
           ${renderGamecastControls(sequence)}
+          ${renderGamecastMatchup(featured)}
           <div class="gamecast-screen ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen aria-hidden="true">
             ${renderGamecastPixelStage("inline")}
           </div>
@@ -3465,6 +3466,7 @@ function renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, f
               </span>
             </div>
             ${renderGamecastControls(sequence, "broadcast")}
+            ${renderGamecastMatchup(featured)}
             <div class="gamecast-screen gamecast-screen-large ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen aria-hidden="true">
               ${renderGamecastPixelStage("broadcast")}
             </div>
@@ -3480,6 +3482,47 @@ function renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, f
       </section>
     </div>
   `;
+}
+
+function renderGamecastMatchup(event) {
+  const summary = gamecastMatchupSummary(event);
+  return `
+    <div class="gamecast-matchup" data-gamecast-matchup>
+      <span data-gamecast-matchup-state>${escapeHtml(summary.state)}</span>
+      <strong data-gamecast-matchup-hitter>${escapeHtml(summary.hitter)}</strong>
+      <small data-gamecast-matchup-pitcher>${escapeHtml(summary.pitcher)}</small>
+      <b class="${escapeAttribute(summary.className)}" data-gamecast-matchup-result>${escapeHtml(summary.result)}</b>
+    </div>
+  `;
+}
+
+function gamecastMatchupSummary(event) {
+  if (!event) {
+    return {
+      state: "WAIT",
+      hitter: "타석 대기",
+      pitcher: "투수 대기",
+      result: "-",
+      className: ""
+    };
+  }
+  return {
+    state: `${formatNumber(event.inning)}${event.side === "home" ? "말" : "초"} · ${formatNumber(outsInInning(event.outsBefore))}OUT`,
+    hitter: event.hitterName || "타자",
+    pitcher: `vs ${event.pitcherName || "투수"}`,
+    result: gamecastMatchupResult(event),
+    className: gamecastOutcomeClass(event.outcome)
+  };
+}
+
+function gamecastMatchupResult(event) {
+  const parts = [outcomeLabel(event?.outcome)];
+  const batted = battedBallTypeLabel(event?.battedBallType);
+  if (batted) parts.push(batted);
+  if (event?.fieldingPosition && ["out", "error"].includes(event?.outcome)) parts.push(event.fieldingPosition);
+  if (event?.doublePlay) parts.push("DP");
+  if (Number(event?.runs ?? 0) > 0) parts.push(`+${formatNumber(event.runs)}`);
+  return parts.filter(Boolean).join(" · ") || "-";
 }
 
 function renderGamecastPixelStage(instanceId) {
@@ -3686,7 +3729,7 @@ function gamecastOutcomeClass(outcome) {
   if (["single", "double", "triple"].includes(outcome)) return "is-hit";
   if (outcome === "walk") return "is-walk";
   if (outcome === "error") return "is-error";
-  if (outcome === "strikeout") return "is-out";
+  if (outcome === "strikeout" || outcome === "out") return "is-out";
   return "is-ball";
 }
 
@@ -3720,6 +3763,7 @@ function initGamecastPixelScreen(root) {
       scoreNodes: [...board.querySelectorAll(".gamecast-scoreline strong")],
       nowTitle: board.querySelector(".gamecast-now strong"),
       nowDetail: board.querySelector(".gamecast-now small"),
+      matchup: board.querySelector("[data-gamecast-matchup]"),
       playerLabel,
       actionBurst,
       feedItems: [...instanceRoot.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")],
@@ -3733,7 +3777,7 @@ function initGamecastPixelScreen(root) {
   };
 }
 
-function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, playerLabel, actionBurst, feedItems, speedControls = [], skipControls = [] }) {
+function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, feedItems, speedControls = [], skipControls = [] }) {
   const palette = {
     outline: "#23202a",
     grassLo: "#4f8a73",
@@ -3804,6 +3848,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     scoreNodes,
     nowTitle,
     nowDetail,
+    matchup,
     playerLabel,
     actionBurst,
     feedItems,
@@ -4047,6 +4092,7 @@ function drawGamecastFrame(ctx, state, frame) {
   drawPixelAtmosphere(ctx, palette, frame);
   drawPixelFielders(ctx, palette, frame);
   drawGamecastBaseRunners(ctx, palette, frame.bases, frame);
+  drawPixelUmpire(ctx, palette, frame);
   drawPixelOutPips(ctx, palette, frame);
   drawPixelSideIcon(ctx, palette, frame);
   drawPixelAction(ctx, palette, frame);
@@ -4071,6 +4117,7 @@ function drawGamecastFieldTo(ctx, palette) {
   drawBallparkOutfield(ctx, palette);
   drawBallparkInfield(ctx, palette);
   drawBallparkBases(ctx, palette);
+  drawBallparkDugouts(ctx, palette);
 }
 
 function gamecastX(value) {
@@ -4262,6 +4309,33 @@ function drawBallparkBases(ctx, palette) {
   drawBallparkBase(ctx, palette, bases.first);
   drawBallparkBase(ctx, palette, bases.second);
   drawBallparkBase(ctx, palette, bases.third);
+}
+
+function drawBallparkDugouts(ctx, palette) {
+  drawPixelDugout(ctx, palette, gamecastX(11), gamecastY(87), 1);
+  drawPixelDugout(ctx, palette, gamecastX(91), gamecastY(87), -1);
+}
+
+function drawPixelDugout(ctx, palette, x, y, direction) {
+  const width = gamecastSize(19);
+  const height = gamecastSize(9);
+  const roof = gamecastSize(3);
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x, y, width, height);
+  ctx.fillStyle = palette.wallCap;
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), width - gamecastSize(2), roof);
+  ctx.fillStyle = palette.standD;
+  ctx.fillRect(x + gamecastSize(1), y + roof + gamecastSize(1), width - gamecastSize(2), height - roof - gamecastSize(2));
+  ctx.fillStyle = palette.base;
+  for (let index = 0; index < 4; index += 1) {
+    const px = x + gamecastSize(3 + index * 4);
+    ctx.fillRect(px, y + gamecastSize(5), gamecastSize(2), gamecastSize(1));
+    ctx.fillStyle = index % 2 ? palette.runnerL : palette.defenderL;
+    ctx.fillRect(px, y + gamecastSize(6), gamecastSize(2), gamecastSize(2));
+    ctx.fillStyle = palette.base;
+  }
+  ctx.fillStyle = direction > 0 ? palette.runner : palette.defender;
+  ctx.fillRect(x + (direction > 0 ? width - gamecastSize(3) : gamecastSize(1)), y + gamecastSize(2), gamecastSize(2), gamecastSize(1));
 }
 
 function drawBallparkBase(ctx, palette, position) {
@@ -4561,6 +4635,38 @@ function drawPixelCameraFx(ctx, palette, frame) {
     const fade = Math.sin(Math.max(0, Math.min(1, (progress - 0.56) / 0.3)) * Math.PI);
     drawPixelBlockLetters(ctx, palette, "DP", gamecastX(15), gamecastY(62), 2, palette.spark, palette.outline, fade);
   }
+}
+
+function drawPixelUmpire(ctx, palette, frame) {
+  const bases = gamecastBasePositions();
+  const progress = Number(frame.progress ?? 0);
+  const callingStrike = frame.event?.outcome === "strikeout" && progress >= 0.34 && progress <= 0.82;
+  const x = bases.home.x - gamecastSize(8);
+  const y = bases.home.y - gamecastSize(4);
+  const ox = Math.round(x) - 3;
+  const oy = Math.round(y) - 10;
+  const shirt = "#242a2e";
+  const cap = "#111820";
+  const cells = [
+    [2, 0, cap], [3, 0, cap], [4, 0, cap],
+    [1, 1, cap], [2, 1, cap], [3, 1, cap], [4, 1, cap], [5, 1, cap],
+    [2, 2, palette.skin], [3, 2, palette.skin], [4, 2, palette.skin],
+    [2, 3, palette.outline], [4, 3, palette.outline],
+    [2, 4, shirt], [3, 4, shirt], [4, 4, shirt],
+    [1, 5, shirt], [2, 5, shirt], [3, 5, palette.base], [4, 5, shirt], [5, 5, shirt],
+    [2, 6, shirt], [3, 6, shirt], [4, 6, shirt],
+    [2, 7, palette.legs], [4, 7, palette.legs],
+    [2, 8, palette.legs], [4, 8, palette.legs],
+    [1, 9, palette.legs], [5, 9, palette.legs]
+  ];
+  if (callingStrike) {
+    cells.push([0, 2, palette.skin], [0, 1, palette.skin], [0, 0, palette.skin], [1, 4, palette.skin], [5, 5, palette.skin], [6, 5, palette.skin]);
+  } else {
+    cells.push([1, 5, palette.skin], [5, 5, palette.skin], [0, 6, palette.skin], [6, 6, palette.skin]);
+  }
+  ctx.fillStyle = palette.shadow;
+  ctx.fillRect(ox + 1, oy + 11, 7, 1);
+  drawPixelSprite(ctx, palette, ox, oy, cells);
 }
 
 function drawPixelPitchTunnel(ctx, palette, event, progress, pitchEnd) {
@@ -5351,10 +5457,27 @@ function syncGamecastDom(state, frame) {
   if (state.scoreNodes?.[1]) state.scoreNodes[1].textContent = formatNumber(frame.score?.home ?? 0);
   if (state.nowTitle) state.nowTitle.textContent = frame.event ? gamecastNowTitle(frame.event) : "경기 종료";
   if (state.nowDetail) state.nowDetail.textContent = frame.event ? gamecastNowDetail(frame.event) : "타석 이벤트 대기";
+  syncGamecastMatchup(state.matchup, frame.event);
   syncGamecastPlayerLabel(state.playerLabel, frame.playerLabel);
   syncGamecastActionBurst(state.actionBurst, frame.actionBurst);
   for (const item of state.feedItems ?? []) {
     item.classList.toggle("is-live", Boolean(frame.event?.id && !frame.done && item.dataset.gamecastEventId === frame.event.id));
+  }
+}
+
+function syncGamecastMatchup(node, event) {
+  if (!node) return;
+  const summary = gamecastMatchupSummary(event);
+  const stateNode = node.querySelector("[data-gamecast-matchup-state]");
+  const hitterNode = node.querySelector("[data-gamecast-matchup-hitter]");
+  const pitcherNode = node.querySelector("[data-gamecast-matchup-pitcher]");
+  const resultNode = node.querySelector("[data-gamecast-matchup-result]");
+  if (stateNode) stateNode.textContent = summary.state;
+  if (hitterNode) hitterNode.textContent = summary.hitter;
+  if (pitcherNode) pitcherNode.textContent = summary.pitcher;
+  if (resultNode) {
+    resultNode.textContent = summary.result;
+    resultNode.className = summary.className;
   }
 }
 
