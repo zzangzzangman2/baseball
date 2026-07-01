@@ -2124,7 +2124,10 @@ function renderGamecastPanel(state) {
             </span>
           </div>
           <div class="gamecast-screen ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen aria-hidden="true">
-            <canvas id="${GAMECAST_CANVAS_ID}" class="gamecast-pixel-canvas" width="${GAMECAST_PIXEL_W}" height="${GAMECAST_PIXEL_H}" data-pixel-w="${GAMECAST_PIXEL_W}" data-pixel-h="${GAMECAST_PIXEL_H}" aria-hidden="true"></canvas>
+            <div class="gamecast-pixel-stage" data-gamecast-stage>
+              <canvas id="${GAMECAST_CANVAS_ID}" class="gamecast-pixel-canvas" width="${GAMECAST_PIXEL_W}" height="${GAMECAST_PIXEL_H}" data-pixel-w="${GAMECAST_PIXEL_W}" data-pixel-h="${GAMECAST_PIXEL_H}" aria-hidden="true"></canvas>
+              <span class="gamecast-player-label" data-gamecast-player-label></span>
+            </div>
           </div>
           <div class="gamecast-now">
             <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
@@ -2282,6 +2285,8 @@ function initGamecastPixelScreen(root) {
 
   const screen = root?.querySelector?.("[data-gamecast-screen]");
   const canvas = root?.querySelector?.(`#${GAMECAST_CANVAS_ID}`);
+  const stage = root?.querySelector?.("[data-gamecast-stage]");
+  const playerLabel = root?.querySelector?.("[data-gamecast-player-label]");
   if (!screen || !canvas || typeof canvas.getContext !== "function") return;
 
   const ctx = canvas.getContext("2d");
@@ -2293,18 +2298,20 @@ function initGamecastPixelScreen(root) {
   const feedItems = [...root.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")];
   const controller = createGamecastPixelController({
     screen,
+    stage,
     canvas,
     ctx,
     sequence: latestGamecastSequence,
     scoreNodes,
     nowTitle,
     nowDetail,
+    playerLabel,
     feedItems
   });
   cleanupGamecastPixelScreen = controller.cleanup;
 }
 
-function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, feedItems }) {
+function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, playerLabel, feedItems }) {
   const palette = {
     outline: "#23202a",
     grassLo: "#4f8a73",
@@ -2353,6 +2360,7 @@ function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNod
     scoreNodes,
     nowTitle,
     nowDetail,
+    playerLabel,
     feedItems,
     palette,
     fieldCache: buildGamecastFieldCache(palette),
@@ -2360,7 +2368,7 @@ function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNod
     shakenEventId: ""
   };
 
-  const resize = () => resizeGamecastCanvas(screen, canvas, ctx, state);
+  const resize = () => resizeGamecastCanvas(screen, stage, canvas, ctx, state);
   const stop = () => {
     if (state.animationFrame) {
       window.cancelAnimationFrame(state.animationFrame);
@@ -2479,6 +2487,7 @@ function createGamecastPixelController({ screen, canvas, ctx, sequence, scoreNod
         document.removeEventListener("visibilitychange", onVisibilityChange);
       }
       screen.classList.remove("is-shaking");
+      if (state.playerLabel) state.playerLabel.classList.remove("is-visible", "is-scoring");
       for (const item of state.feedItems ?? []) item.classList.remove("is-live");
     }
   };
@@ -2508,7 +2517,7 @@ function triggerGamecastShake(screen, state) {
   state.shakeTimer = window.setTimeout(() => screen.classList.remove("is-shaking"), 190);
 }
 
-function resizeGamecastCanvas(screen, canvas, ctx, state) {
+function resizeGamecastCanvas(screen, stage, canvas, ctx, state) {
   const rect = screen.getBoundingClientRect();
   const style = getComputedStyle(screen);
   const horizontalInset =
@@ -2521,6 +2530,10 @@ function resizeGamecastCanvas(screen, canvas, ctx, state) {
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   state.scale = scale;
   state.dpr = dpr;
+  if (stage) {
+    stage.style.width = `${GAMECAST_PIXEL_W * scale}px`;
+    stage.style.height = `${GAMECAST_PIXEL_H * scale}px`;
+  }
   canvas.style.width = `${GAMECAST_PIXEL_W * scale}px`;
   canvas.style.height = `${GAMECAST_PIXEL_H * scale}px`;
   canvas.width = Math.round(GAMECAST_PIXEL_W * scale * dpr);
@@ -2750,6 +2763,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
     ? (clearingInning ? [false, false, false] : event.basesAfter)
     : baseOccupancyDuringMove(event, progress);
   const score = scoreForGamecastFrame(seq, events, index, progress >= 0.68);
+  const runners = buildRunnerSprites(event, progress, state.palette);
 
   return {
     done: false,
@@ -2758,14 +2772,47 @@ function buildGamecastFrameState(state, forceFinal = false) {
     bases: baseOccupancy,
     outs: displayOutsForEvent(event, progress),
     score,
-    runners: buildRunnerSprites(event, progress, state.palette),
+    runners,
     ball: buildBallSprite(event, progress),
     ballTrail: buildBallTrail(event, progress),
     ballColor: event.outcome === "homeRun" ? state.palette.homer : state.palette.base,
+    playerLabel: buildGamecastPlayerLabel(event, progress, runners),
     scoreFlash: event.runs > 0 && progress >= 0.62 && progress <= 0.84,
     flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
     progress
   };
+}
+
+function buildGamecastPlayerLabel(event, progress, runners) {
+  if (!event || progress >= 0.96) {
+    return { visible: false, text: "", x: 50, y: 50, scoring: false };
+  }
+  const bases = gamecastBasePositions();
+  const batterRunner = runners.find((runner) => runner.role === "batter") ?? null;
+  const advance = gamecastAdvanceCount(event.outcome);
+  const targetBase = advance > 0 ? Math.min(4, advance) : 0;
+  const targetPath = targetBase > 0 ? gamecastPathBetween(0, targetBase) : [];
+  const target = targetPath.length ? targetPath[targetPath.length - 1] : { x: bases.home.x + 7, y: bases.home.y - 3 };
+  const position = batterRunner?.position
+    ?? (progress < 0.72 ? { x: bases.home.x, y: bases.home.y - 4 } : target)
+    ?? { x: bases.home.x, y: bases.home.y - 4 };
+  const fadeIn = Math.min(1, Math.max(0, progress / 0.08));
+  const fadeOut = progress > 0.82 ? Math.max(0, (0.96 - progress) / 0.14) : 1;
+  const opacity = Math.max(0, Math.min(1, fadeIn * fadeOut));
+  return {
+    visible: opacity > 0.08,
+    text: shortenGamecastPlayerName(event.hitterName),
+    x: Math.max(12, Math.min(108, position.x)),
+    y: Math.max(12, Math.min(98, position.y - 12)),
+    opacity,
+    scoring: Number(event.runs ?? 0) > 0 && progress >= 0.55
+  };
+}
+
+function shortenGamecastPlayerName(name) {
+  const text = String(name ?? "").trim();
+  if (!text) return "타자";
+  return text.length > 7 ? `${text.slice(0, 7)}...` : text;
 }
 
 function baseOccupancyDuringMove(event, progress) {
@@ -2809,10 +2856,10 @@ function buildRunnerSprites(event, progress, palette) {
       if (!occupied) return;
       const startBase = index + 1;
       const targetBase = Math.min(4, startBase + advance);
-      runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, palette.runner, palette.runnerL, moveT));
+      runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, palette.runner, palette.runnerL, moveT, "runner"));
     });
     const batterTarget = Math.min(4, advance);
-    runners.push(makeRunnerSprite(gamecastPathBetween(0, batterTarget), eased, event.outcome === "walk" ? palette.walk : palette.runner, palette.runnerL, moveT));
+    runners.push(makeRunnerSprite(gamecastPathBetween(0, batterTarget), eased, event.outcome === "walk" ? palette.walk : palette.runner, palette.runnerL, moveT, "batter"));
     return runners;
   }
 
@@ -2826,12 +2873,13 @@ function buildRunnerSprites(event, progress, palette) {
     trail: [],
     color: palette.out,
     runFrame: Math.floor(moveT * 8) % 2,
-    squash: progress > 0.55
+    squash: progress > 0.55,
+    role: "batter"
   });
   return runners;
 }
 
-function makeRunnerSprite(path, eased, color, trailColor, moveT) {
+function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner") {
   const position = positionAlongPath(path, eased);
   return {
     position,
@@ -2842,7 +2890,8 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT) {
     color,
     trailColor,
     runFrame: moveT > 0.92 ? 2 : Math.floor(moveT * 8) % 2,
-    squash: moveT > 0.92
+    squash: moveT > 0.92,
+    role
   };
 }
 
@@ -2914,9 +2963,28 @@ function syncGamecastDom(state, frame) {
   if (state.scoreNodes?.[1]) state.scoreNodes[1].textContent = formatNumber(frame.score?.home ?? 0);
   if (state.nowTitle) state.nowTitle.textContent = frame.event ? gamecastNowTitle(frame.event) : "경기 종료";
   if (state.nowDetail) state.nowDetail.textContent = frame.event ? gamecastNowDetail(frame.event) : "타석 이벤트 대기";
+  syncGamecastPlayerLabel(state.playerLabel, frame.playerLabel);
   for (const item of state.feedItems ?? []) {
     item.classList.toggle("is-live", Boolean(frame.event?.id && !frame.done && item.dataset.gamecastEventId === frame.event.id));
   }
+}
+
+function syncGamecastPlayerLabel(labelNode, label) {
+  if (!labelNode) return;
+  if (!label?.visible || !label.text) {
+    labelNode.classList.remove("is-visible", "is-scoring");
+    labelNode.textContent = "";
+    labelNode.style.removeProperty("--label-x");
+    labelNode.style.removeProperty("--label-y");
+    labelNode.style.removeProperty("--label-opacity");
+    return;
+  }
+  labelNode.textContent = label.text;
+  labelNode.style.setProperty("--label-x", `${(label.x / GAMECAST_PIXEL_W) * 100}%`);
+  labelNode.style.setProperty("--label-y", `${(label.y / GAMECAST_PIXEL_H) * 100}%`);
+  labelNode.style.setProperty("--label-opacity", String(Math.max(0, Math.min(1, label.opacity ?? 1))));
+  labelNode.classList.add("is-visible");
+  labelNode.classList.toggle("is-scoring", Boolean(label.scoring));
 }
 
 function drawPixelScoreBurst(ctx, palette, frame) {

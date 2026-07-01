@@ -417,14 +417,17 @@ async function checkViewport(viewport) {
   await waitForBoxScore();
   await waitForFreeAgencyPanel();
   await evaluateInBrowser(`document.querySelector("#gamecast")?.scrollIntoView({ block: "center", inline: "nearest" }); true`);
-  await delay(250);
+  await waitForGamecastPlayerLabel();
   const liveProbe = await evaluateInBrowser(`
     (() => {
       const score = [...document.querySelectorAll(".gamecast-scoreline strong")].map((node) => node.textContent.trim()).join("-");
+      const playerLabel = document.querySelector("[data-gamecast-player-label]");
       return {
         liveCount: document.querySelectorAll(".gamecast-feed li.is-live").length,
         feedCount: document.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]").length,
         nowText: document.querySelector(".gamecast-now")?.textContent?.trim() ?? "",
+        playerLabelText: playerLabel?.textContent?.trim() ?? "",
+        playerLabelVisible: Boolean(playerLabel?.classList.contains("is-visible")),
         score
       };
     })()
@@ -679,6 +682,7 @@ async function checkViewport(viewport) {
   assert(result.hasAutoOffseasonAction && result.hasNextSeasonAction, "자동 스토브/다음 시즌 버튼을 찾지 못했습니다.", "src/ui.js");
   assert(result.hasGamecastPanel && result.hasGamecastScreen && result.hasGamecastCanvas && result.hasGamecastFeed && result.hasGamecastScore, "빠른 도트 게임캐스트 UI를 찾지 못했습니다.", "src/ui.js");
   assert(liveProbe.feedCount > 0 && liveProbe.liveCount <= 1, `게임캐스트 live 행 수가 비정상입니다: ${liveProbe.liveCount}/${liveProbe.feedCount}`, "src/ui.js");
+  assert(liveProbe.playerLabelVisible && liveProbe.playerLabelText.length > 0, "도트 선수 머리 위 이름표를 찾지 못했습니다.", "src/ui.js");
   assert(playbackProbe.liveCount === 0, `게임캐스트 재생 종료 후 is-live가 남았습니다: ${playbackProbe.liveCount}`, "src/ui.js");
   assert(playbackProbe.rafRequested > 0 && playbackProbe.rafActive === 0, `게임캐스트 rAF 정지 실패: active=${playbackProbe.rafActive}, requested=${playbackProbe.rafRequested}`, "src/ui.js");
   assert(playbackProbe.scoreMatchesGameCard, `게임캐스트 최종 점수 불일치: gamecast=${playbackProbe.scoreline}, card=${playbackProbe.gameScore}`, "src/ui.js");
@@ -719,6 +723,7 @@ async function checkViewport(viewport) {
     "프리시즌 OK",
     "빠른주간 OK",
     "도트중계 OK",
+    "선수이름표 OK",
     `클리핑 ${result.clippingIssues.length}`,
     "투수운용 OK",
     "기록실 OK",
@@ -971,6 +976,31 @@ async function waitForFreeAgencyPanel() {
   }
 
   throw new VerificationError(`FA/외국인 시장 렌더링 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function waitForGamecastPlayerLabel() {
+  const deadline = Date.now() + 5000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const rendered = await evaluateInBrowser(`
+        (() => {
+          const label = document.querySelector("[data-gamecast-player-label]");
+          return Boolean(label?.classList.contains("is-visible") && label.textContent.trim().length > 0);
+        })()
+      `);
+      if (rendered) {
+        await delay(80);
+        return;
+      }
+    } catch (error) {
+      lastError = error?.message ?? String(error);
+    }
+    await delay(50);
+  }
+
+  throw new VerificationError(`게임캐스트 선수 이름표 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
 }
 
 async function evaluateInBrowser(expression) {

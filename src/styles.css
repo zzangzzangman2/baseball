@@ -1773,6 +1773,15 @@ img {
   animation: gamecast-pixel-shake 180ms steps(4, end) 1;
 }
 
+.gamecast-pixel-stage {
+  position: relative;
+  display: block;
+  width: 240px;
+  height: 216px;
+  max-width: 100%;
+  max-height: 100%;
+}
+
 .gamecast-pixel-canvas {
   display: block;
   width: 240px;
@@ -1785,6 +1794,42 @@ img {
   background: #74b49b;
   image-rendering: crisp-edges;
   image-rendering: pixelated;
+}
+
+.gamecast-player-label {
+  position: absolute;
+  left: var(--label-x, 50%);
+  top: var(--label-y, 50%);
+  z-index: 2;
+  max-width: min(104px, 72%);
+  padding: 3px 6px 4px;
+  overflow: hidden;
+  border: 1px solid rgba(35, 32, 42, 0.72);
+  border-radius: 999px;
+  background: rgba(255, 254, 251, 0.92);
+  box-shadow: 0 2px 0 rgba(35, 32, 42, 0.24), 0 6px 12px rgba(35, 32, 42, 0.14);
+  color: #2f2b34;
+  font-size: 0.68rem;
+  font-weight: 950;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  text-overflow: ellipsis;
+  transform: translate(-50%, -112%);
+  transition: opacity 70ms linear, transform 90ms ease;
+  white-space: nowrap;
+}
+
+.gamecast-player-label.is-visible {
+  opacity: var(--label-opacity, 1);
+  transform: translate(-50%, -124%);
+}
+
+.gamecast-player-label.is-scoring {
+  border-color: rgba(198, 75, 116, 0.82);
+  background: linear-gradient(135deg, rgba(255, 254, 251, 0.96), rgba(255, 227, 154, 0.94));
+  color: #6e3048;
 }
 
 @keyframes gamecast-pixel-shake {

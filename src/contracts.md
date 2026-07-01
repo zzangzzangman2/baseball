@@ -13,7 +13,7 @@ This app is a static HTML/ES module prototype. All paths are under:
 - `src/engine.js`
   - Owns deterministic game simulation and state mutation.
   - Imports from `data.js` and the front-office trade market.
-  - Exports `simulateDay(state)`, `simulateDays(state, days)`, `simulateRegularSeason(state)`, `initializePostseason(state)`, `simulatePostseason(state)`, `initializeDraft(state)`, `simulateDraft(state)`, `initializeSecondaryDraft(state)`, `simulateSecondaryDraft(state)`, `commitTradeProposal(state, proposal)`, `initializeFreeAgency(state)`, `commitFreeAgentSigning(state, offer?)`, `commitForeignPlayerSigning(state, offer?)`, `runAutonomousOffseason(state)`, `advanceSeason(state)`, `advanceToNextSeason(state)`, `getStandings(state)`, `getSelectedTeam(state)`, `buildLineup(team)`, `buildPitchingSnapshot(team)`.
+  - Exports `simulateDay(state)`, `simulateDays(state, days)`, `simulateRegularSeason(state)`, `simulateNextUserGame(state, options?)`, `getNextGamePreview(state, teamId)`, `initializePostseason(state)`, `simulatePostseason(state)`, `initializeDraft(state)`, `simulateDraft(state)`, `initializeSecondaryDraft(state)`, `simulateSecondaryDraft(state)`, `commitTradeProposal(state, proposal)`, `initializeFreeAgency(state)`, `commitFreeAgentSigning(state, offer?)`, `commitForeignPlayerSigning(state, offer?)`, `runAutonomousOffseason(state)`, `advanceSeason(state)`, `advanceToNextSeason(state)`, `getStandings(state)`, `getSelectedTeam(state)`, `buildLineup(team)`, `buildPitchingSnapshot(team)`.
   - Autonomous offseason v1 adds a one-cycle league loop: draft code rookies, secondary-draft transfers, FA/foreign rights, CPU trades, and season rollover. This is not a full multi-year economy/news/politics simulation.
 
 - `src/ui.js`
@@ -34,6 +34,7 @@ This app is a static HTML/ES module prototype. All paths are under:
   day: 1,
   currentDate: "2026-03-01",
   selectedTeamId: "lg",
+  manager: null,
   gamesPlayed: 0,
   phase: "preseason",
   ui: { screen: "welcome" },
