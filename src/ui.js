@@ -162,12 +162,12 @@ function render(root, state) {
   const manager = getManagerProfile(state);
   const lineup = buildLineup(selectedTeam);
   const roster = getRoster(selectedTeam);
-  const selectedPlayerEntry = getSelectedPlayerEntry(state, selectedTeam);
   const seasonLeaders = buildSeasonLeaders(selectedTeam);
   const pitchingSnapshot = buildPitchingSnapshot(selectedTeam);
   const injuries = roster.filter((player) => Number(player.injuredDays) > 0);
   const teamColor = getTeamColor(selectedTeam);
   const activeTab = normalizeActiveTab(state?.ui?.activeTab);
+  const selectedPlayerEntry = getSelectedPlayerEntry(state, selectedTeam) ?? (activeTab === "players" ? getDefaultPlayerEntry(selectedTeam) : null);
   const activeTabMeta = DASHBOARD_TABS.find((tab) => tab.id === activeTab) ?? DASHBOARD_TABS[0];
   const isAdvancing = Boolean(state?.ui?.isAdvancing);
   const frontOffice = {
@@ -1309,11 +1309,13 @@ function bindOnboardingActions(root, state) {
   root.querySelector("[data-action='start-new']")?.addEventListener("click", () => {
     state.ui = { ...(state.ui ?? {}), screen: "team-select" };
     render(root, state);
+    resetViewportToTop();
   });
 
   root.querySelector("[data-action='back-to-start']")?.addEventListener("click", () => {
     state.ui = { ...(state.ui ?? {}), screen: "welcome" };
     render(root, state);
+    resetViewportToTop();
   });
 
   (root.querySelectorAll?.("[data-action='choose-start-team']") ?? []).forEach((button) => {
@@ -1321,17 +1323,20 @@ function bindOnboardingActions(root, state) {
       state.selectedTeamId = button.dataset.teamId;
       state.ui = { ...(state.ui ?? {}), screen: "manager-setup" };
       render(root, state);
+      resetViewportToTop();
     });
   });
 
   root.querySelector("[data-action='back-to-team-select']")?.addEventListener("click", () => {
     state.ui = { ...(state.ui ?? {}), screen: "team-select" };
     render(root, state);
+    resetViewportToTop();
   });
 
   root.querySelector("[data-action='back-to-manager-setup']")?.addEventListener("click", () => {
     state.ui = { ...(state.ui ?? {}), screen: "manager-setup" };
     render(root, state);
+    resetViewportToTop();
   });
 
   root.querySelector("[data-manager-form]")?.addEventListener("submit", (event) => {
@@ -1361,6 +1366,7 @@ function bindOnboardingActions(root, state) {
     };
     state.ui = { ...(state.ui ?? {}), screen: "appointment" };
     render(root, state);
+    resetViewportToTop();
   });
 
   root.querySelector("[data-appointment-form]")?.addEventListener("submit", (event) => {
@@ -1392,6 +1398,7 @@ function bindOnboardingActions(root, state) {
     ].slice(0, 60);
     state.ui = { ...(state.ui ?? {}), screen: "game" };
     render(root, state);
+    resetViewportToTop();
     setStatus(root, `${manager.name} 감독 취임 완료. 프리시즌 캠프에 합류했습니다.`);
   });
 
@@ -1402,6 +1409,7 @@ function bindOnboardingActions(root, state) {
         loadedState.ui = { ...(loadedState.ui ?? {}), screen: "game" };
         replaceState(state, loadedState);
         render(root, state);
+        resetViewportToTop();
         setStatus(root, "저장 파일을 불러왔어요.");
       })
       .catch(() => {});
@@ -1828,6 +1836,7 @@ function bindActions(root, state) {
         activeTab: normalizeActiveTab(button.dataset.tabId)
       };
       render(root, state);
+      resetViewportToTop();
     });
   });
 
@@ -1840,6 +1849,7 @@ function bindActions(root, state) {
       selectedPlayerTeamId: ""
     };
     render(root, state);
+    resetViewportToTop();
   });
 
   root.querySelectorAll("[data-action='open-player-detail']").forEach((row) => {
@@ -2510,6 +2520,13 @@ function scrollToPlayerDetail() {
   });
 }
 
+function resetViewportToTop() {
+  if (typeof window === "undefined") return;
+  window.requestAnimationFrame(() => {
+    window.scrollTo(0, 0);
+  });
+}
+
 function renderTeamOptions(state) {
   if (!state.teams.length) {
     return `<option>구단 데이터 준비 중</option>`;
@@ -2722,6 +2739,7 @@ function renderPlayerDetailPanel(state, entry) {
   const pitcher = isPitcher(player);
   const stats = pitcher ? getPitchingStats(player) : getBattingStats(player);
   const groups = buildPlayerAttributeGroups(player);
+  const isDefault = Boolean(entry.isDefault);
 
   return `
     <section class="player-detail-panel" id="player-detail" data-player-detail aria-label="선수 상세 정보">
@@ -2740,7 +2758,7 @@ function renderPlayerDetailPanel(state, entry) {
         <div class="player-detail-actions">
           <span class="player-rating-badge ${attributeLevelClass(player.ovr, 200)}">OVR ${formatNumber(player.ovr)}</span>
           <span class="player-rating-badge ${attributeLevelClass(player.pot, 200)}">POT ${formatNumber(player.pot)}</span>
-          <button class="button button-soft" data-action="close-player-detail" type="button">닫기</button>
+          ${isDefault ? `<span class="player-detail-hint">대표 선수</span>` : `<button class="button button-soft" data-action="close-player-detail" type="button">닫기</button>`}
         </div>
       </div>
 
@@ -6780,6 +6798,11 @@ function getSelectedPlayerEntry(state, selectedTeam) {
     if (player) return { team, player };
   }
   return null;
+}
+
+function getDefaultPlayerEntry(team) {
+  const player = getRoster(team)[0];
+  return player ? { team, player, isDefault: true } : null;
 }
 
 function buildSeasonLeaders(team) {

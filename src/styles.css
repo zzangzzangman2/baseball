@@ -1907,6 +1907,19 @@ img {
   font-weight: 950;
 }
 
+.player-detail-hint {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fbfcf8;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
 .player-detail-grid {
   display: grid;
   grid-template-columns: minmax(220px, 0.78fr) minmax(260px, 0.95fr) minmax(360px, 1.42fr);
@@ -2051,8 +2064,8 @@ img {
 
 .player-attribute {
   display: grid;
-  grid-template-columns: minmax(74px, 1fr) 30px minmax(96px, 1.1fr);
-  gap: 8px;
+  grid-template-columns: minmax(58px, 0.82fr) 26px minmax(54px, 1fr);
+  gap: 5px;
   align-items: center;
   min-width: 0;
 }
@@ -2060,10 +2073,12 @@ img {
 .player-attribute span,
 .player-attribute strong {
   min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.72rem;
   font-weight: 900;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .player-attribute strong {
@@ -2073,6 +2088,8 @@ img {
 
 .player-attribute i {
   display: block;
+  width: 100%;
+  min-width: 0;
   height: 9px;
   border-radius: 999px;
   background:
@@ -5640,13 +5657,32 @@ body {
 
 .topbar {
   grid-template-columns: minmax(360px, 1fr) minmax(280px, 380px);
+  gap: 12px;
+  padding: 12px 14px;
   background: rgba(255, 254, 250, 0.96);
 }
 
 .topbar-logo-plate {
+  width: clamp(58px, 6.2vw, 78px);
+  padding: 6px;
   border-color: var(--line);
   background: #fff;
   box-shadow: none;
+}
+
+.topbar-logo {
+  --logo-size: clamp(44px, 4.8vw, 58px);
+  filter: none;
+}
+
+.headline h1 {
+  font-size: clamp(1.65rem, 3vw, 2.45rem);
+  line-height: 1.02;
+}
+
+.headline p {
+  margin-top: 3px;
+  font-size: 0.88rem;
 }
 
 .topbar-identity {
@@ -5658,7 +5694,7 @@ body {
     "actions"
     "status";
   align-items: stretch;
-  gap: 10px;
+  gap: 7px;
 }
 
 .manager-chip,
@@ -5672,6 +5708,11 @@ body {
 
 .quick-action-row {
   grid-area: actions;
+}
+
+.quick-action-row .button {
+  min-height: 32px;
+  padding: 6px 10px;
 }
 
 .tab-surface {
@@ -5801,14 +5842,14 @@ body {
 
 .start-hero.is-manager-step,
 .start-hero.is-appointment-step {
-  grid-template-columns: minmax(280px, 0.78fr) minmax(420px, 0.92fr);
+  grid-template-columns: minmax(240px, 0.54fr) minmax(560px, 1fr);
   width: min(1240px, 100%);
 }
 
 .start-hero.is-appointment-step {
   align-items: stretch;
-  min-height: min(760px, calc(100vh - 36px));
-  padding: clamp(18px, 2.4vw, 28px);
+  min-height: min(700px, calc(100vh - 24px));
+  padding: clamp(14px, 1.8vw, 22px);
   border: 1px solid rgba(40, 45, 48, 0.18);
   border-radius: 8px;
   background:
@@ -5841,21 +5882,22 @@ body {
 
 .start-hero.is-appointment-step .start-copy {
   align-self: end;
-  max-width: 480px;
-  padding-bottom: clamp(8px, 2vw, 22px);
+  max-width: 360px;
+  padding-bottom: clamp(6px, 1.2vw, 14px);
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
 .start-hero.is-appointment-step .start-copy h1 {
-  max-width: 9ch;
+  max-width: 10ch;
   color: #22282c;
-  font-size: clamp(2.5rem, 5.3vw, 4.45rem);
-  line-height: 1.04;
+  font-size: clamp(2rem, 4vw, 3.35rem);
+  line-height: 1;
 }
 
 .start-hero.is-appointment-step .start-copy p {
-  max-width: 30rem;
+  max-width: 23rem;
   color: #444d51;
+  font-size: 0.96rem;
   font-weight: 850;
 }
 
@@ -5971,9 +6013,9 @@ body {
 .appointment-card {
   position: relative;
   display: grid;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  padding: clamp(14px, 2vw, 20px);
+  padding: clamp(12px, 1.6vw, 16px);
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.66);
   border-radius: 8px;
@@ -6074,14 +6116,14 @@ body {
 
 .appointment-title-block {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
 .appointment-title-block h2 {
   color: #20262a;
-  font-size: clamp(1.55rem, 2.85vw, 2.32rem);
-  line-height: 1.14;
+  font-size: clamp(1.35rem, 2.35vw, 2rem);
+  line-height: 1.08;
   overflow-wrap: anywhere;
   word-break: keep-all;
 }
@@ -6095,14 +6137,14 @@ body {
 
 .appointment-broadcast-frame {
   position: relative;
-  display: grid;
+  display: none;
   grid-template-columns: minmax(92px, 0.46fr) minmax(0, 1fr);
   grid-template-areas:
     "camera sponsors"
     "lower lower";
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  padding: 7px;
+  padding: 6px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.7);
   border-radius: 8px;
@@ -6137,13 +6179,13 @@ body {
   gap: 8px;
   align-items: end;
   min-width: 0;
-  min-height: 43px;
+  min-height: 34px;
   padding: 5px;
 }
 
 .appointment-camera-deck i {
   position: relative;
-  width: 24px;
+  width: 20px;
   aspect-ratio: 1;
   border: 2px solid #242a2e;
   border-radius: 50%;
@@ -6153,7 +6195,7 @@ body {
 }
 
 .appointment-camera-deck i:nth-child(2) {
-  width: 30px;
+  width: 25px;
   transform: translateY(-4px);
 }
 
@@ -6239,9 +6281,9 @@ body {
 
 .appointment-ceremony-banner {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid rgba(230, 223, 213, 0.92);
   border-left: 4px solid color-mix(in srgb, var(--team-color, #2f343a), #ffffff 14%);
   border-radius: 8px;
@@ -6288,9 +6330,9 @@ body {
 
 .appointment-media-strip span {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
-  padding: 7px 8px;
+  padding: 6px 8px;
   border: 1px solid rgba(232, 235, 229, 0.82);
   border-radius: 8px;
   background: rgba(255, 254, 250, 0.7);
@@ -6311,13 +6353,13 @@ body {
 
 .interview-form {
   display: grid;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
 }
 
 .interview-question {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -6356,8 +6398,8 @@ body {
   position: relative;
   display: grid;
   min-width: 0;
-  min-height: 66px;
-  padding: 8px 10px;
+  min-height: 58px;
+  padding: 7px 9px;
   overflow: visible;
   border: 1px solid rgba(232, 235, 229, 0.92);
   border-radius: 8px;
