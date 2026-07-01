@@ -542,6 +542,44 @@ async function checkViewport(viewport) {
       return true;
     })()
   `);
+  const regularTopbarProbe = await evaluateInBrowser(`
+    (() => {
+      const row = document.querySelector(".topbar .quick-action-row");
+      const text = row?.textContent ?? "";
+      return {
+        hasRow: Boolean(row),
+        hasGameStart: text.includes("경기 시작"),
+        hasSkip: text.includes("스킵"),
+        topWatchAction: Boolean(row?.querySelector("[data-action='watch-next-game']")),
+        topSkipAction: Boolean(row?.querySelector("[data-action='simulate-next-game']")),
+        hasPlainNextDay: text.includes("다음 날")
+      };
+    })()
+  `);
+  assert(
+    regularTopbarProbe.hasRow &&
+      regularTopbarProbe.hasGameStart &&
+      regularTopbarProbe.hasSkip &&
+      regularTopbarProbe.topWatchAction &&
+      regularTopbarProbe.topSkipAction &&
+      !regularTopbarProbe.hasPlainNextDay,
+    `정규시즌 상단 액션이 경기 시작/스킵으로 전환되지 않았습니다: ${JSON.stringify(regularTopbarProbe)}`,
+    "src/ui.js"
+  );
+  await evaluateInBrowser(`
+    (async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      for (let guard = 0; guard < 4; guard += 1) {
+        const decision = document.querySelector("[data-pending-mail-decision] [data-action='resolve-mail-decision']");
+        if (!decision) break;
+        decision.click();
+        await wait(80);
+      }
+      document.querySelector(".topbar [data-action='simulate-next-game']")?.click();
+      await wait(180);
+      return true;
+    })()
+  `);
   await switchDashboardTab("standings");
   await waitForBoxScore();
   await switchDashboardTab("market");
@@ -786,7 +824,7 @@ async function checkViewport(viewport) {
         hasNextGamePanel: Boolean(nextGamePanel),
         hasWatchNextAction: Boolean(document.querySelector("[data-action='watch-next-game']")),
         hasSimNextAction: Boolean(document.querySelector("[data-action='simulate-next-game']")),
-        hasNextGameChoiceText: nextGamePanelText.includes("경기 보기") && nextGamePanelText.includes("시뮬레이션"),
+        hasNextGameChoiceText: nextGamePanelText.includes("경기 시작") && nextGamePanelText.includes("스킵"),
         hasSchedulePanel: Boolean(schedulePanel),
         hasScheduleTitle: schedulePanelText.includes("월 일정"),
         hasScheduleControls: Boolean(document.querySelector("[data-action='calendar-prev']")) && Boolean(document.querySelector("[data-action='calendar-next']")),
@@ -853,7 +891,7 @@ async function checkViewport(viewport) {
   assert(result.hasTradeLedgerPanel && result.hasTradeLedgerTitle, "트레이드 원장 UI를 찾지 못했습니다.", "src/ui.js");
   assert(result.hasTradeSupplementalAsset, "트레이드 보조 자산 표시를 찾지 못했습니다.", "src/ui.js");
   assert(!result.hasSeasonFastButton && result.hasWeekFastButton, "전체 시즌 버튼은 없어야 하고 빠른 주간 버튼은 있어야 합니다.", "src/ui.js");
-  assert(result.hasNextGamePanel && result.hasWatchNextAction && result.hasSimNextAction && result.hasNextGameChoiceText, "다음 경기 보기/시뮬레이션 선택 UI를 찾지 못했습니다.", "src/ui.js");
+  assert(result.hasNextGamePanel && result.hasWatchNextAction && result.hasSimNextAction && result.hasNextGameChoiceText, "다음 경기 시작/스킵 선택 UI를 찾지 못했습니다.", "src/ui.js");
   assert(result.hasSchedulePanel && result.hasScheduleTitle && result.hasScheduleControls, "월간 일정 캘린더 UI를 찾지 못했습니다.", "src/ui.js");
   assert(result.scheduleCells >= 28 && result.scheduleGameCells > 0 && result.scheduleLogoCount > 0, `월간 일정 셀/경기/로고가 부족합니다: cells=${result.scheduleCells}, games=${result.scheduleGameCells}, logos=${result.scheduleLogoCount}`, "src/ui.js");
   assert(result.hasAutoOffseasonAction && result.hasNextSeasonAction, "자동 스토브/다음 시즌 버튼을 찾지 못했습니다.", "src/ui.js");
@@ -1085,7 +1123,7 @@ async function collectTabbedCoverage() {
         hasNextGamePanel: Boolean(nextGamePanel),
         hasWatchNextAction: Boolean(document.querySelector("[data-action='watch-next-game']")),
         hasSimNextAction: Boolean(document.querySelector("[data-action='simulate-next-game']")),
-        hasNextGameChoiceText: nextGamePanelText.includes("경기 보기") && nextGamePanelText.includes("시뮬레이션"),
+        hasNextGameChoiceText: nextGamePanelText.includes("경기 시작") && nextGamePanelText.includes("스킵"),
         hasSchedulePanel: Boolean(schedulePanel),
         hasScheduleTitle: schedulePanelText.includes("월 일정"),
         hasScheduleControls: Boolean(document.querySelector("[data-action='calendar-prev']")) && Boolean(document.querySelector("[data-action='calendar-next']")),

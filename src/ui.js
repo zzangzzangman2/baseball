@@ -229,8 +229,7 @@ function render(root, state) {
               <small>${formatNumber(manager.age)}세 · ${escapeHtml(managerStyleLabel(manager.style))}</small>
             </div>
             <div class="quick-action-row">
-              <button class="button button-primary" data-action="next-day" type="button" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "다음 날"}</button>
-              <button class="button button-soft" data-action="export-save" type="button">저장</button>
+              ${renderTopbarQuickActions(state, nextGame, isAdvancing)}
             </div>
             <p class="status-message" data-save-status aria-live="polite"></p>
           </div>
@@ -385,6 +384,31 @@ function renderTabSurface(tabId, title, body) {
     <section class="tab-surface" data-active-tab="${escapeAttribute(tabId)}" aria-label="${escapeAttribute(title)}">
       ${body}
     </section>
+  `;
+}
+
+function renderTopbarQuickActions(state, nextGame, isAdvancing) {
+  if (state?.phase === "regular" && nextGame?.ok) {
+    const matchup = `${nextGame.awayShortName ?? "AWAY"} @ ${nextGame.homeShortName ?? "HOME"}`;
+    return `
+      <button class="button button-primary" data-action="watch-next-game" type="button" ${isAdvancing ? "disabled" : ""}>경기 시작</button>
+      <button class="button button-soft" data-action="simulate-next-game" type="button" ${isAdvancing ? "disabled" : ""}>스킵</button>
+      <button class="button button-soft" data-action="export-save" type="button">저장</button>
+      <small class="topbar-action-context">${escapeHtml(nextGame.date)} · ${escapeHtml(matchup)}</small>
+    `;
+  }
+
+  if (state?.phase === "regular") {
+    return `
+      <button class="button button-primary" data-action="next-day" type="button" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "일정 진행"}</button>
+      <button class="button button-soft" data-action="export-save" type="button">저장</button>
+      <small class="topbar-action-context">${escapeHtml(nextGame?.message ?? "다음 경기 일정 계산 대기")}</small>
+    `;
+  }
+
+  return `
+    <button class="button button-primary" data-action="next-day" type="button" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "다음 날"}</button>
+    <button class="button button-soft" data-action="export-save" type="button">저장</button>
   `;
 }
 
@@ -1945,42 +1969,46 @@ function bindActions(root, state) {
     });
   });
 
-  root.querySelector("[data-action='watch-next-game']")?.addEventListener("click", () => {
-    if (stopForBlockingMail(root, state)) return;
-    if (state.phase !== "regular") {
-      setStatus(root, "프리시즌에는 경기 보기로 개막전까지 건너뛰지 않습니다. 캠프 하루 진행으로 뉴스함을 확인하세요.");
-      return;
-    }
-    const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
-    state.ui = {
-      ...(state.ui ?? {}),
-      screen: "game",
-      activeTab: "standings",
-      focusGameId: result.game?.id ?? "",
-      gamecastMode: "watch",
-      gamecastExpanded: Boolean(result.ok)
-    };
-    render(root, state);
-    setStatus(root, result.ok ? `경기 보기 시작: ${result.message}` : result.message);
+  root.querySelectorAll("[data-action='watch-next-game']").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (stopForBlockingMail(root, state)) return;
+      if (state.phase !== "regular") {
+        setStatus(root, "프리시즌에는 경기 시작으로 개막전까지 건너뛰지 않습니다. 캠프 하루 진행으로 뉴스함을 확인하세요.");
+        return;
+      }
+      const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
+      state.ui = {
+        ...(state.ui ?? {}),
+        screen: "game",
+        activeTab: "standings",
+        focusGameId: result.game?.id ?? "",
+        gamecastMode: "watch",
+        gamecastExpanded: Boolean(result.ok)
+      };
+      render(root, state);
+      setStatus(root, result.ok ? `경기 시작: ${result.message}` : result.message);
+    });
   });
 
-  root.querySelector("[data-action='simulate-next-game']")?.addEventListener("click", () => {
-    if (stopForBlockingMail(root, state)) return;
-    if (state.phase !== "regular") {
-      setStatus(root, "프리시즌에는 경기 시뮬레이션을 열지 않습니다. 개막 후 다음 경기 패널이 활성화됩니다.");
-      return;
-    }
-    const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "quick" });
-    state.ui = {
-      ...(state.ui ?? {}),
-      screen: "game",
-      activeTab: "standings",
-      focusGameId: result.game?.id ?? "",
-      gamecastMode: "summary",
-      gamecastExpanded: false
-    };
-    render(root, state);
-    setStatus(root, result.ok ? `경기 시뮬레이션 완료: ${result.message}` : result.message);
+  root.querySelectorAll("[data-action='simulate-next-game']").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (stopForBlockingMail(root, state)) return;
+      if (state.phase !== "regular") {
+        setStatus(root, "프리시즌에는 경기 스킵을 열지 않습니다. 개막 후 다음 경기 패널이 활성화됩니다.");
+        return;
+      }
+      const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "quick" });
+      state.ui = {
+        ...(state.ui ?? {}),
+        screen: "game",
+        activeTab: "standings",
+        focusGameId: result.game?.id ?? "",
+        gamecastMode: "summary",
+        gamecastExpanded: false
+      };
+      render(root, state);
+      setStatus(root, result.ok ? `경기 스킵 완료: ${result.message}` : result.message);
+    });
   });
 
   root.querySelector("[data-action='postseason']")?.addEventListener("click", () => {
@@ -2529,7 +2557,7 @@ function renderNextGamePanel(state, selectedTeam, nextGame) {
         <div class="next-game-actions">
           <button class="button button-primary" data-action="next-day" type="button">캠프 하루 진행</button>
           <button class="button button-soft" data-action="week" type="button">캠프 주간 진행</button>
-          <small>경기 보기/시뮬레이션은 정규시즌 개막 후 활성화됩니다.</small>
+          <small>경기 시작/스킵은 정규시즌 개막 후 활성화됩니다.</small>
         </div>
       </section>
     `;
@@ -2571,9 +2599,9 @@ function renderNextGamePanel(state, selectedTeam, nextGame) {
         `}
       </div>
       <div class="next-game-actions">
-        <button class="button button-primary" data-action="watch-next-game" ${disabled}>경기 보기</button>
-        <button class="button button-soft" data-action="simulate-next-game" ${disabled}>시뮬레이션</button>
-        <small>${nextGame?.ok ? `${escapeHtml(getTeamShortName(opponent) ?? "상대")}전 · 도트 중계 또는 결과만 선택` : "정규시즌 가능 상태에서 진행됩니다."}</small>
+        <button class="button button-primary" data-action="watch-next-game" ${disabled}>경기 시작</button>
+        <button class="button button-soft" data-action="simulate-next-game" ${disabled}>스킵</button>
+        <small>${nextGame?.ok ? `${escapeHtml(getTeamShortName(opponent) ?? "상대")}전 · 도트 중계로 보거나 결과만 스킵` : "정규시즌 가능 상태에서 진행됩니다."}</small>
       </div>
     </section>
   `;

@@ -756,6 +756,16 @@ img {
   padding: 7px 12px;
 }
 
+.topbar-action-context {
+  flex: 1 1 100%;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 840;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .tab-surface {
   display: grid;
   gap: 16px;
