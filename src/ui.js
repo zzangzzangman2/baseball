@@ -126,8 +126,8 @@ const GAMECAST_PIXEL_W = 160;
 const GAMECAST_PIXEL_H = 144;
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
 const GAMECAST_PLAYBACK_COUNT = 8;
-const GAMECAST_WATCH_PA_MS = 920;
-const GAMECAST_WATCH_GAP_MS = 140;
+const GAMECAST_WATCH_PA_MS = 1180;
+const GAMECAST_WATCH_GAP_MS = 180;
 const GAMECAST_PA_MS = 850;
 const GAMECAST_PA_GAP_MS = 120;
 const GAMECAST_SPEED_OPTIONS = [1, 2, 3, 4];
@@ -4001,7 +4001,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
       }
       screen.classList.remove("is-shaking");
       if (state.playerLabel) state.playerLabel.classList.remove("is-visible", "is-scoring");
-      if (state.actionBurst) state.actionBurst.className = "gamecast-action-burst";
+      syncGamecastActionBurst(state.actionBurst, null);
       for (const item of state.feedItems ?? []) item.classList.remove("is-live");
     }
   };
@@ -4913,24 +4913,47 @@ function buildGamecastFrameState(state, forceFinal = false) {
 
 function buildGamecastActionBurst(event, progress) {
   if (!event) return null;
-  const start = gamecastPitchEnd(event) + 0.02;
-  const end = event.outcome === "homeRun" ? 0.94 : event.outcome === "strikeout" ? 0.82 : 0.8;
+  const profile = gamecastBurstProfile(event.outcome);
+  const start = Math.max(0.2, gamecastPitchEnd(event) + profile.delay);
+  const end = profile.end;
   if (progress < start || progress > end) return null;
 
   const t = Math.max(0, Math.min(1, (progress - start) / Math.max(0.01, end - start)));
-  const pop = Math.sin(Math.min(1, t * 1.25) * Math.PI);
+  const popIn = easeOutBack(Math.min(1, t / 0.28));
+  const hold = t < 0.72 ? 1 : Math.max(0, (1 - t) / 0.28);
+  const bounce = Math.sin(Math.min(1, t * 1.2) * Math.PI);
   const text = gamecastBurstText(event.outcome);
   if (!text) return null;
 
   return {
     text,
     className: gamecastBurstClass(event.outcome),
-    x: event.outcome === "homeRun" ? 50 : event.outcome === "strikeout" ? 52 : 58,
-    y: event.outcome === "homeRun" ? 28 : event.outcome === "strikeout" ? 42 : 36,
-    opacity: Math.max(0, Math.min(1, t < 0.16 ? t / 0.16 : (1 - t) / 0.34)),
-    scale: 0.82 + pop * (event.outcome === "homeRun" ? 0.95 : 0.62),
-    shake: Math.round(Math.sin(t * Math.PI * 12) * (event.outcome === "homeRun" ? 7 : 4))
+    x: profile.x,
+    y: profile.y,
+    opacity: Math.max(0, Math.min(1, t < 0.1 ? t / 0.1 : hold)),
+    scaleX: profile.baseScale + popIn * profile.pop + bounce * 0.1,
+    scaleY: profile.baseScale + popIn * profile.pop * 0.82 - bounce * 0.08,
+    shakeX: Math.round(Math.sin(t * Math.PI * profile.shakeRate) * profile.shake * hold),
+    shakeY: Math.round(Math.cos(t * Math.PI * (profile.shakeRate - 1)) * profile.shake * 0.36 * hold),
+    rotate: Math.sin(t * Math.PI * (profile.shakeRate - 2)) * profile.tilt * hold,
+    impact: Math.max(0, Math.min(1, Math.sin(Math.min(1, t * 1.35) * Math.PI))) * hold
   };
+}
+
+function gamecastBurstProfile(outcome) {
+  if (outcome === "homeRun") {
+    return { delay: 0.01, end: 0.98, x: 50, y: 30, baseScale: 0.62, pop: 1.1, shake: 11, shakeRate: 15, tilt: 5 };
+  }
+  if (outcome === "strikeout") {
+    return { delay: 0.03, end: 0.88, x: 53, y: 42, baseScale: 0.68, pop: 0.82, shake: 7, shakeRate: 13, tilt: 4 };
+  }
+  if (outcome === "walk") {
+    return { delay: 0.04, end: 0.86, x: 54, y: 42, baseScale: 0.7, pop: 0.66, shake: 4, shakeRate: 9, tilt: 2.5 };
+  }
+  if (outcome === "out") {
+    return { delay: 0.04, end: 0.86, x: 55, y: 39, baseScale: 0.68, pop: 0.72, shake: 7, shakeRate: 12, tilt: 4 };
+  }
+  return { delay: 0.02, end: 0.9, x: 56, y: 36, baseScale: 0.66, pop: 0.9, shake: 8, shakeRate: 14, tilt: 4.5 };
 }
 
 function gamecastBurstText(outcome) {
@@ -5486,20 +5509,30 @@ function syncGamecastActionBurst(node, burst) {
   if (!burst?.text) {
     node.className = "gamecast-action-burst";
     node.textContent = "";
+    node.removeAttribute("data-burst-text");
     node.style.removeProperty("--burst-x");
     node.style.removeProperty("--burst-y");
     node.style.removeProperty("--burst-opacity");
-    node.style.removeProperty("--burst-scale");
-    node.style.removeProperty("--burst-shake");
+    node.style.removeProperty("--burst-scale-x");
+    node.style.removeProperty("--burst-scale-y");
+    node.style.removeProperty("--burst-shake-x");
+    node.style.removeProperty("--burst-shake-y");
+    node.style.removeProperty("--burst-rotate");
+    node.style.removeProperty("--burst-impact");
     return;
   }
   node.textContent = burst.text;
+  node.setAttribute("data-burst-text", burst.text);
   node.className = `gamecast-action-burst is-visible ${burst.className ?? ""}`.trim();
   node.style.setProperty("--burst-x", `${burst.x}%`);
   node.style.setProperty("--burst-y", `${burst.y}%`);
   node.style.setProperty("--burst-opacity", String(Math.max(0, Math.min(1, burst.opacity ?? 1))));
-  node.style.setProperty("--burst-scale", String(Math.max(0.4, burst.scale ?? 1)));
-  node.style.setProperty("--burst-shake", `${burst.shake ?? 0}px`);
+  node.style.setProperty("--burst-scale-x", String(Math.max(0.4, burst.scaleX ?? 1)));
+  node.style.setProperty("--burst-scale-y", String(Math.max(0.4, burst.scaleY ?? burst.scaleX ?? 1)));
+  node.style.setProperty("--burst-shake-x", `${burst.shakeX ?? 0}px`);
+  node.style.setProperty("--burst-shake-y", `${burst.shakeY ?? 0}px`);
+  node.style.setProperty("--burst-rotate", `${Math.max(-8, Math.min(8, burst.rotate ?? 0))}deg`);
+  node.style.setProperty("--burst-impact", String(Math.max(0, Math.min(1, burst.impact ?? 0))));
 }
 
 function syncGamecastPlayerLabel(labelNode, label) {

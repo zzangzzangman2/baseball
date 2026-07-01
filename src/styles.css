@@ -2954,19 +2954,21 @@ img {
   position: absolute;
   left: var(--burst-x, 50%);
   top: var(--burst-y, 38%);
-  z-index: 3;
+  z-index: 5;
   min-width: 0;
-  padding: 4px 8px 6px;
-  border: 2px solid #23202a;
+  max-width: calc(100% - 22px);
+  padding: 7px 12px 9px;
+  border: 3px solid #23202a;
   border-radius: 3px;
   background:
-    linear-gradient(180deg, #fffefb 0 52%, #f1eadf 52% 100%);
+    linear-gradient(180deg, #fffefb 0 46%, #ffe7aa 46% 52%, #f1eadf 52% 100%);
   box-shadow:
-    4px 4px 0 #23202a,
-    -2px 0 0 rgba(255, 255, 255, 0.86),
-    0 0 0 1px rgba(255, 255, 255, 0.62) inset;
+    5px 5px 0 #23202a,
+    -2px -2px 0 rgba(255, 255, 255, 0.9),
+    0 0 0 1px rgba(255, 255, 255, 0.7) inset,
+    0 12px 22px rgba(35, 32, 42, 0.22);
   color: #23202a;
-  font-size: clamp(1.08rem, 4.8vw, 1.85rem);
+  font-size: clamp(1.25rem, 1.72rem, 2rem);
   font-weight: 950;
   letter-spacing: 0;
   line-height: 1;
@@ -2974,13 +2976,44 @@ img {
   pointer-events: none;
   text-align: center;
   text-shadow:
-    1px 0 0 rgba(255, 255, 255, 0.8),
-    0 1px 0 rgba(255, 255, 255, 0.8);
+    2px 0 0 rgba(255, 255, 255, 0.84),
+    0 2px 0 rgba(255, 255, 255, 0.84),
+    -1px -1px 0 rgba(255, 255, 255, 0.72);
   transform:
-    translate(calc(-50% + var(--burst-shake, 0px)), -50%)
-    scale(var(--burst-scale, 1));
+    translate(
+      calc(-50% + var(--burst-shake-x, 0px)),
+      calc(-50% + var(--burst-shake-y, 0px))
+    )
+    rotate(var(--burst-rotate, 0deg))
+    scale(var(--burst-scale-x, 1), var(--burst-scale-y, 1));
   transform-origin: center;
   white-space: nowrap;
+  will-change: opacity, transform;
+}
+
+.gamecast-action-burst::before,
+.gamecast-action-burst::after {
+  content: "";
+  position: absolute;
+  inset: -12px -18px;
+  z-index: -1;
+  border: 2px solid currentColor;
+  opacity: calc(var(--burst-impact, 0) * 0.5);
+  transform: scale(calc(1 + var(--burst-impact, 0) * 0.36));
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.gamecast-action-burst::before {
+  border-style: solid;
+  clip-path: polygon(0 42%, 12% 42%, 12% 58%, 0 58%, 0 42%, 88% 42%, 88% 58%, 100% 58%, 100% 42%, 88% 42%, 88% 0, 100% 0, 100% 12%, 88% 12%, 88% 100%, 100% 100%, 100% 88%, 88% 88%, 88% 58%, 12% 58%, 12% 88%, 0 88%, 0 100%, 12% 100%, 12% 12%, 0 12%, 0 0, 12% 0, 12% 42%);
+}
+
+.gamecast-action-burst::after {
+  inset: -6px -10px;
+  border-color: rgba(255, 255, 255, 0.78);
+  opacity: calc(var(--burst-impact, 0) * 0.44);
+  transform: scale(calc(0.96 + var(--burst-impact, 0) * 0.18));
 }
 
 .gamecast-action-burst.is-visible {
@@ -2988,22 +3021,30 @@ img {
 }
 
 .gamecast-action-burst.is-homer {
-  background: linear-gradient(135deg, #fffefb, #ffe39a 58%, #ffb3a6);
+  border-color: #7d2c43;
+  background:
+    linear-gradient(180deg, #fffefb 0 42%, #ffe39a 42% 56%, #ffb3a6 56% 100%);
   color: #7d2c43;
 }
 
 .gamecast-action-burst.is-hit {
-  background: linear-gradient(135deg, #fffefb, #bfead9);
+  border-color: #275d4e;
+  background:
+    linear-gradient(180deg, #fffefb 0 42%, #bfead9 42% 56%, #8dd5bd 56% 100%);
   color: #275d4e;
 }
 
 .gamecast-action-burst.is-out {
-  background: linear-gradient(135deg, #fffefb, #e3e6ec);
+  border-color: #43414a;
+  background:
+    linear-gradient(180deg, #fffefb 0 42%, #e3e6ec 42% 56%, #c8ced8 56% 100%);
   color: #43414a;
 }
 
 .gamecast-action-burst.is-walk {
-  background: linear-gradient(135deg, #fffefb, #ddecff);
+  border-color: #315288;
+  background:
+    linear-gradient(180deg, #fffefb 0 42%, #ddecff 42% 56%, #bad7ff 56% 100%);
   color: #315288;
 }
 
@@ -3140,13 +3181,24 @@ img {
 }
 
 .gamecast-screen-large .gamecast-action-burst {
-  padding: 6px 14px 8px;
-  border-width: 3px;
-  font-size: clamp(1.55rem, 3.55vw, 3rem);
+  padding: 9px 18px 12px;
+  border-width: 4px;
+  font-size: clamp(2.35rem, 3.45rem, 4.1rem);
   box-shadow:
-    6px 6px 0 #23202a,
+    7px 7px 0 #23202a,
     -3px 0 0 rgba(255, 255, 255, 0.9),
-    0 0 0 1px rgba(255, 255, 255, 0.7) inset;
+    0 0 0 1px rgba(255, 255, 255, 0.7) inset,
+    0 18px 34px rgba(35, 32, 42, 0.24);
+}
+
+.gamecast-screen-large .gamecast-action-burst::before {
+  inset: -18px -28px;
+  border-width: 3px;
+}
+
+.gamecast-screen-large .gamecast-action-burst::after {
+  inset: -9px -16px;
+  border-width: 3px;
 }
 
 .gamecast-broadcast-now {
