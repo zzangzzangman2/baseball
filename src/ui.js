@@ -3805,6 +3805,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     glove: "#7a4c2a",
     ballSeam: "#d92f42",
     ballGlow: "#fff3bf",
+    ballWake: "#fff8d7",
     hit: "#8fd0b4",
     homer: "#ff8f83",
     homerL: "#ffb3a6",
@@ -4489,6 +4490,7 @@ function drawPixelAction(ctx, palette, frame) {
   if (frame.ballTrail?.length) drawTrail(ctx, frame.ballTrailColor ?? palette.homerL, frame.ballTrail);
   for (const line of frame.throwLines ?? []) drawPixelThrowLine(ctx, palette, line);
   for (const defender of frame.defenseSprites ?? []) {
+    if (defender.catchBurst) drawPixelFielderBurst(ctx, palette, defender);
     drawPixelRunner(ctx, palette, defender.position, defender.squash, defender.color, defender.runFrame, {
       jerseyColor: defender.jerseyColor,
       jerseyShadow: defender.jerseyShadow,
@@ -4504,6 +4506,7 @@ function drawPixelAction(ctx, palette, frame) {
   }
   if (frame.contactBurst) drawPixelContactBurst(ctx, palette, frame.contactBurst);
   if (frame.batter) {
+    drawPixelBatterFx(ctx, palette, frame.batter);
     drawPixelRunner(ctx, palette, frame.batter.position, false, frame.batter.color, frame.batter.runFrame ?? 2, {
       pose: frame.batter.pose ?? "stance",
       jerseyColor: frame.batter.jerseyColor,
@@ -4512,16 +4515,17 @@ function drawPixelAction(ctx, palette, frame) {
       uniformNumber: frame.batter.uniformNumber
     });
   }
-  if (frame.ball) drawPixelBall(ctx, palette, frame.ball, frame.ballColor ?? palette.base);
   for (const runner of frame.runners ?? []) {
     drawPixelRunner(ctx, palette, runner.position, runner.squash, runner.color, runner.runFrame, {
       jerseyColor: runner.jerseyColor,
       jerseyShadow: runner.jerseyShadow,
       accentColor: runner.accentColor,
       pose: runner.pose,
-      uniformNumber: runner.uniformNumber
+      uniformNumber: runner.uniformNumber,
+      facing: runner.facing
     });
   }
+  if (frame.ball) drawPixelBall(ctx, palette, frame.ball, frame.ballColor ?? palette.base);
 }
 
 function drawPixelAtmosphere(ctx, palette, frame) {
@@ -4587,9 +4591,12 @@ function drawPixelBallShadow(ctx, palette, shadow) {
 function drawPixelThrowLine(ctx, palette, line) {
   const flicker = Math.max(0, Math.min(1, Number(line.opacity ?? 1)));
   const color = flicker > 0.62 ? palette.throw : palette.defenderL;
+  drawPixelLine(ctx, line.from.x + 1, line.from.y + 1, line.to.x + 1, line.to.y + 1, palette.outline, gamecastSize(1));
   drawPixelLine(ctx, line.from.x, line.from.y, line.to.x, line.to.y, color, gamecastSize(1));
-  const ball = positionAlongPath([line.from, line.to], Math.max(0, Math.min(1, Number(line.t ?? 0))));
-  drawPixelBall(ctx, palette, ball, palette.base);
+  const t = Math.max(0, Math.min(1, Number(line.t ?? 0)));
+  const ball = positionAlongPath([line.from, line.to], t);
+  const previous = positionAlongPath([line.from, line.to], Math.max(0, t - 0.08));
+  drawPixelBall(ctx, palette, withGamecastBallVector(ball, previous, { kind: "throw", size: 1, opacity: flicker }), palette.base);
 }
 
 function drawPixelContactBurst(ctx, palette, burst) {
@@ -4599,6 +4606,8 @@ function drawPixelContactBurst(ctx, palette, burst) {
   ctx.fillStyle = palette.outline;
   ctx.fillRect(x - size - 1, y, size * 2 + 3, 1);
   ctx.fillRect(x, y - size - 1, 1, size * 2 + 3);
+  drawPixelLine(ctx, x - size - 5, y + 4, x + size + 5, y - 4, palette.outline, gamecastSize(1));
+  drawPixelLine(ctx, x - size - 4, y + 3, x + size + 4, y - 3, palette.sparkL, gamecastSize(1));
   ctx.fillStyle = palette.spark;
   ctx.fillRect(x - size, y, size * 2 + 1, 1);
   ctx.fillRect(x, y - size, 1, size * 2 + 1);
@@ -4610,6 +4619,43 @@ function drawPixelContactBurst(ctx, palette, burst) {
   ctx.fillStyle = palette.homerL;
   ctx.fillRect(x + size + 2, y - 1, 2, 1);
   ctx.fillRect(x - size - 3, y + 1, 2, 1);
+  ctx.fillStyle = palette.ballWake;
+  ctx.fillRect(x + size + 4, y - 3, 2, 1);
+  ctx.fillRect(x - size - 5, y + 3, 2, 1);
+}
+
+function drawPixelBatterFx(ctx, palette, batter) {
+  const pose = batter?.pose;
+  if (!["swing", "follow", "miss", "load"].includes(pose)) return;
+  const x = Math.round(batter.position.x);
+  const y = Math.round(batter.position.y);
+  if (pose === "load") {
+    drawPixelLine(ctx, x + gamecastSize(5), y - gamecastSize(15), x + gamecastSize(8), y - gamecastSize(19), palette.ballWake, gamecastSize(1));
+    return;
+  }
+  const arcColor = pose === "miss" ? palette.throw : palette.sparkL;
+  drawPixelLine(ctx, x - gamecastSize(8), y - gamecastSize(11), x + gamecastSize(11), y - gamecastSize(9), palette.outline, gamecastSize(1));
+  drawPixelLine(ctx, x - gamecastSize(7), y - gamecastSize(12), x + gamecastSize(10), y - gamecastSize(10), arcColor, gamecastSize(1));
+  if (pose !== "miss") {
+    drawPixelLine(ctx, x - gamecastSize(4), y - gamecastSize(15), x + gamecastSize(12), y - gamecastSize(6), palette.homerL, gamecastSize(1));
+    ctx.fillStyle = palette.ballWake;
+    ctx.fillRect(x + gamecastSize(13), y - gamecastSize(7), gamecastSize(2), gamecastSize(1));
+  }
+}
+
+function drawPixelFielderBurst(ctx, palette, defender) {
+  const x = Math.round(defender.position.x);
+  const y = Math.round(defender.position.y - gamecastSize(10));
+  const color = defender.pose === "dive" ? palette.homerL : palette.throw;
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x - gamecastSize(4), y, gamecastSize(9), gamecastSize(1));
+  ctx.fillRect(x, y - gamecastSize(4), gamecastSize(1), gamecastSize(9));
+  ctx.fillStyle = color;
+  ctx.fillRect(x - gamecastSize(3), y, gamecastSize(7), gamecastSize(1));
+  ctx.fillRect(x, y - gamecastSize(3), gamecastSize(1), gamecastSize(7));
+  ctx.fillStyle = palette.ballWake;
+  ctx.fillRect(x - gamecastSize(5), y - gamecastSize(2), gamecastSize(1), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(5), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
 }
 
 function drawPixelCameraFx(ctx, palette, frame) {
@@ -4978,9 +5024,10 @@ function gamecastBurstClass(outcome) {
 function buildBatterSprite(event, progress, palette) {
   if (!event || progress >= 0.72) return null;
   const advance = gamecastAdvanceCount(event.outcome);
-  if ((advance > 0 || event.outcome === "walk") && progress >= gamecastRunnerMoveStart(event) + 0.06) return null;
-  const bases = gamecastBasePositions();
   const pitchEnd = gamecastPitchEnd(event);
+  const batted = isBattedBallOutcome(event.outcome);
+  if ((advance > 0 || event.outcome === "walk") && progress >= (batted ? pitchEnd + 0.26 : gamecastRunnerMoveStart(event) + 0.06)) return null;
+  const bases = gamecastBasePositions();
   let pose = "stance";
   if (progress >= pitchEnd - 0.08 && progress < pitchEnd + 0.01) pose = "load";
   else if (progress >= pitchEnd + 0.01 && progress < pitchEnd + 0.16) {
@@ -5115,7 +5162,8 @@ function buildRunnerSprites(event, progress, palette) {
         jerseyShadow,
         accentColor,
         pose: walking ? "walk" : "run",
-        trail: !walking
+        trail: !walking,
+        allowSlide: !walking && event.outcome !== "homeRun"
       }));
     });
     const batterTarget = Math.min(4, advance);
@@ -5125,7 +5173,8 @@ function buildRunnerSprites(event, progress, palette) {
       accentColor,
       uniformNumber,
       pose: walking ? "walk" : "run",
-      trail: !walking
+      trail: !walking,
+      allowSlide: !walking && event.outcome !== "homeRun" && batterTarget > 1
     }));
     return runners;
   }
@@ -5153,12 +5202,16 @@ function buildRunnerSprites(event, progress, palette) {
 
 function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner", options = {}) {
   const position = positionAlongPath(path, eased);
+  const previousPosition = positionAlongPath(path, Math.max(0, eased - 0.05));
+  const facing = position.x >= previousPosition.x ? 1 : -1;
   const stride = Math.floor(moveT * (options.pose === "walk" ? 4 : 8));
-  const bob = options.pose === "walk" ? (stride % 2 ? 0 : -1) : (stride % 2 ? -1 : 0);
-  position.y += bob;
+  const sliding = options.allowSlide === true && options.pose === "run" && moveT > 0.82;
+  const pose = sliding ? "slide" : (options.pose ?? "run");
+  const bob = pose === "walk" ? (stride % 2 ? 0 : -1) : (stride % 2 ? -1 : 0);
+  position.y += sliding ? gamecastSize(2) : bob;
   return {
     position,
-    dust: options.pose === "walk" || options.trail === false
+    dust: pose === "walk" || options.trail === false
       ? []
       : [
           positionAlongPath(path, Math.max(0, eased - 0.07)),
@@ -5176,9 +5229,10 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner"
     accentColor: options.accentColor,
     uniformNumber: options.uniformNumber,
     trailColor,
-    runFrame: moveT > 0.92 ? 2 : stride % 2,
-    squash: options.pose === "walk" ? false : moveT > 0.92,
-    pose: options.pose ?? "run",
+    runFrame: pose === "slide" || moveT > 0.92 ? 2 : stride % 2,
+    squash: pose === "walk" || pose === "slide" ? false : moveT > 0.92,
+    pose,
+    facing,
     role
   };
 }
@@ -5189,32 +5243,61 @@ function buildBallSprite(event, progress) {
   if (progress < pitchEnd) {
     const t = Math.max(0, Math.min(1, progress / pitchEnd));
     const target = pitchTargetForEvent(event, bases);
-    return {
+    const current = {
       x: Math.round(lerp(bases.mound.x, target.x, easeOutCubic(t))),
       y: Math.round(lerp(bases.mound.y, target.y, easeOutCubic(t)))
     };
+    const previousT = Math.max(0, t - 0.08);
+    const previous = {
+      x: Math.round(lerp(bases.mound.x, target.x, easeOutCubic(previousT))),
+      y: Math.round(lerp(bases.mound.y, target.y, easeOutCubic(previousT)))
+    };
+    return withGamecastBallVector(current, previous, { kind: "pitch", size: 1, opacity: 1 });
   }
   if (event.outcome === "walk") return progress < pitchEnd + 0.12 ? pitchTargetForEvent(event, bases) : null;
   if (event.outcome === "strikeout") return progress < pitchEnd + 0.18 ? pitchTargetForEvent(event, bases) : null;
-  if (!isBattedBallOutcome(event.outcome) || progress >= 0.76) return null;
-  return battedBallPoint(event, Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, 0.76 - pitchEnd))));
+  if (!isBattedBallOutcome(event.outcome) || progress >= 0.82) return null;
+  const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, 0.82 - pitchEnd)));
+  const current = battedBallPoint(event, t);
+  const previous = battedBallPoint(event, Math.max(0, t - 0.06));
+  return withGamecastBallVector(current, previous, {
+    kind: "batted",
+    size: event.outcome === "homeRun" ? 2 : String(event.battedBallType ?? "") === "flyBall" ? 1.6 : 1.25,
+    opacity: 1
+  });
 }
 
 function buildBallTrail(event, progress) {
   const pitchEnd = gamecastPitchEnd(event);
-  if (!isBattedBallOutcome(event.outcome) || progress < pitchEnd + 0.05 || progress >= 0.76) return [];
+  if (!isBattedBallOutcome(event.outcome) || progress < pitchEnd + 0.05 || progress >= 0.82) return [];
   const points = [];
-  for (const offset of [0.06, 0.12, 0.18]) {
+  for (const [index, offset] of [0.045, 0.09, 0.145, 0.21].entries()) {
     const p = Math.max(pitchEnd, progress - offset);
-    points.push(battedBallPoint(event, Math.max(0, Math.min(1, (p - pitchEnd) / Math.max(0.01, 0.76 - pitchEnd)))));
+    const t = Math.max(0, Math.min(1, (p - pitchEnd) / Math.max(0.01, 0.82 - pitchEnd)));
+    const point = battedBallPoint(event, t);
+    points.push({
+      ...point,
+      size: Math.max(1, 2 - index * 0.25),
+      opacity: Math.max(0.18, 0.72 - index * 0.14),
+      color: event.outcome === "homeRun" ? "#ffb3a6" : index % 2 ? "#fff8d7" : "#fffefb"
+    });
   }
   return points;
 }
 
+function withGamecastBallVector(current, previous, extra = {}) {
+  return {
+    ...current,
+    ...extra,
+    velocityX: Math.round((current.x ?? 0) - (previous.x ?? current.x ?? 0)),
+    velocityY: Math.round((current.y ?? 0) - (previous.y ?? current.y ?? 0))
+  };
+}
+
 function buildGamecastBallShadow(event, progress) {
   const pitchEnd = gamecastPitchEnd(event);
-  if (!isBattedBallOutcome(event.outcome) || progress < pitchEnd || progress >= 0.76) return null;
-  const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, 0.76 - pitchEnd)));
+  if (!isBattedBallOutcome(event.outcome) || progress < pitchEnd || progress >= 0.82) return null;
+  const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, 0.82 - pitchEnd)));
   const ground = battedBallGroundPoint(event, t);
   const lift = Math.sin(t * Math.PI);
   return {
@@ -5272,6 +5355,8 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     : event.outcome === "out" && progress > 0.52
       ? "catch"
       : "field";
+  const catchBurst = (event.outcome === "out" && progress > 0.52 && progress < 0.72)
+    || (event.outcome === "error" && progress > 0.5 && progress < 0.68);
 
   sprites.push({
     position,
@@ -5283,7 +5368,8 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     uniformNumber: gamecastUniformNumber(event.defenderName, event.fieldingPosition),
     runFrame: Math.floor(t * 8) % 2,
     squash: t > 0.88,
-    pose: impactPose
+    pose: impactPose,
+    catchBurst
   });
 
   if (event.outcome === "homeRun" && progress > 0.64) {
@@ -5592,9 +5678,13 @@ function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, op
   const trim = normalizeHexColor(color, palette.runner);
   const accent = normalizeHexColor(options.accentColor ?? color, trim);
   const ink = options.uniformNumber === undefined ? palette.uniformInk : mixHexColors(palette.uniformInk, accent, 0.18);
+  const pose = options.pose ?? "run";
+  if (pose === "slide") {
+    drawPixelSlidingRunner(ctx, palette, position, color, options);
+    return;
+  }
   const ox = Math.round(position.x) - 4;
   const oy = Math.round(position.y) - (squash ? 12 : 13);
-  const pose = options.pose ?? "run";
   const cells = [
     [2, 0, trim], [3, 0, trim], [4, 0, trim], [5, 0, trim],
     [1, 1, trim], [2, 1, trim], [3, 1, trim], [4, 1, trim], [5, 1, trim], [6, 1, trim],
@@ -5671,6 +5761,44 @@ function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, op
   drawPixelSprite(ctx, palette, ox, oy, cells);
 }
 
+function drawPixelSlidingRunner(ctx, palette, position, color, options = {}) {
+  const S = palette.skin;
+  const L = palette.legs;
+  const U = options.jerseyColor ?? palette.uniform;
+  const US = options.jerseyShadow ?? palette.uniformSh;
+  const trim = normalizeHexColor(color, palette.runner);
+  const accent = normalizeHexColor(options.accentColor ?? color, trim);
+  const ink = options.uniformNumber === undefined ? palette.uniformInk : mixHexColors(palette.uniformInk, accent, 0.18);
+  const ox = Math.round(position.x) - 8;
+  const oy = Math.round(position.y) - 8;
+  const rawCells = [
+    [1, 1, trim], [2, 1, trim], [3, 1, trim], [4, 1, trim],
+    [0, 2, trim], [1, 2, S], [2, 2, S], [3, 2, S], [4, 2, S],
+    [1, 3, S], [2, 3, palette.outline], [3, 3, S], [4, 3, palette.outline],
+    [4, 4, U], [5, 4, U], [6, 4, trim], [7, 4, U], [8, 4, U],
+    [3, 5, U], [4, 5, U], [5, 5, US], [6, 5, trim], [7, 5, US], [8, 5, U],
+    [8, 6, L], [9, 6, L], [10, 6, L], [11, 6, L],
+    [9, 7, L], [10, 7, L], [12, 7, L], [13, 7, L],
+    [0, 4, S], [1, 5, S], [10, 4, S], [11, 3, S],
+    [6, 4, palette.uniformInk], [5, 5, palette.uniformInk],
+    [4, 4, palette.uniformHi], [8, 4, palette.uniformHi],
+    [3, 6, accent], [2, 7, accent]
+  ];
+  rawCells.push(...gamecastTinyUniformNumberCells(options.uniformNumber, 5, 4, ink));
+  const cells = Number(options.facing ?? 1) < 0
+    ? rawCells.map(([x, y, fill]) => [13 - x, y, fill])
+    : rawCells;
+  ctx.fillStyle = palette.shadow;
+  ctx.fillRect(ox + 1, oy + 9, 14, 1);
+  ctx.fillRect(ox + 4, oy + 10, 9, 1);
+  drawPixelSprite(ctx, palette, ox, oy, cells);
+  ctx.fillStyle = palette.dirtL;
+  ctx.fillRect(ox - 3, oy + 8, 3, 1);
+  ctx.fillRect(ox - 5, oy + 10, 2, 1);
+  ctx.fillStyle = palette.baseSh;
+  ctx.fillRect(ox - 1, oy + 9, 1, 1);
+}
+
 function gamecastTinyUniformNumberCells(number, ox, oy, color) {
   if (number === undefined || number === null || number === "") return [];
   const digit = String(Math.abs(Math.floor(Number(number) || 0)) % 10);
@@ -5709,29 +5837,64 @@ function gamecastFieldingBadgeCells(fieldingKey, accent, light, ox, oy) {
 function drawPixelBall(ctx, palette, position, color) {
   const x = Math.round(position.x);
   const y = Math.round(position.y);
+  const previousAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = Math.max(0, Math.min(1, Number(position.opacity ?? 1)));
+  drawPixelBallWake(ctx, palette, position, color);
+  const size = Math.max(1, Math.round(Number(position.size ?? 1)));
+  const glowW = size * 2 + 5;
+  const glowH = size * 2 + 3;
   ctx.fillStyle = palette.ballGlow;
-  ctx.fillRect(x - 2, y - 1, 7, 3);
-  ctx.fillRect(x - 1, y - 2, 5, 5);
+  ctx.fillRect(x - Math.floor(glowW / 2), y - Math.floor(glowH / 2), glowW, glowH);
+  ctx.fillStyle = palette.ballWake;
+  ctx.fillRect(x - size - 1, y - size - 1, size * 2 + 3, size * 2 + 3);
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(x - 1, y - 1, 5, 5);
+  ctx.fillRect(x - size, y - size, size * 2 + 3, size * 2 + 3);
   ctx.fillStyle = color;
-  ctx.fillRect(x, y, 3, 3);
+  ctx.fillRect(x, y, size * 2 + 1, size * 2 + 1);
   ctx.fillStyle = palette.uniformHi;
   ctx.fillRect(x, y, 1, 1);
   ctx.fillStyle = palette.ballSeam;
-  ctx.fillRect(x + 2, y + 2, 1, 1);
-  ctx.fillRect(x, y + 2, 1, 1);
+  ctx.fillRect(x + size, y + size, 1, 1);
+  ctx.fillRect(x, y + size, 1, 1);
+  ctx.globalAlpha = previousAlpha;
+}
+
+function drawPixelBallWake(ctx, palette, position, color) {
+  const vx = Number(position.velocityX ?? 0);
+  const vy = Number(position.velocityY ?? 0);
+  const length = Math.hypot(vx, vy);
+  if (length < 0.5) return;
+  const dx = vx / length;
+  const dy = vy / length;
+  const x = Math.round(position.x);
+  const y = Math.round(position.y);
+  const wakeColors = [color, palette.ballWake, palette.base];
+  const previousAlpha = ctx.globalAlpha;
+  for (let index = 1; index <= 4; index += 1) {
+    const px = Math.round(x - dx * index * 3);
+    const py = Math.round(y - dy * index * 3);
+    ctx.globalAlpha = previousAlpha * Math.max(0.16, 0.64 - index * 0.12);
+    ctx.fillStyle = wakeColors[index % wakeColors.length];
+    ctx.fillRect(px, py, Math.max(1, 3 - Math.floor(index / 2)), 1);
+    if (index < 3) ctx.fillRect(px + 1, py + 1, 1, 1);
+  }
+  ctx.globalAlpha = previousAlpha;
 }
 
 function drawTrail(ctx, color, trail) {
+  const previousAlpha = ctx.globalAlpha;
   for (const point of trail ?? []) {
     const x = Math.round(point.x);
     const y = Math.round(point.y);
+    const size = Math.max(1, Math.round(Number(point.size ?? 1)));
+    const alpha = Math.max(0, Math.min(1, Number(point.opacity ?? 0.78)));
+    ctx.globalAlpha = previousAlpha * alpha;
     ctx.fillStyle = "#fffefb";
-    ctx.fillRect(x, y, gamecastSize(1), gamecastSize(1));
-    ctx.fillStyle = color;
-    ctx.fillRect(x + 1, y + 1, gamecastSize(1), gamecastSize(1));
+    ctx.fillRect(x, y, size, size);
+    ctx.fillStyle = point.color ?? color;
+    ctx.fillRect(x + size, y + size, Math.max(1, size - 1), Math.max(1, size - 1));
   }
+  ctx.globalAlpha = previousAlpha;
 }
 
 function drawPixelRunnerDust(ctx, palette, dust) {

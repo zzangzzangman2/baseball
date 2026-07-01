@@ -1,6 +1,6 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-01T07:29:41.842Z
+- 실행 시각: 2026-07-01T07:34:13.303Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Users\godho\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe (v24.14.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
