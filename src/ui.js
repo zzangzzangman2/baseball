@@ -126,11 +126,19 @@ const GAMECAST_PIXEL_W = 160;
 const GAMECAST_PIXEL_H = 144;
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
 const GAMECAST_PLAYBACK_COUNT = 8;
-const GAMECAST_WATCH_PA_MS = 1180;
-const GAMECAST_WATCH_GAP_MS = 180;
+const GAMECAST_WATCH_PA_MS = 2600;
+const GAMECAST_WATCH_GAP_MS = 340;
 const GAMECAST_PA_MS = 850;
 const GAMECAST_PA_GAP_MS = 120;
 const GAMECAST_SPEED_OPTIONS = [1, 2, 3, 4];
+const SIMULATION_STEP_DELAY_MS = 95;
+const SIMULATION_STEPS = [
+  "날씨·구장 변수 계산",
+  "선수단 컨디션·부상 점검",
+  "라인업·투수 운용 반영",
+  "경기·캠프 이벤트 생성",
+  "뉴스함·공문 갱신"
+];
 let cleanupGamecastPixelScreen = null;
 let latestGamecastSequence = null;
 
@@ -161,6 +169,7 @@ function render(root, state) {
   const teamColor = getTeamColor(selectedTeam);
   const activeTab = normalizeActiveTab(state?.ui?.activeTab);
   const activeTabMeta = DASHBOARD_TABS.find((tab) => tab.id === activeTab) ?? DASHBOARD_TABS[0];
+  const isAdvancing = Boolean(state?.ui?.isAdvancing);
   const frontOffice = {
     rosterSummary: getRosterSummary(selectedTeam),
     contractSummary: getContractSummary(selectedTeam),
@@ -220,12 +229,14 @@ function render(root, state) {
               <small>${formatNumber(manager.age)}세 · ${escapeHtml(managerStyleLabel(manager.style))}</small>
             </div>
             <div class="quick-action-row">
-              <button class="button button-primary" data-action="next-day" type="button">다음 날</button>
+              <button class="button button-primary" data-action="next-day" type="button" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "다음 날"}</button>
               <button class="button button-soft" data-action="export-save" type="button">저장</button>
             </div>
             <p class="status-message" data-save-status aria-live="polite"></p>
           </div>
         </header>
+
+        ${renderSimulationProgressPanel(state)}
 
         ${renderActiveTabContent(activeTab, {
           state,
@@ -355,7 +366,7 @@ function renderActiveTabContent(activeTab, context) {
 
   if (activeTab === "operations") {
     return renderTabSurface("operations", "시스템", `
-      ${renderOperationsBar()}
+      ${renderOperationsBar(state)}
       ${renderStateFoundationPanel(state)}
     `);
   }
@@ -373,6 +384,44 @@ function renderTabSurface(tabId, title, body) {
   return `
     <section class="tab-surface" data-active-tab="${escapeAttribute(tabId)}" aria-label="${escapeAttribute(title)}">
       ${body}
+    </section>
+  `;
+}
+
+function renderSimulationProgressPanel(state) {
+  const progress = state?.ui?.simulationProgress;
+  if (!progress) return "";
+
+  const stepIndex = Number(progress.stepIndex ?? -1);
+  const steps = Array.isArray(progress.steps) && progress.steps.length ? progress.steps : SIMULATION_STEPS;
+  const percent = Math.max(0, Math.min(100, Number(progress.percent ?? 0)));
+  const changes = Array.isArray(progress.changes) ? progress.changes : [];
+
+  return `
+    <section class="simulation-progress-panel is-${escapeAttribute(progress.status ?? "running")}" data-simulation-progress aria-live="polite">
+      <div class="simulation-progress-head">
+        <div>
+          <span class="mini-label">${escapeHtml(progress.kicker ?? "시뮬레이션")}</span>
+          <h2>${escapeHtml(progress.title ?? "날짜 계산 중")}</h2>
+        </div>
+        <strong>${formatNumber(Math.round(percent))}%</strong>
+      </div>
+      <div class="simulation-progress-track" style="--progress: ${percent}%"><i></i></div>
+      <ol class="simulation-progress-steps">
+        ${steps.map((label, index) => `
+          <li class="${index < stepIndex || progress.status === "complete" ? "is-done" : index === stepIndex ? "is-active" : ""}">
+            <span>${formatNumber(index + 1)}</span>
+            <b>${escapeHtml(label)}</b>
+          </li>
+        `).join("")}
+      </ol>
+      ${changes.length ? `
+        <ul class="simulation-change-list">
+          ${changes.map((change) => `<li>${escapeHtml(change)}</li>`).join("")}
+        </ul>
+      ` : `
+        <p class="simulation-progress-note">${escapeHtml(progress.note ?? "엔진이 오늘의 컨디션, 일정, 뉴스함을 순서대로 계산하고 있습니다.")}</p>
+      `}
     </section>
   `;
 }
@@ -542,13 +591,14 @@ function normalizeActiveTab(value) {
   return DASHBOARD_TABS.some((tab) => tab.id === id) ? id : "clubhouse";
 }
 
-function renderOperationsBar() {
+function renderOperationsBar(state) {
+  const isAdvancing = Boolean(state?.ui?.isAdvancing);
   return `
     <section class="operations-bar" aria-label="운영 메뉴">
       <div class="operation-group">
         <span>진행</span>
-        <button class="button button-primary" data-action="next-day">다음 날</button>
-        <button class="button button-soft" data-action="week">빠른 주간</button>
+        <button class="button button-primary" data-action="next-day" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "다음 날"}</button>
+        <button class="button button-soft" data-action="week" ${isAdvancing ? "disabled" : ""}>빠른 주간</button>
       </div>
       <div class="operation-group">
         <span>시즌 업무</span>
@@ -600,40 +650,46 @@ function renderLineupManagerPanel(state, selectedTeam, roster, lineup, pitchingS
             </ol>
           </section>
 
-          <aside class="lineup-command-board" aria-label="라인업 밸런스">
-            <div class="lineup-balance-grid">
-              ${renderLineupBalanceMetric("AVG OVR", formatNumber(summary.avgOvr), "타선 평균")}
-              ${renderLineupBalanceMetric("좌/스위치", `${formatNumber(summary.leftBats)}명`, "상대 우완 대응")}
-              ${renderLineupBalanceMetric("스피드", formatNumber(summary.speed), "주루 압박")}
-              ${renderLineupBalanceMetric("수비", formatNumber(summary.defense), "센터라인 포함")}
-            </div>
-            <div class="lineup-risk-card ${summary.fatigueRisk > 0 ? "is-warning" : ""}">
-              <span>컨디션 리스크</span>
-              <strong>${summary.fatigueRisk > 0 ? `${formatNumber(summary.fatigueRisk)}명 관리` : "정상"}</strong>
-              <small>${escapeHtml(summary.fatigueRisk > 0 ? "피로/부상 선수를 타순에서 확인하세요." : "선발 출전 체력 기준 양호")}</small>
-            </div>
-            <section class="lineup-bench-board">
-              <h3>벤치 후보</h3>
+          <aside class="lineup-side-stack" aria-label="라인업 운영 리포트">
+            <section class="lineup-command-board" aria-label="라인업 밸런스">
+              <div class="lineup-balance-grid">
+                ${renderLineupBalanceMetric("AVG OVR", formatNumber(summary.avgOvr), "타선 평균")}
+                ${renderLineupBalanceMetric("좌/스위치", `${formatNumber(summary.leftBats)}명`, "상대 우완 대응")}
+                ${renderLineupBalanceMetric("스피드", formatNumber(summary.speed), "주루 압박")}
+                ${renderLineupBalanceMetric("수비", formatNumber(summary.defense), "센터라인 포함")}
+              </div>
+              <div class="lineup-risk-card ${summary.fatigueRisk > 0 ? "is-warning" : ""}">
+                <span>컨디션 리스크</span>
+                <strong>${summary.fatigueRisk > 0 ? `${formatNumber(summary.fatigueRisk)}명 관리` : "정상"}</strong>
+                <small>${escapeHtml(summary.fatigueRisk > 0 ? "피로/부상 선수를 타순에서 확인하세요." : "선발 출전 체력 기준 양호")}</small>
+              </div>
+            </section>
+
+            <section class="lineup-bench-board" aria-label="벤치 후보">
+              <div class="lineup-section-head">
+                <h3>벤치 후보</h3>
+                <small>${formatNumber(bench.length)}명</small>
+              </div>
               <ol class="player-list compact">
                 ${bench.length ? bench.map(renderBenchCandidate).join("") : renderEmptyListItem("가용 벤치가 부족합니다.")}
               </ol>
             </section>
-          </aside>
 
-          <section class="lineup-pitching-board" aria-label="투수 운용">
-            <div class="lineup-section-head">
-              <h3>투수 운용</h3>
-              <small>오늘 기준</small>
-            </div>
-            <h4>선발 로테이션</h4>
-            <ol class="player-list compact pitching-role-list">
-              ${pitchingSnapshot.rotation.length ? pitchingSnapshot.rotation.map(renderPitchingRole).join("") : renderEmptyListItem("로테이션 준비 중입니다.")}
-            </ol>
-            <h4>불펜 역할</h4>
-            <ol class="player-list compact pitching-role-list">
-              ${pitchingSnapshot.bullpen.length ? pitchingSnapshot.bullpen.slice(0, 5).map(renderPitchingRole).join("") : renderEmptyListItem("불펜 준비 중입니다.")}
-            </ol>
-          </section>
+            <section class="lineup-pitching-board" aria-label="투수 운용">
+              <div class="lineup-section-head">
+                <h3>투수 운용</h3>
+                <small>오늘 기준</small>
+              </div>
+              <h4>선발 로테이션</h4>
+              <ol class="player-list compact pitching-role-list">
+                ${pitchingSnapshot.rotation.length ? pitchingSnapshot.rotation.map(renderPitchingRole).join("") : renderEmptyListItem("로테이션 준비 중입니다.")}
+              </ol>
+              <h4>불펜 역할</h4>
+              <ol class="player-list compact pitching-role-list">
+                ${pitchingSnapshot.bullpen.length ? pitchingSnapshot.bullpen.slice(0, 5).map(renderPitchingRole).join("") : renderEmptyListItem("불펜 준비 중입니다.")}
+              </ol>
+            </section>
+          </aside>
         </div>
         <div class="lineup-actions">
           <button class="button button-primary" type="submit">라인업 저장</button>
@@ -650,9 +706,9 @@ function renderLineupSlot(index, selectedId, eligibleHitters) {
   const order = index + 1;
   const group = lineupOrderGroup(order);
   return `
-    <li class="lineup-slot is-${escapeAttribute(group.key)}">
+      <li class="lineup-slot is-${escapeAttribute(group.key)}">
       <span class="lineup-order">${formatNumber(order)}</span>
-      <label>
+      <label class="lineup-player-picker">
         <span>${escapeHtml(group.label)}</span>
         <select data-lineup-slot name="lineup-${order}" aria-label="${formatNumber(order)}번 타자">
           ${eligibleHitters.map((candidate) => `
@@ -1879,21 +1935,13 @@ function bindActions(root, state) {
 
   root.querySelectorAll("[data-action='next-day']").forEach((button) => {
     button.addEventListener("click", () => {
-      if (stopForBlockingMail(root, state)) return;
-      simulateDay(state);
-      render(root, state);
+      void runCalendarAdvance(root, state, 1);
     });
   });
 
   root.querySelectorAll("[data-action='week']").forEach((button) => {
     button.addEventListener("click", () => {
-      if (stopForBlockingMail(root, state)) return;
-      const beforeDate = state.currentDate;
-      const beforeGames = Number(state.gamesPlayed ?? 0);
-      simulateDays(state, 7);
-      const gamesDelta = Number(state.gamesPlayed ?? 0) - beforeGames;
-      render(root, state);
-      setStatus(root, `빠른 주간 진행: ${beforeDate} → ${state.currentDate}, ${formatNumber(gamesDelta)}경기 완료.`);
+      void runCalendarAdvance(root, state, 7);
     });
   });
 
@@ -2253,6 +2301,157 @@ function stopForBlockingMail(root, state) {
   if (!decision || decision.status !== "open" || !decision.blocking) return false;
   setStatus(root, `${decision.headline ?? "긴급 보고"}를 먼저 처리해야 날짜를 넘길 수 있습니다.`);
   return true;
+}
+
+async function runCalendarAdvance(root, state, days = 1) {
+  if (state?.ui?.isAdvancing) {
+    setStatus(root, "이미 날짜 계산이 진행 중입니다.");
+    return;
+  }
+  if (stopForBlockingMail(root, state)) return;
+
+  const before = captureSimulationSnapshot(state);
+  const modeLabel = days > 1 ? "빠른 주간" : "다음 날";
+  const progressId = `advance-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  for (let index = 0; index < SIMULATION_STEPS.length; index += 1) {
+    state.ui = {
+      ...(state.ui ?? {}),
+      isAdvancing: true,
+      simulationProgress: {
+        id: progressId,
+        status: "running",
+        kicker: modeLabel,
+        title: `${modeLabel} 계산 중`,
+        stepIndex: index,
+        percent: Math.round((index / SIMULATION_STEPS.length) * 86),
+        steps: SIMULATION_STEPS,
+        note: `${SIMULATION_STEPS[index]} 단계입니다.`
+      }
+    };
+    render(root, state);
+    await waitForUi(SIMULATION_STEP_DELAY_MS);
+  }
+
+  if (days > 1) simulateDays(state, days);
+  else simulateDay(state);
+
+  const after = captureSimulationSnapshot(state);
+  const changes = buildSimulationChangeNotes(before, after, state, days);
+  state.ui = {
+    ...(state.ui ?? {}),
+    isAdvancing: false,
+    simulationProgress: {
+      id: progressId,
+      status: "complete",
+      kicker: modeLabel,
+      title: `${modeLabel} 계산 완료`,
+      stepIndex: SIMULATION_STEPS.length,
+      percent: 100,
+      steps: SIMULATION_STEPS,
+      changes
+    }
+  };
+  render(root, state);
+  setStatus(root, buildSimulationStatusMessage(before, after, days));
+}
+
+function captureSimulationSnapshot(state) {
+  const selectedTeam = getSelectedTeam(state);
+  return {
+    date: state?.currentDate ?? "",
+    day: Number(state?.day ?? 0),
+    phase: state?.phase ?? "",
+    gamesPlayed: Number(state?.gamesPlayed ?? 0),
+    logs: Number(state?.logs?.length ?? 0),
+    eventLog: Number(state?.eventLog?.length ?? 0),
+    mailDecisions: Number(state?.mailDecisions?.length ?? 0),
+    pendingMailId: state?.pendingMailDecision?.status === "open" ? String(state.pendingMailDecision.id ?? "") : "",
+    pendingMailHeadline: state?.pendingMailDecision?.status === "open" ? String(state.pendingMailDecision.headline ?? "긴급 보고") : "",
+    weather: formatWeatherSnapshot(state?.weather),
+    selectedTeamName: getTeamShortName(selectedTeam) ?? "선택 구단",
+    selectedRecord: renderRecord(selectedTeam),
+    selectedFatigue: averageTeamFatigue(selectedTeam),
+    activeInjuries: countActiveInjuries(state)
+  };
+}
+
+function buildSimulationChangeNotes(before, after, state, days) {
+  const notes = [`${before.date || "-"} → ${after.date || "-"} 일정 반영`];
+  const gameDelta = Number(after.gamesPlayed) - Number(before.gamesPlayed);
+  const newsDelta = Math.max(0, (Number(after.logs) - Number(before.logs)) + (Number(after.eventLog) - Number(before.eventLog)) + (Number(after.mailDecisions) - Number(before.mailDecisions)));
+  const injuryDelta = Number(after.activeInjuries) - Number(before.activeInjuries);
+  const fatigueDelta = Number(after.selectedFatigue) - Number(before.selectedFatigue);
+
+  if (gameDelta > 0) {
+    notes.push(`KBO ${formatNumber(gameDelta)}경기 새로 계산`);
+  } else if (before.phase === "preseason" || after.phase === "preseason") {
+    notes.push("프리시즌 캠프·프런트 루틴 갱신");
+  } else {
+    notes.push("경기 없는 일정, 회복·이동 루틴 반영");
+  }
+
+  if (before.phase !== after.phase) {
+    notes.push(`${renderPhase(before.phase)} → ${renderPhase(after.phase)} 전환`);
+  }
+
+  if (before.selectedRecord !== after.selectedRecord) {
+    notes.push(`${after.selectedTeamName} 성적 ${before.selectedRecord} → ${after.selectedRecord}`);
+  }
+
+  if (before.weather !== after.weather) {
+    notes.push(`날씨 ${after.weather}`);
+  }
+
+  if (newsDelta > 0) {
+    notes.push(`뉴스·공문·비서 보고 ${formatNumber(newsDelta)}건 반영`);
+  } else if (days > 1) {
+    notes.push("주간 진행 중 기존 메일함 유지");
+  }
+
+  if (injuryDelta > 0) {
+    notes.push(`부상자 ${formatNumber(injuryDelta)}명 증가`);
+  } else if (injuryDelta < 0) {
+    notes.push(`부상자 ${formatNumber(Math.abs(injuryDelta))}명 복귀`);
+  }
+
+  if (Math.abs(fatigueDelta) >= 2) {
+    notes.push(`${after.selectedTeamName} 평균 피로 ${formatNumber(before.selectedFatigue)} → ${formatNumber(after.selectedFatigue)}`);
+  }
+
+  if (after.pendingMailId && after.pendingMailId !== before.pendingMailId) {
+    notes.push(`긴급 결재 대기: ${after.pendingMailHeadline}`);
+  }
+
+  return notes.slice(0, 7);
+}
+
+function buildSimulationStatusMessage(before, after, days) {
+  const gameDelta = Number(after.gamesPlayed) - Number(before.gamesPlayed);
+  const modeLabel = days > 1 ? "빠른 주간" : "하루";
+  return `${modeLabel} 계산 완료: ${before.date} → ${after.date}, ${formatNumber(gameDelta)}경기 반영.`;
+}
+
+function formatWeatherSnapshot(weather) {
+  if (!weather) return "-";
+  return `${weather.label ?? "날씨"} · ${formatTemperature(weather.temperature)}`;
+}
+
+function countActiveInjuries(state) {
+  return (state?.teams ?? []).reduce((total, team) =>
+    total + (team.roster ?? []).filter((player) => Number(player.injuredDays ?? 0) > 0).length,
+  0);
+}
+
+function averageTeamFatigue(team) {
+  const roster = team?.roster ?? [];
+  if (!roster.length) return 0;
+  const total = roster.reduce((sumValue, player) => sumValue + Number(player.fatigue ?? 0), 0);
+  return Math.round(total / roster.length);
+}
+
+function waitForUi(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function setStatus(root, message) {
@@ -3628,10 +3827,10 @@ function normalizeGamecastEvent(event, state) {
   const defenseTeam = normalizeGameTeam(event?.defenseTeamId, state);
   const teamColor = normalizeHexColor(getTeamColor(offenseTeam), side === "home" ? "#c64b74" : "#315288");
   const defenseColor = normalizeHexColor(getTeamColor(defenseTeam), side === "home" ? "#315288" : "#c64b74");
-  const teamJerseyColor = side === "home" ? "#fffefb" : "#d9d3ca";
-  const teamJerseyShadow = side === "home" ? "#e8ded0" : "#c9bcab";
-  const defenseJerseyColor = side === "home" ? "#d9d3ca" : "#fffefb";
-  const defenseJerseyShadow = side === "home" ? "#c9bcab" : "#e8ded0";
+  const teamJerseyColor = side === "home" ? "#fbfbf7" : "#8d8a82";
+  const teamJerseyShadow = side === "home" ? "#dcdad2" : "#63615b";
+  const defenseJerseyColor = side === "home" ? "#8d8a82" : "#fbfbf7";
+  const defenseJerseyShadow = side === "home" ? "#63615b" : "#dcdad2";
 
   return {
     id: `${event?.gameId ?? "game"}-${side}-${inning}-${sequence}-${event?.outcome ?? "idle"}`,
@@ -4090,6 +4289,7 @@ function drawGamecastFrame(ctx, state, frame) {
   const palette = state.palette;
   if (state.fieldCache) ctx.drawImage(state.fieldCache, 0, 0);
   else drawGamecastFieldTo(ctx, palette);
+  drawPixelCenterScoreboard(ctx, palette, frame);
   drawPixelAtmosphere(ctx, palette, frame);
   drawPixelFielders(ctx, palette, frame);
   drawGamecastBaseRunners(ctx, palette, frame.bases, frame);
@@ -4431,6 +4631,52 @@ function drawPixelBroadcastBug(ctx, palette, frame) {
   else if (frame.event?.fieldingPosition) drawMiniPixelLetters(ctx, palette, frame.event.fieldingPosition.slice(0, 2), x + gamecastSize(2), y + gamecastSize(10), palette.defenderL);
 }
 
+function drawPixelCenterScoreboard(ctx, palette, frame) {
+  const x = gamecastX(48);
+  const y = gamecastY(4);
+  const w = gamecastSize(24);
+  const h = gamecastSize(10);
+  const result = gamecastJumbotronText(frame.event);
+  const accent = frame.event?.outcome === "homeRun"
+    ? palette.homerL
+    : frame.scoreFlash
+      ? palette.spark
+      : frame.offenseColor ?? palette.grassHi;
+
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = "#12211b";
+  ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
+  ctx.fillStyle = accent;
+  ctx.fillRect(x + 2, y + 1, Math.max(2, w - 4), 1);
+
+  drawPixelScoreDigits(ctx, palette, x + 3, y + 3, Number(frame.score?.away ?? 0), palette.base);
+  ctx.fillStyle = palette.baseSh;
+  ctx.fillRect(x + 11, y + 5, 2, 1);
+  drawPixelScoreDigits(ctx, palette, x + 14, y + 3, Number(frame.score?.home ?? 0), palette.base);
+
+  const textX = Math.max(x + 2, Math.round(x + (w - miniPixelTextWidth(result)) / 2));
+  drawMiniPixelText(ctx, palette, result, textX, y + 8, result === "HR" ? palette.homerL : result === "K" || result === "OUT" ? palette.out : palette.sparkL, 6);
+
+  if (frame.scoreFlash || frame.event?.outcome === "homeRun") {
+    const pulse = Math.floor(Number(frame.progress ?? 0) * 20) % 2;
+    ctx.fillStyle = pulse ? palette.sparkL : palette.homerL;
+    ctx.fillRect(x + w - 4, y + 3, 2, 1);
+    ctx.fillRect(x + 2, y + 3, 2, 1);
+  }
+}
+
+function gamecastJumbotronText(event) {
+  if (!event) return "LIVE";
+  if (event.doublePlay) return "DP";
+  if (event.outcome === "homeRun") return "HR";
+  if (["single", "double", "triple", "error"].includes(event.outcome)) return "HIT";
+  if (event.outcome === "strikeout") return "K";
+  if (event.outcome === "walk") return "BB";
+  if (event.outcome === "out") return "OUT";
+  return "LIVE";
+}
+
 function drawPixelScoreDigits(ctx, palette, x, y, value, color) {
   const text = String(Math.max(0, Math.min(99, Math.floor(Number(value) || 0)))).padStart(2, "0");
   for (let index = 0; index < text.length; index += 1) {
@@ -4460,25 +4706,52 @@ function drawMiniPixelDigit(ctx, palette, digit, x, y, color) {
 }
 
 function drawMiniPixelLetters(ctx, palette, text, x, y, color) {
-  const letters = {
-    P: ["110", "101", "110", "100", "100"],
-    C: ["111", "100", "100", "100", "111"],
-    B: ["110", "101", "110", "101", "110"],
-    S: ["111", "100", "111", "001", "111"],
-    L: ["100", "100", "100", "100", "111"],
-    R: ["110", "101", "110", "101", "101"],
-    F: ["111", "100", "110", "100", "100"],
-    D: ["110", "101", "101", "101", "110"]
-  };
+  drawMiniPixelText(ctx, palette, text, x, y, color, 2);
+}
+
+function drawMiniPixelText(ctx, palette, text, x, y, color, maxLetters = 6) {
+  const letters = miniPixelLetterMap();
   ctx.fillStyle = color;
-  String(text ?? "").toUpperCase().slice(0, 2).split("").forEach((letter, letterIndex) => {
+  let cursor = x;
+  String(text ?? "").toUpperCase().slice(0, maxLetters).split("").forEach((letter) => {
+    if (letter === " ") {
+      cursor += gamecastSize(3);
+      return;
+    }
     const map = letters[letter] ?? letters.F;
     map.forEach((row, rowIndex) => {
       [...row].forEach((cell, colIndex) => {
-        if (cell === "1") ctx.fillRect(x + gamecastSize(letterIndex * 4 + colIndex), y + gamecastSize(rowIndex), gamecastSize(1), gamecastSize(1));
+        if (cell === "1") ctx.fillRect(cursor + gamecastSize(colIndex), y + gamecastSize(rowIndex), gamecastSize(1), gamecastSize(1));
       });
     });
+    cursor += gamecastSize(4);
   });
+}
+
+function miniPixelTextWidth(text) {
+  return String(text ?? "").toUpperCase().split("").reduce((width, letter) => width + gamecastSize(letter === " " ? 3 : 4), 0);
+}
+
+function miniPixelLetterMap() {
+  return {
+    A: ["010", "101", "111", "101", "101"],
+    B: ["110", "101", "110", "101", "110"],
+    C: ["111", "100", "100", "100", "111"],
+    D: ["110", "101", "101", "101", "110"],
+    E: ["111", "100", "110", "100", "111"],
+    F: ["111", "100", "110", "100", "100"],
+    H: ["101", "101", "111", "101", "101"],
+    I: ["111", "010", "010", "010", "111"],
+    K: ["101", "101", "110", "101", "101"],
+    L: ["100", "100", "100", "100", "111"],
+    O: ["111", "101", "101", "101", "111"],
+    P: ["110", "101", "110", "100", "100"],
+    R: ["110", "101", "110", "101", "101"],
+    S: ["111", "100", "111", "001", "111"],
+    T: ["111", "010", "010", "010", "010"],
+    U: ["101", "101", "101", "101", "111"],
+    V: ["101", "101", "101", "101", "010"]
+  };
 }
 
 function drawPixelAction(ctx, palette, frame) {
@@ -4532,7 +4805,9 @@ function drawPixelAction(ctx, palette, frame) {
 
 function drawPixelAtmosphere(ctx, palette, frame) {
   const progress = Number(frame.progress ?? 0);
+  drawPixelRibbonPulse(ctx, palette, frame, progress);
   drawPixelCrowdWave(ctx, palette, frame, progress);
+  drawPixelCameraFlashes(ctx, palette, frame, progress);
   drawPixelDugoutReaction(ctx, palette, frame, progress);
   if (frame.event?.outcome === "homeRun" && progress >= 0.66) {
     const t = Math.max(0, Math.min(1, (progress - 0.66) / 0.3));
@@ -4544,6 +4819,48 @@ function drawPixelAtmosphere(ctx, palette, frame) {
     for (let x = gamecastX(18); x < gamecastX(103); x += gamecastSize(8)) {
       ctx.fillRect(x, gamecastY(25), gamecastSize(2), gamecastSize(1));
     }
+  }
+}
+
+function drawPixelRibbonPulse(ctx, palette, frame, progress) {
+  const event = frame.event;
+  if (!event || progress < 0.28 || progress > 0.92) return;
+  const active = event.outcome === "homeRun" || frame.scoreFlash || ["double", "triple", "strikeout"].includes(event.outcome);
+  if (!active) return;
+  const color = event.outcome === "homeRun" ? palette.homerL : frame.scoreFlash ? palette.spark : frame.offenseColor ?? palette.runnerL;
+  const glow = event.outcome === "strikeout" ? palette.throw : palette.sparkL;
+  const phase = Math.floor(progress * 24);
+  for (const [start, end] of [[18, 40], [80, 102]]) {
+    const y = gamecastY(18);
+    for (let x = gamecastX(start); x < gamecastX(end); x += gamecastSize(4)) {
+      ctx.fillStyle = ((x + phase) % gamecastSize(8)) < gamecastSize(4) ? color : glow;
+      ctx.fillRect(x, y, gamecastSize(3), gamecastSize(1));
+      if (frame.scoreFlash || event.outcome === "homeRun") {
+        ctx.fillStyle = palette.base;
+        ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), gamecastSize(1), gamecastSize(1));
+      }
+    }
+  }
+}
+
+function drawPixelCameraFlashes(ctx, palette, frame, progress) {
+  const event = frame.event;
+  if (!event || progress < 0.34 || progress > 0.88) return;
+  const heat = event.outcome === "homeRun" ? 1 : frame.scoreFlash ? 0.8 : ["double", "triple"].includes(event.outcome) ? 0.46 : event.outcome === "strikeout" ? 0.32 : 0;
+  if (heat <= 0) return;
+  const phase = Math.floor(progress * 28);
+  const count = event.outcome === "homeRun" ? 14 : frame.scoreFlash ? 10 : 6;
+  for (let index = 0; index < count; index += 1) {
+    if ((index * 7 + phase) % 5 > Math.ceil(heat * 4)) continue;
+    const nx = Math.abs(gamecastEventNoise(event, 31 + index));
+    const ny = Math.abs(gamecastEventNoise(event, 61 + index));
+    const x = gamecastX(8 + nx * 104);
+    const y = gamecastY(5 + ny * 33);
+    ctx.fillStyle = palette.base;
+    ctx.fillRect(x, y, gamecastSize(2), gamecastSize(1));
+    ctx.fillRect(x + gamecastSize(1), y - gamecastSize(1), gamecastSize(1), gamecastSize(3));
+    ctx.fillStyle = palette.sparkL;
+    ctx.fillRect(x + gamecastSize(2), y, gamecastSize(1), gamecastSize(1));
   }
 }
 

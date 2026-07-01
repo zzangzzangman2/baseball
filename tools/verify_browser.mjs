@@ -492,9 +492,10 @@ async function checkViewport(viewport) {
   );
   await switchDashboardTab("clubhouse");
   const preseasonProbe = await evaluateInBrowser(`
-    (() => {
+    (async () => {
       const before = document.body.innerText;
       document.querySelector("[data-action='next-day']")?.click();
+      await new Promise((resolve) => setTimeout(resolve, 850));
       const after = document.body.innerText;
       const newsTypes = [...document.querySelectorAll("[data-news-type]")].map((node) => node.dataset.newsType);
       return {
@@ -502,6 +503,7 @@ async function checkViewport(viewport) {
         dateAdvanced: after.includes("2026-03-02"),
         gamesStillZero: after.includes("0 / 720경기"),
         boxscores: document.querySelectorAll(".boxscore-mini").length,
+        hasSimulationPanel: Boolean(document.querySelector("[data-simulation-progress].is-complete")),
         hasAssistantMail: newsTypes.includes("assistant"),
         hasMediaMail: newsTypes.includes("media"),
         hasKboStyleMail: newsTypes.some((type) => ["kbo-official", "front-office", "compliance", "ops", "community", "futures", "development"].includes(type))
@@ -509,10 +511,12 @@ async function checkViewport(viewport) {
     })()
   `);
   assert(preseasonProbe.hadPreseason && preseasonProbe.dateAdvanced && preseasonProbe.gamesStillZero && preseasonProbe.boxscores === 0, "프리시즌 하루 진행이 경기 없이 날짜만 넘기지 않았습니다.", "src/ui.js");
+  assert(preseasonProbe.hasSimulationPanel, "날짜 진행 계산 패널이 완료 상태로 렌더링되지 않았습니다.", "src/ui.js");
   assert(preseasonProbe.hasAssistantMail && preseasonProbe.hasMediaMail && preseasonProbe.hasKboStyleMail, "프리시즌 하루 진행 후 비서/언론/KBO식 메일이 쌓이지 않았습니다.", "src/ui.js");
   const weeklyProbe = await evaluateInBrowser(`
-    (() => {
+    (async () => {
       document.querySelector("[data-action='week']")?.click();
+      await new Promise((resolve) => setTimeout(resolve, 850));
       const after = document.body.innerText;
       return {
         hasWeekButton: Boolean(document.querySelector("[data-action='week']")),
@@ -524,7 +528,8 @@ async function checkViewport(viewport) {
   `);
   assert(weeklyProbe.hasWeekButton && weeklyProbe.dateAdvanced && weeklyProbe.gamesStillZero && weeklyProbe.boxscores === 0, "빠른 주간 진행이 프리시즌에서 7일만 안전하게 넘기지 못했습니다.", "src/ui.js");
   await evaluateInBrowser(`
-    (() => {
+    (async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       for (let i = 0; i < 20; i += 1) {
         for (let guard = 0; guard < 4; guard += 1) {
           const decision = document.querySelector("[data-pending-mail-decision] [data-action='resolve-mail-decision']");
@@ -532,6 +537,7 @@ async function checkViewport(viewport) {
           decision.click();
         }
         document.querySelector("[data-action='next-day']")?.click();
+        await wait(760);
       }
       return true;
     })()
