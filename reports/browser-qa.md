@@ -1,9 +1,9 @@
 # 브라우저/패키징 QA 보고서
 
-- 실행 시각: 2026-07-01T09:05:10.442Z
+- 실행 시각: 2026-07-02T00:45:29.205Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Program Files\nodejs\node.exe (v24.18.0)
-- 대상 URL: http://127.0.0.1:54008/index.html
+- 대상 URL: http://127.0.0.1:50394/index.html
 - 브라우저: chrome.exe
 - 종합 결과: 통과 (7/7 통과, 경고 1건)
 
@@ -11,7 +11,7 @@
 
 | 항목 | 결과 | 상세 | 위치 |
 | --- | --- | --- | --- |
-| 정적 로컬 서버 시작 | PASS | http://127.0.0.1:54008/index.html | - |
+| 정적 로컬 서버 시작 | PASS | http://127.0.0.1:50394/index.html | - |
 | Chromium 브라우저 연결 | PASS | chrome.exe CDP 연결 완료 | - |
 | Electron 패키징 구성 | PASS | main=electron-main.cjs, product=KBO GM Manager | - |
 | 선수 총원 기준 | PASS | 총 531명 | - |

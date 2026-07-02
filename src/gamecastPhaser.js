@@ -1,5 +1,31 @@
-const PHASER_DESIGN_W = 160;
-const PHASER_DESIGN_H = 144;
+const PHASER_DESIGN_W = 320;
+const PHASER_DESIGN_H = 288;
+const PLAYER_ATLAS_SIZE = 48;
+const PLAYER_ATLAS_FRAMES = {
+  stance: [0, 0],
+  swing: [1, 0],
+  follow: [2, 0],
+  miss: [3, 0],
+  take: [4, 0],
+  idle: [0, 1],
+  run1: [1, 1],
+  run2: [2, 1],
+  walk1: [3, 1],
+  slide: [4, 1],
+  windup: [0, 2],
+  pitch: [1, 2],
+  field: [0, 3],
+  catch: [1, 3],
+  dive: [2, 3],
+  catcher: [3, 3],
+  lookUp: [4, 3],
+  load: [0, 0],
+  walk: [3, 1],
+  run: [1, 1],
+  coach: [0, 1],
+  umpire: [0, 1]
+};
+const SPRITE_ASSET_ROOT = "./assets/gamecast";
 
 export function canUseGamecastPhaser() {
   return typeof window !== "undefined" && Boolean(window.Phaser?.Game);
@@ -30,6 +56,9 @@ export function mountGamecastPhaser(options) {
   applyCanvasContract(runtime);
 
   const sceneConfig = {
+    preload() {
+      preloadGamecastAssets(this);
+    },
     create() {
       createGamecastScene(this, runtime);
       renderRuntimeFrame(runtime, runtime.prefersReducedMotion);
@@ -102,6 +131,12 @@ export function mountGamecastPhaser(options) {
       runtime.scene = null;
     }
   };
+}
+
+function preloadGamecastAssets(scene) {
+  scene.load.atlas("gamecast-player-home", `${SPRITE_ASSET_ROOT}/player-home.png`, `${SPRITE_ASSET_ROOT}/player-home.json`);
+  scene.load.atlas("gamecast-player-away", `${SPRITE_ASSET_ROOT}/player-away.png`, `${SPRITE_ASSET_ROOT}/player-away.json`);
+  scene.load.atlas("gamecast-props", `${SPRITE_ASSET_ROOT}/props.png`, `${SPRITE_ASSET_ROOT}/props.json`);
 }
 
 function calculatePhaserMetrics(runtime) {
@@ -198,8 +233,11 @@ function createGamecastScene(scene, runtime) {
   scene.cameras.main.roundPixels = true;
   scene.fieldLayer = scene.add.container(0, 0).setDepth(0);
   scene.playerGraphics = scene.add.graphics().setDepth(10);
+  scene.spriteLayer = scene.add.container(0, 0).setDepth(12);
   scene.ballGraphics = scene.add.graphics().setDepth(30);
+  scene.ballSpriteLayer = scene.add.container(0, 0).setDepth(32);
   scene.fxGraphics = scene.add.graphics().setDepth(40);
+  scene.gamecastTeamTextureCache = new Map();
   scene.flashRect = scene.add.rectangle(0, 0, runtime.metrics.bufferW, runtime.metrics.bufferH, 0xfffefb, 0)
     .setOrigin(0)
     .setDepth(45);
@@ -260,21 +298,24 @@ function renderScene(scene, runtime, frame) {
   const player = scene.playerGraphics;
   const ball = scene.ballGraphics;
   const fx = scene.fxGraphics;
+  const useSprites = hasPlayerSprites(scene);
   player.clear();
   ball.clear();
   fx.clear();
+  scene.spriteLayer?.removeAll(true);
+  scene.ballSpriteLayer?.removeAll(true);
 
   drawPhaserAtmosphere(fx, runtime, frame);
-  drawStaticDefense(player, runtime, frame);
-  for (const defender of frame.defenseSprites ?? []) drawPlayer(player, runtime, defender, "defender");
+  drawStaticDefense(scene, player, runtime, frame, useSprites);
+  for (const defender of frame.defenseSprites ?? []) drawGamecastPlayer(scene, player, runtime, defender, "defender", useSprites);
   for (const runner of frame.runners ?? []) drawRunnerEffects(fx, runtime, runner, palette);
-  for (const runner of frame.runners ?? []) drawPlayer(player, runtime, runner, "runner");
-  if (frame.batter) drawPlayer(player, runtime, frame.batter, "batter");
-  drawUmpire(player, runtime, frame);
+  for (const runner of frame.runners ?? []) drawGamecastPlayer(scene, player, runtime, runner, "runner", useSprites);
+  if (frame.batter) drawGamecastPlayer(scene, player, runtime, frame.batter, "batter", useSprites);
+  drawUmpire(scene, player, runtime, frame, useSprites);
   drawThrowLines(ball, runtime, frame);
   drawBallTrail(ball, runtime, frame);
   if (frame.ballShadow) drawBallShadow(ball, runtime, frame.ballShadow);
-  if (frame.ball) drawBall(ball, runtime, frame.ball, frame.ballColor ?? palette.base);
+  if (frame.ball) drawGamecastBall(scene, ball, runtime, frame.ball, frame.ballColor ?? palette.base);
   if (frame.contactBurst) drawContactBurst(fx, runtime, frame.contactBurst, frame);
 
   const flashAlpha = frame.flash ? 0.2 : frame.scoreFlash ? 0.08 : 0;
@@ -390,7 +431,7 @@ function drawLineCanvas(ctx, x1, y1, x2, y2, color, width = 1) {
   ctx.stroke();
 }
 
-function drawStaticDefense(graphics, runtime, frame) {
+function drawStaticDefense(scene, graphics, runtime, frame, useSprites) {
   if (!frame.event) return;
   const bases = runtime.basePositions;
   const color = frame.defenseColor ?? runtime.palette.defender;
@@ -408,7 +449,7 @@ function drawStaticDefense(graphics, runtime, frame) {
     { key: "RF", x: bases.first.x + 16, y: bases.first.y - 30 }
   ];
   for (const item of positions) {
-    drawPlayer(graphics, runtime, {
+    drawGamecastPlayer(scene, graphics, runtime, {
       position: { x: item.x, y: item.y },
       color,
       jerseyColor,
@@ -417,7 +458,7 @@ function drawStaticDefense(graphics, runtime, frame) {
       pose: "field",
       runFrame: 0,
       fieldingKey: item.key
-    }, "defenderStatic");
+    }, "defenderStatic", useSprites);
   }
 }
 
@@ -441,6 +482,112 @@ function drawRunnerEffects(graphics, runtime, runner, palette) {
   for (const point of runner.trail ?? []) {
     rect(graphics, runtime, point.x - 1, point.y - 6, 2, 2, runner.trailColor ?? palette.runnerL, 0.35);
   }
+}
+
+function drawGamecastPlayer(scene, graphics, runtime, sprite, role, useSprites) {
+  if (useSprites && drawSpritePlayer(scene, graphics, runtime, sprite, role)) return;
+  drawPlayer(graphics, runtime, sprite, role);
+}
+
+function hasPlayerSprites(scene) {
+  return Boolean(scene?.textures?.exists?.("gamecast-player-home") && scene?.textures?.exists?.("gamecast-player-away"));
+}
+
+function drawSpritePlayer(scene, graphics, runtime, sprite, role) {
+  if (!sprite?.position || !scene?.spriteLayer) return false;
+  const palette = runtime.palette;
+  const x = Number(sprite.position.x ?? 0);
+  const y = Number(sprite.position.y ?? 0);
+  const baseKey = isAwayUniform(sprite.jerseyColor) ? "gamecast-player-away" : "gamecast-player-home";
+  const accent = sprite.accentColor ?? sprite.color ?? palette.runner;
+  const textureKey = ensureTeamSpriteAtlas(scene, baseKey, accent);
+  const frame = spriteFrameForPose(sprite, role);
+  if (!scene.textures.exists(textureKey) || !scene.textures.getFrame(textureKey, frame)) return false;
+
+  rect(graphics, runtime, x - 13, y + 1, 26, 5, palette.shadow, 0.28);
+
+  const metrics = runtime.metrics;
+  const facing = Number(sprite.facing ?? (role === "batter" ? -1 : 1));
+  const squashX = sprite.squash ? 1.06 : 1;
+  const squashY = sprite.squash ? 0.94 : 1;
+  const image = scene.add.image(
+    Math.round(x * metrics.drawScaleX),
+    Math.round(y * metrics.drawScaleY),
+    textureKey,
+    frame
+  )
+    .setOrigin(CENTER_ORIGIN_X, BASELINE_ORIGIN_Y)
+    .setScale(metrics.drawScaleX * (facing < 0 ? -squashX : squashX), metrics.drawScaleY * squashY);
+  scene.spriteLayer.add(image);
+  return true;
+}
+
+const CENTER_ORIGIN_X = 24 / PLAYER_ATLAS_SIZE;
+const BASELINE_ORIGIN_Y = 45 / PLAYER_ATLAS_SIZE;
+
+function spriteFrameForPose(sprite, role) {
+  if (role === "umpire") return "umpire";
+  if (role?.startsWith("defender") && sprite?.fieldingKey === "C") return "catcher";
+  const pose = String(sprite?.pose ?? "idle");
+  if (pose === "run") return Number(sprite?.runFrame ?? 0) % 2 ? "run2" : "run1";
+  if (pose === "walk") return Number(sprite?.runFrame ?? 0) % 2 ? "walk1" : "idle";
+  if (pose === "load") return "stance";
+  return PLAYER_ATLAS_FRAMES[pose] ? pose : "idle";
+}
+
+function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
+  const normalized = normalizeSpriteHex(accentColor, "#d23b3b");
+  const cacheKey = `${baseKey}-${normalized.slice(1).toLowerCase()}`;
+  if (scene.textures.exists(cacheKey)) return cacheKey;
+  if (scene.gamecastTeamTextureCache?.has(cacheKey)) return scene.gamecastTeamTextureCache.get(cacheKey);
+
+  try {
+    const baseTexture = scene.textures.get(baseKey);
+    const source = baseTexture?.getSourceImage?.();
+    if (!source?.width || !source?.height) return baseKey;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = source.width;
+    canvas.height = source.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return baseKey;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(source, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const primary = hexToRgb(normalized, [210, 59, 59]);
+    const secondary = mixRgb(primary, [35, 32, 42], 0.28);
+    for (let offset = 0; offset < imageData.data.length; offset += 4) {
+      const alpha = imageData.data[offset + 3];
+      if (alpha < 8) continue;
+      const pixel = [imageData.data[offset], imageData.data[offset + 1], imageData.data[offset + 2]];
+      if (isNearRgb(pixel, [210, 59, 59], 18)) {
+        imageData.data[offset] = primary[0];
+        imageData.data[offset + 1] = primary[1];
+        imageData.data[offset + 2] = primary[2];
+      } else if (isNearRgb(pixel, [178, 58, 72], 18)) {
+        imageData.data[offset] = secondary[0];
+        imageData.data[offset + 1] = secondary[1];
+        imageData.data[offset + 2] = secondary[2];
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+
+    const texture = scene.textures.addCanvas(cacheKey, canvas);
+    for (const [name, [col, row]] of Object.entries(PLAYER_ATLAS_FRAMES)) {
+      texture.add(name, 0, col * PLAYER_ATLAS_SIZE, row * PLAYER_ATLAS_SIZE, PLAYER_ATLAS_SIZE, PLAYER_ATLAS_SIZE);
+    }
+    texture.refresh?.();
+    scene.gamecastTeamTextureCache?.set(cacheKey, cacheKey);
+    return cacheKey;
+  } catch (_error) {
+    return baseKey;
+  }
+}
+
+function isAwayUniform(color) {
+  const rgb = hexToRgb(color, [247, 247, 242]);
+  const lightness = (Math.max(...rgb) + Math.min(...rgb)) / 2;
+  return lightness < 210;
 }
 
 function drawPlayer(graphics, runtime, sprite, role) {
@@ -491,16 +638,16 @@ function drawPlayer(graphics, runtime, sprite, role) {
   }
 }
 
-function drawUmpire(graphics, runtime, frame) {
+function drawUmpire(scene, graphics, runtime, frame, useSprites) {
   if (!frame.event) return;
   const bases = runtime.basePositions;
-  drawPlayer(graphics, runtime, {
+  drawGamecastPlayer(scene, graphics, runtime, {
     position: { x: bases.home.x - 10, y: bases.home.y + 2 },
     jerseyColor: "#25232c",
     jerseyShadow: "#15131a",
     accentColor: "#5f5b67",
     pose: "idle"
-  }, "umpire");
+  }, "umpire", useSprites);
 }
 
 function drawThrowLines(graphics, runtime, frame) {
@@ -525,6 +672,31 @@ function drawBall(graphics, runtime, ball, color) {
   rect(graphics, runtime, ball.x - size / 2 - 1, ball.y - size / 2 - 1, size + 2, size + 2, runtime.palette.outline, Number(ball.opacity ?? 1));
   rect(graphics, runtime, ball.x - size / 2, ball.y - size / 2, size, size, color, Number(ball.opacity ?? 1));
   rect(graphics, runtime, ball.x, ball.y - 1, 1, size, runtime.palette.ballSeam, 0.85);
+}
+
+function drawGamecastBall(scene, graphics, runtime, ball, color) {
+  if (!scene?.ballSpriteLayer || !scene.textures.exists("gamecast-props")) {
+    drawBall(graphics, runtime, ball, color);
+    return;
+  }
+  const speed = Math.abs(Number(ball.velocityX ?? 0)) + Math.abs(Number(ball.velocityY ?? 0));
+  const frame = `ball${Math.max(1, Math.min(3, (Math.floor(speed) % 3) + 1))}`;
+  if (!scene.textures.getFrame("gamecast-props", frame)) {
+    drawBall(graphics, runtime, ball, color);
+    return;
+  }
+  const metrics = runtime.metrics;
+  const size = Math.max(0.7, Math.min(1.2, Number(ball.size ?? 1) * 0.52));
+  const image = scene.add.image(
+    Math.round(ball.x * metrics.drawScaleX),
+    Math.round(ball.y * metrics.drawScaleY),
+    "gamecast-props",
+    frame
+  )
+    .setOrigin(0.5)
+    .setScale(metrics.drawScaleX * size, metrics.drawScaleY * size)
+    .setAlpha(Math.max(0, Math.min(1, Number(ball.opacity ?? 1))));
+  scene.ballSpriteLayer.add(image);
 }
 
 function drawContactBurst(graphics, runtime, burst, frame) {
@@ -569,4 +741,36 @@ function hexToInt(value, fallback = 0xffffff) {
   const text = String(value ?? "").trim().replace("#", "");
   const parsed = Number.parseInt(text.length === 3 ? text.split("").map((char) => char + char).join("") : text, 16);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeSpriteHex(value, fallback) {
+  const text = String(value ?? "").trim();
+  const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(text);
+  if (!match) return fallback;
+  const raw = match[1].length === 3
+    ? match[1].split("").map((char) => char + char).join("")
+    : match[1];
+  return `#${raw.toLowerCase()}`;
+}
+
+function hexToRgb(value, fallback) {
+  const normalized = normalizeSpriteHex(value, null);
+  if (!normalized) return fallback;
+  const raw = normalized.slice(1);
+  return [
+    Number.parseInt(raw.slice(0, 2), 16),
+    Number.parseInt(raw.slice(2, 4), 16),
+    Number.parseInt(raw.slice(4, 6), 16)
+  ];
+}
+
+function mixRgb(a, b, amount) {
+  const t = Math.max(0, Math.min(1, Number(amount) || 0));
+  return a.map((value, index) => Math.round(value * (1 - t) + b[index] * t));
+}
+
+function isNearRgb(pixel, target, tolerance) {
+  return Math.abs(pixel[0] - target[0]) <= tolerance
+    && Math.abs(pixel[1] - target[1]) <= tolerance
+    && Math.abs(pixel[2] - target[2]) <= tolerance;
 }

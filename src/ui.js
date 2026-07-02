@@ -128,8 +128,8 @@ const KOREAN_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const UI_OPENING_DAY_MONTH_DAY = "03-28";
 const UI_MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-const GAMECAST_PIXEL_W = 160;
-const GAMECAST_PIXEL_H = 144;
+const GAMECAST_PIXEL_W = 320;
+const GAMECAST_PIXEL_H = 288;
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
 const GAMECAST_PLAYBACK_COUNT = 8;
 const GAMECAST_WATCH_PA_MS = 2600;
