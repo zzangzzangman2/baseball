@@ -277,6 +277,26 @@ export function createInitialState() {
     tradeAssets: { cashLedger: [], draftPickLedger: [], conditionalAssets: [], ptbnlSlots: [] },
     freeAgency: null,
     eventLog: [],
+    mailbox: {
+      version: 2,
+      unread: 1,
+      deferred: [],
+      items: [
+        {
+          id: `welcome-${formatDateKey(BASE_DATE)}-front-office`,
+          date: formatDateKey(BASE_DATE),
+          from: { role: "개인비서", icon: "assistant" },
+          category: "club",
+          type: "assistant",
+          headline: "프리시즌 첫 데스크 보고",
+          body: "2026 KBO GM 프리시즌이 시작되었습니다. 오늘은 구단 선택, 감독 등록, 캠프 첫 보고를 차례로 확인하십시오.",
+          read: false,
+          important: false,
+          decision: null,
+          links: []
+        }
+      ]
+    },
     logs: [
       {
         date: formatDateKey(BASE_DATE),

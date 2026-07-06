@@ -8,6 +8,11 @@ import {
   commitForeignPlayerSigning,
   commitFreeAgentSigning,
   commitTradeProposal,
+  advanceUntilStop,
+  deliverMail,
+  getMailboxItems,
+  getMailboxSummary,
+  getOpenMailDecisions,
   getSelectedTeam,
   getNextGamePreview,
   getTeamMonthlySchedule,
@@ -16,6 +21,7 @@ import {
   initializeFreeAgency,
   initializePostseason,
   initializeSecondaryDraft,
+  markMailRead,
   rememberManagerAction,
   resolveMailDecision,
   simulateDay,
@@ -207,7 +213,7 @@ function render(root, state) {
             <small>매니저</small>
           </span>
         </a>
-        ${renderSidebarNav(activeTab)}
+        ${renderSidebarNav(activeTab, state)}
         <section class="sidebar-card">
           <span class="mini-label">오늘</span>
           <strong>${escapeHtml(state.currentDate ?? "2026 Season")}</strong>
@@ -273,12 +279,13 @@ function render(root, state) {
   bindActions(root, state);
 }
 
-function renderSidebarNav(activeTab) {
+function renderSidebarNav(activeTab, state) {
+  const mailbox = getMailboxSummary(state);
   return `
     <nav class="nav-list" aria-label="Dashboard sections">
       ${DASHBOARD_TABS.map((tab) => `
         <button class="nav-item ${tab.id === activeTab ? "is-active" : ""}" data-action="switch-tab" data-tab-id="${escapeAttribute(tab.id)}" type="button">
-          <span>${escapeHtml(tab.label)}</span>
+          <span>${escapeHtml(tab.label)}${tab.id === "news" && mailbox.unread > 0 ? ` <b class="nav-badge">${formatNumber(mailbox.unread)}</b>` : ""}</span>
           <small>${escapeHtml(tab.detail)}</small>
         </button>
       `).join("")}
@@ -378,6 +385,7 @@ function renderActiveTabContent(activeTab, context) {
   if (activeTab === "operations") {
     return renderTabSurface("operations", "시스템", `
       ${renderOperationsBar(state)}
+      ${renderContinueSettingsPanel(state)}
       ${renderStateFoundationPanel(state)}
     `);
   }
@@ -385,6 +393,7 @@ function renderActiveTabContent(activeTab, context) {
   return renderTabSurface("clubhouse", "클럽하우스", `
     <section class="clubhouse-dashboard" aria-label="클럽하우스 메인 브리핑">
       <div class="clubhouse-main-rail">
+        ${renderTodayDeskPanel(state, selectedTeam, selectedRank, nextGame)}
         ${renderManagerBriefingPanel(state, selectedTeam, manager)}
         ${renderNewsInboxPanel(state, selectedTeam, manager)}
       </div>
@@ -407,26 +416,32 @@ function renderTabSurface(tabId, title, body) {
 }
 
 function renderTopbarQuickActions(state, nextGame, isAdvancing) {
+  const mailbox = getMailboxSummary(state);
+  const decisionBadge = mailbox.openDecisions > 0 ? `<span class="action-badge">${formatNumber(mailbox.openDecisions)} 결재</span>` : "";
+  const continueButton = `<button class="button button-primary" data-action="continue" type="button" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "계속 ▶"}${decisionBadge}</button>`;
   if (state?.phase === "regular" && nextGame?.ok) {
     const matchup = `${nextGame.awayShortName ?? "AWAY"} @ ${nextGame.homeShortName ?? "HOME"}`;
     return `
+      ${continueButton}
       <button class="button button-primary" data-action="watch-next-game" type="button" ${isAdvancing ? "disabled" : ""}>경기 시작</button>
       <button class="button button-soft" data-action="simulate-next-game" type="button" ${isAdvancing ? "disabled" : ""}>스킵</button>
       <button class="button button-soft" data-action="export-save" type="button">저장</button>
-      <small class="topbar-action-context">${escapeHtml(nextGame.date)} · ${escapeHtml(matchup)}</small>
+      <small class="topbar-action-context">${escapeHtml(nextGame.date)} · ${escapeHtml(matchup)} · 새 편지 ${formatNumber(mailbox.unread)}</small>
     `;
   }
 
   if (state?.phase === "regular") {
     return `
-      <button class="button button-primary" data-action="next-day" type="button" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "일정 진행"}</button>
+      ${continueButton}
+      <button class="button button-soft" data-action="next-day" type="button" ${isAdvancing ? "disabled" : ""}>오늘 하루만</button>
       <button class="button button-soft" data-action="export-save" type="button">저장</button>
-      <small class="topbar-action-context">${escapeHtml(nextGame?.message ?? "다음 경기 일정 계산 대기")}</small>
+      <small class="topbar-action-context">${escapeHtml(nextGame?.message ?? "다음 경기 일정 계산 대기")} · 새 편지 ${formatNumber(mailbox.unread)}</small>
     `;
   }
 
   return `
-    <button class="button button-primary" data-action="next-day" type="button" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "다음 날"}</button>
+    ${continueButton}
+    <button class="button button-soft" data-action="next-day" type="button" ${isAdvancing ? "disabled" : ""}>오늘 하루만</button>
     <button class="button button-soft" data-action="export-save" type="button">저장</button>
   `;
 }
@@ -479,6 +494,84 @@ function renderMetricGrid(state, selectedTeam, selectedRank, injuries) {
       ${renderMetricCard("부상", `${injuries.length}명`, injuries[0] ? `${escapeHtml(injuries[0].name)} 관리 필요` : "건강한 클럽하우스")}
     </section>
   `;
+}
+
+function renderTodayDeskPanel(state, selectedTeam, selectedRank, nextGame) {
+  const mailbox = getMailboxSummary(state);
+  const unread = getMailboxItems(state).filter((mail) => !mail.read).slice(0, 3);
+  const decisions = getOpenMailDecisions(state);
+  const lastGame = (state.lastGames ?? []).find((game) =>
+    String(game.awayTeamId ?? "") === String(selectedTeam?.id ?? "") ||
+    String(game.homeTeamId ?? "") === String(selectedTeam?.id ?? "")
+  );
+  const gameText = nextGame?.ok
+    ? `${nextGame.awayShortName ?? "원정"} @ ${nextGame.homeShortName ?? "홈"} · ${nextGame.ballpark ?? ""}`
+    : nextGame?.message ?? "휴식일/이동일";
+  const primaryAction = decisions.length
+    ? `<button class="button button-primary" data-action="mail-filter" data-mail-filter="decision" type="button">결재 처리</button>`
+    : nextGame?.ok && String(nextGame.date) === String(state.currentDate)
+      ? `<button class="button button-primary" data-action="watch-next-game" type="button">경기 보기</button>`
+      : `<button class="button button-primary" data-action="continue" type="button">계속 ▶</button>`;
+
+  return `
+    <section class="today-desk-panel" data-today-desk aria-label="오늘의 데스크">
+      <div class="today-desk-main">
+        <span class="mini-label">오늘의 데스크</span>
+        <h2>${escapeHtml(formatDeskDate(state.currentDate))}</h2>
+        <p>${escapeHtml(state.weather?.label ?? "날씨 확인 중")} · ${formatTemperature(state.weather?.temperature)} · ${selectedRank ? `${formatNumber(selectedRank)}위` : "순위 집계 전"} · ${escapeHtml(renderRecord(selectedTeam))}</p>
+        <div class="today-desk-actions">
+          ${primaryAction}
+          <button class="button button-soft" data-action="mail-filter" data-mail-filter="all" type="button">편지함</button>
+        </div>
+      </div>
+      <div class="today-desk-cards">
+        <article>
+          <span>오늘 일정</span>
+          <strong>${escapeHtml(gameText)}</strong>
+          <small>${nextGame?.ok ? escapeHtml(nextGame.date ?? state.currentDate ?? "") : "경기 없음"}</small>
+        </article>
+        <article>
+          <span>받은편지함</span>
+          <strong>새 편지 ${formatNumber(mailbox.unread)}통</strong>
+          <small>결재 ${formatNumber(mailbox.openDecisions)}건 · 중요 ${formatNumber(mailbox.importantUnread)}건</small>
+        </article>
+        <article>
+          <span>어제 결과</span>
+          <strong>${escapeHtml(renderDeskResult(lastGame, selectedTeam))}</strong>
+          <small>${escapeHtml(lastGame?.date ?? "결과 대기")}</small>
+        </article>
+      </div>
+      ${unread.length ? `
+        <div class="today-desk-mail-preview">
+          ${unread.map((mail) => `
+            <button data-action="open-mail" data-mail-id="${escapeAttribute(mail.id)}" type="button">
+              <span>${escapeHtml(mail.from?.role ?? "프런트")}</span>
+              <strong>${escapeHtml(mail.headline)}</strong>
+            </button>
+          `).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function formatDeskDate(dateKey) {
+  const date = parseUiDate(dateKey);
+  return `${dateKey ?? ""} ${KOREAN_WEEKDAYS[date.getUTCDay()] ?? ""}요일`;
+}
+
+function renderDeskResult(game, selectedTeam) {
+  if (!game || !selectedTeam) return "최근 경기 없음";
+  const home = String(game.homeTeamId) === String(selectedTeam.id);
+  const teamScore = home ? game.homeScore : game.awayScore;
+  const opponentScore = home ? game.awayScore : game.homeScore;
+  const opponent = home ? game.away : game.home;
+  const result = safeUiNumber(teamScore) > safeUiNumber(opponentScore) ? "승" : safeUiNumber(teamScore) < safeUiNumber(opponentScore) ? "패" : "무";
+  return `${opponent}전 ${teamScore}-${opponentScore} ${result}`;
+}
+
+function safeUiNumber(value, fallback = 0) {
+  return Number.isFinite(Number(value)) ? Number(value) : fallback;
 }
 
 function renderStandingsPanel(standings, selectedTeam) {
@@ -640,6 +733,7 @@ function renderOperationsBar(state) {
     <section class="operations-bar" aria-label="운영 메뉴">
       <div class="operation-group">
         <span>진행</span>
+        <button class="button button-primary" data-action="continue" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "계속 ▶"}</button>
         <button class="button button-primary" data-action="next-day" ${isAdvancing ? "disabled" : ""}>${isAdvancing ? "계산 중" : "다음 날"}</button>
         <button class="button button-soft" data-action="week" ${isAdvancing ? "disabled" : ""}>빠른 주간</button>
       </div>
@@ -658,6 +752,34 @@ function renderOperationsBar(state) {
         <button class="button button-soft" data-action="import-save">불러오기</button>
       </div>
     </section>
+  `;
+}
+
+function renderContinueSettingsPanel(state) {
+  const stops = state?.settings?.continueStops ?? {};
+  const options = [
+    ["myGameDay", "내 경기일"],
+    ["openDecision", "미처리 결재"],
+    ["importantMail", "중요 메일"]
+  ];
+  return `
+    <article class="panel continue-settings-panel">
+      <div class="panel-head">
+        <div>
+          <span class="mini-label">Continue</span>
+          <h2>멈춤 규칙</h2>
+        </div>
+        <span class="pill">FM loop</span>
+      </div>
+      <div class="toggle-row">
+        ${options.map(([key, label]) => `
+          <label class="toggle-pill">
+            <input type="checkbox" data-action="toggle-continue-stop" data-stop-key="${escapeAttribute(key)}" ${stops[key] !== false ? "checked" : ""}>
+            <span>${escapeHtml(label)}</span>
+          </label>
+        `).join("")}
+      </div>
+    </article>
   `;
 }
 
@@ -1132,46 +1254,47 @@ function narrativeTypeLabel(type) {
 }
 
 function renderNewsInboxPanel(state, selectedTeam, manager) {
-  const items = buildNewsInboxItems(state, selectedTeam, manager);
-  const assistant = items.find((item) => item.type === "assistant") ?? buildFallbackAssistantBriefing(state, selectedTeam, manager);
-  const lead = items.find((item) => item.type === "media") ?? items.find((item) => item.type === "kbo-official") ?? items[0];
-  const unreadCount = items.length;
+  const filter = normalizeMailFilter(state?.ui?.mailFilter);
+  const mailbox = getMailboxSummary(state);
+  const items = getMailboxItems(state, filter === "decision" ? { decisionOnly: true } : { category: filter });
+  const fallbackItems = items.length ? items : buildNewsInboxItems(state, selectedTeam, manager);
+  const selectedId = state?.ui?.selectedMailId;
+  const selected = fallbackItems.find((item) => String(item.id) === String(selectedId)) ??
+    fallbackItems.find((item) => !item.read) ??
+    fallbackItems[0] ??
+    buildFallbackAssistantBriefing(state, selectedTeam, manager);
   const phaseLabel = state.phase === "preseason" ? "프리시즌 뉴스함" : "뉴스함";
 
   return `
-    <section class="news-inbox-panel" id="news-inbox" data-main-news-inbox data-preseason-desk aria-label="뉴스함과 개인비서 보고">
+    <section class="news-inbox-panel mailbox-panel" id="news-inbox" data-main-news-inbox data-preseason-desk aria-label="받은편지함">
       <div class="news-inbox-head">
         <div>
           <span class="mini-label">${escapeHtml(phaseLabel)}</span>
-          <h2>개인비서 / 언론 브리핑</h2>
-          <p>SBS · KBS · MBC · JTBC · MBN · SPOTV 기사와 구단 공문이 이곳에 쌓입니다.</p>
+          <h2>받은편지함</h2>
+          <p>${escapeHtml(state.currentDate ?? "")} · 새 편지 ${formatNumber(mailbox.unread)}통 · 결재 ${formatNumber(mailbox.openDecisions)}건</p>
         </div>
-        <span class="pill">${formatNumber(unreadCount)}건</span>
+        <span class="pill">${formatNumber(mailbox.unread)} unread</span>
       </div>
-      <div class="news-inbox-grid">
-        <article class="inbox-assistant-card" data-news-type="assistant">
-          <span>${escapeHtml(assistant.source ?? assistant.tag ?? "개인비서")}</span>
-          <h3>${escapeHtml(assistant.headline)}</h3>
-          <p>${escapeHtml(assistant.body || assistant.text)}</p>
-          <small>${escapeHtml(assistant.date ?? state.currentDate ?? "")}</small>
-        </article>
-        <div class="news-inbox-list" aria-label="받은 뉴스와 공문">
-          ${items.slice(0, 7).map(renderInboxNewsItem).join("")}
+      <div class="mailbox-filter-row" role="tablist" aria-label="메일 필터">
+        ${["all", "decision", "club", "league", "media"].map((id) => `
+          <button class="mail-filter ${filter === id ? "is-active" : ""}" data-action="mail-filter" data-mail-filter="${escapeAttribute(id)}" type="button">
+            ${escapeHtml(mailFilterLabel(id))}
+          </button>
+        `).join("")}
+      </div>
+      <div class="mailbox-grid">
+        <div class="mailbox-list" aria-label="메일 목록">
+          ${fallbackItems.slice(0, 18).map((item) => renderMailListItem(item, selected)).join("")}
         </div>
-        ${lead ? `
-          <article class="news-inbox-feature is-${escapeAttribute(logTypeClass(lead.type))}" data-news-type="${escapeAttribute(lead.type)}">
-            <span>${escapeHtml(lead.source ?? lead.tag ?? "뉴스")}</span>
-            <h3>${escapeHtml(lead.headline)}</h3>
-            <p>${escapeHtml(lead.body || lead.text)}</p>
-            <small>${escapeHtml(lead.date ?? state.currentDate ?? "")}</small>
-          </article>
-        ` : ""}
+        ${renderMailBody(selected)}
       </div>
     </section>
   `;
 }
 
 function buildNewsInboxItems(state, selectedTeam, manager) {
+  const mailboxItems = getMailboxItems(state);
+  if (mailboxItems.length) return mailboxItems;
   const normalized = (state.logs ?? []).map((log) => normalizeLogItem(log, state));
   const fallbacks = [
     buildFallbackAssistantBriefing(state, selectedTeam, manager),
@@ -1187,15 +1310,86 @@ function buildNewsInboxItems(state, selectedTeam, manager) {
   }).slice(0, 12);
 }
 
-function renderInboxNewsItem(item, index) {
+function renderMailListItem(item, selected) {
   const type = logTypeClass(item.type);
+  const isSelected = String(item.id) === String(selected?.id);
+  const decision = item.decision?.status === "open";
+  const blocking = Boolean(item.decision?.blocking);
   return `
-    <article class="news-inbox-item ${type ? `is-${escapeAttribute(type)}` : ""}" data-news-type="${escapeAttribute(item.type)}">
-      <span>${escapeHtml(item.source ?? item.tag ?? "뉴스")}</span>
+    <button class="news-inbox-item mail-list-item ${type ? `is-${escapeAttribute(type)}` : ""} ${isSelected ? "is-selected" : ""} ${!item.read ? "is-unread" : ""}" data-action="open-mail" data-mail-id="${escapeAttribute(item.id)}" data-news-type="${escapeAttribute(item.type)}" type="button">
+      <span>${!item.read ? `<i class="unread-dot" aria-hidden="true"></i>` : ""}${escapeHtml(item.from?.role ?? item.source ?? item.tag ?? "뉴스")}</span>
       <strong>${escapeHtml(item.headline ?? item.text ?? "새 소식")}</strong>
-      <small>${escapeHtml(item.date ?? "")} · ${index === 0 ? "방금 도착" : "읽지 않음"}</small>
+      <small>${escapeHtml(item.date ?? "")} · ${escapeHtml(mailCategoryLabel(item.category))}${decision ? ` · ${blocking ? "blocking" : "decision"}` : ""}</small>
+    </button>
+  `;
+}
+
+function renderMailBody(item) {
+  if (!item) {
+    return `<article class="mailbox-body empty-card">받은 편지가 없습니다.</article>`;
+  }
+  const decision = item.decision?.status === "open" ? item.decision : null;
+  return `
+    <article class="mailbox-body is-${escapeAttribute(logTypeClass(item.type))}" data-mail-body data-mail-id="${escapeAttribute(item.id)}">
+      <div class="mailbox-body-head">
+        <span class="mini-label">${escapeHtml(item.from?.role ?? item.source ?? "프런트")}</span>
+        <h3>${escapeHtml(item.headline ?? "새 소식")}</h3>
+        <small>${escapeHtml(item.date ?? "")} · ${escapeHtml(mailCategoryLabel(item.category))}</small>
+      </div>
+      <p>${escapeHtml(item.body ?? item.text ?? "")}</p>
+      ${Array.isArray(item.links) && item.links.length ? `
+        <div class="mail-link-row">
+          ${item.links.map((link) => `<button class="button button-soft" data-action="mail-link" data-mail-target="${escapeAttribute(link.target)}" type="button">${escapeHtml(link.label)}</button>`).join("")}
+        </div>
+      ` : ""}
+      ${decision ? renderMailDecisionActions(item, decision) : ""}
     </article>
   `;
+}
+
+function renderMailDecisionActions(item, decision) {
+  const options = (Array.isArray(decision.options) && decision.options.length)
+    ? decision.options
+    : fallbackDecisionOptions(decision.type);
+  return `
+    <div class="mail-decision-box ${decision.blocking ? "is-blocking" : ""}">
+      <span>${decision.blocking ? "진행 전 처리 필요" : `기한 ${escapeHtml(decision.expiresOn ?? "")}`}</span>
+      <div class="decision-mail-actions">
+        ${options.map((option) => `
+          <button class="decision-choice" data-action="resolve-mail-decision" data-mail-id="${escapeAttribute(item.id)}" data-decision-action="${escapeAttribute(option.action ?? "acknowledge")}">
+            <strong>${escapeHtml(option.label ?? "확인")}</strong>
+            <small>${escapeHtml(option.note ?? "")}</small>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function normalizeMailFilter(value) {
+  const id = String(value ?? "all");
+  return ["all", "decision", "club", "league", "media"].includes(id) ? id : "all";
+}
+
+function mailFilterLabel(id) {
+  const labels = {
+    all: "전체",
+    decision: "결재함",
+    club: "구단",
+    league: "리그",
+    media: "미디어"
+  };
+  return labels[id] ?? "전체";
+}
+
+function mailCategoryLabel(category) {
+  const labels = {
+    decision: "결재",
+    club: "구단",
+    league: "리그",
+    media: "미디어"
+  };
+  return labels[category] ?? "소식";
 }
 
 function renderPreseasonMediaCard(item) {
@@ -1227,7 +1421,7 @@ function renderPendingMailDecisionPanel(state) {
       </div>
       <div class="decision-mail-actions">
         ${options.map((option) => `
-          <button class="decision-choice" data-action="resolve-mail-decision" data-decision-action="${escapeAttribute(option.action ?? "acknowledge")}">
+          <button class="decision-choice" data-action="resolve-mail-decision" data-mail-id="${escapeAttribute(decision.mailId ?? decision.id ?? "")}" data-decision-action="${escapeAttribute(option.action ?? "acknowledge")}">
             <strong>${escapeHtml(option.label ?? "확인")}</strong>
             <small>${escapeHtml(option.note ?? "")}</small>
           </button>
@@ -1272,12 +1466,31 @@ function fallbackDecisionOptions(type) {
       { action: "pass", label: "패스", note: "현 roster 유지" }
     ];
   }
+  if (type === "bullpen-rest") {
+    return [
+      { action: "rest", label: "오늘 휴식", note: "등판 제외" },
+      { action: "manager-discretion", label: "감독 재량", note: "경기 흐름에 맡김" }
+    ];
+  }
+  if (type === "futures-callup") {
+    return [
+      { action: "callup", label: "콜업", note: "1군 등록" },
+      { action: "hold", label: "보류", note: "추가 관찰" }
+    ];
+  }
+  if (type === "opening-rotation") {
+    return [
+      { action: "confirm", label: "그대로 확정", note: "현재 운용 유지" },
+      { action: "review-lineup", label: "라인업에서 조정", note: "투수 운용 확인" }
+    ];
+  }
   return [{ action: "acknowledge", label: "확인", note: "보고 처리" }];
 }
 
 function buildFallbackAssistantBriefing(state, selectedTeam, manager) {
   const teamName = getTeamShortName(selectedTeam) ?? "우리 팀";
   return {
+    id: `fallback-assistant-${state.currentDate ?? "today"}`,
     type: "assistant",
     tag: "개인비서",
     headline: "프리시즌 첫 보고",
@@ -1289,6 +1502,7 @@ function buildFallbackAssistantBriefing(state, selectedTeam, manager) {
 function buildFallbackMediaBriefing(state, selectedTeam) {
   const teamName = getTeamShortName(selectedTeam) ?? "KBO 구단";
   return {
+    id: `fallback-media-${state.currentDate ?? "today"}`,
     type: "media",
     tag: "뉴스룸",
     source: "SBS · KBS · MBC · JTBC · MBN · SPOTV",
@@ -1648,10 +1862,23 @@ function bindOnboardingActions(root, state) {
       interviewAnswers: answers,
       inaugurationComplete: true
     };
+    const appointmentLogs = buildAppointmentNewsLogs(state, selectedTeam, manager, answers);
     state.logs = [
-      ...buildAppointmentNewsLogs(state, selectedTeam, manager, answers),
+      ...appointmentLogs,
       ...((state.logs ?? []))
     ].slice(0, 60);
+    for (const [index, log] of appointmentLogs.entries()) {
+      deliverMail(state, {
+        id: `appointment-${state.currentDate}-${index}-${log.type}`,
+        date: log.date,
+        from: { role: log.source ?? log.tag ?? "프런트", icon: log.type },
+        category: log.type === "media" ? "media" : "club",
+        type: log.type,
+        headline: log.headline,
+        body: log.text,
+        read: false
+      });
+    }
     rememberManagerAction(state, {
       type: "appointment",
       teamId: state.selectedTeamId,
@@ -2208,9 +2435,63 @@ function bindActions(root, state) {
 
   root.querySelectorAll("[data-action='resolve-mail-decision']").forEach((button) => {
     button.addEventListener("click", () => {
-      const result = resolveMailDecision(state, button.dataset.decisionAction || "acknowledge");
+      const mailId = button.dataset.mailId || "";
+      const action = button.dataset.decisionAction || "acknowledge";
+      const result = mailId ? resolveMailDecision(state, mailId, action) : resolveMailDecision(state, action);
+      state.ui = {
+        ...(state.ui ?? {}),
+        selectedMailId: mailId || state.ui?.selectedMailId,
+        mailFilter: "decision"
+      };
       render(root, state);
       setStatus(root, result.message || "긴급 보고를 처리했습니다.");
+    });
+  });
+
+  root.querySelectorAll("[data-action='open-mail']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const mailId = button.dataset.mailId || "";
+      if (mailId) markMailRead(state, mailId);
+      state.ui = {
+        ...(state.ui ?? {}),
+        selectedMailId: mailId,
+        activeTab: "news"
+      };
+      render(root, state);
+      setStatus(root, "메일을 열었습니다.");
+    });
+  });
+
+  root.querySelectorAll("[data-action='mail-filter']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui = {
+        ...(state.ui ?? {}),
+        mailFilter: normalizeMailFilter(button.dataset.mailFilter),
+        activeTab: "news"
+      };
+      render(root, state);
+    });
+  });
+
+  root.querySelectorAll("[data-action='mail-link']").forEach((button) => {
+    button.addEventListener("click", () => {
+      openMailTarget(root, state, button.dataset.mailTarget || "");
+    });
+  });
+
+  root.querySelectorAll("[data-action='toggle-continue-stop']").forEach((input) => {
+    input.addEventListener("change", () => {
+      state.settings = {
+        ...(state.settings ?? {}),
+        continueStops: {
+          myGameDay: state.settings?.continueStops?.myGameDay !== false,
+          openDecision: state.settings?.continueStops?.openDecision !== false,
+          importantMail: state.settings?.continueStops?.importantMail !== false,
+          [input.dataset.stopKey || ""]: Boolean(input.checked)
+        }
+      };
+      render(root, state);
+      setStatus(root, "멈춤 규칙을 저장했습니다.");
     });
   });
 
@@ -2346,6 +2627,12 @@ function bindActions(root, state) {
   root.querySelectorAll("[data-action='next-day']").forEach((button) => {
     button.addEventListener("click", () => {
       void runCalendarAdvance(root, state, 1);
+    });
+  });
+
+  root.querySelectorAll("[data-action='continue']").forEach((button) => {
+    button.addEventListener("click", () => {
+      void runContinueAdvance(root, state);
     });
   });
 
@@ -2729,6 +3016,57 @@ function stopForBlockingMail(root, state) {
   return true;
 }
 
+async function runContinueAdvance(root, state) {
+  if (state?.ui?.isAdvancing) {
+    setStatus(root, "이미 날짜 계산이 진행 중입니다.");
+    return;
+  }
+
+  const before = captureSimulationSnapshot(state);
+  const progressId = `continue-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const modeLabel = "계속";
+
+  for (let index = 0; index < SIMULATION_STEPS.length; index += 1) {
+    state.ui = {
+      ...(state.ui ?? {}),
+      isAdvancing: true,
+      simulationProgress: {
+        id: progressId,
+        status: "running",
+        kicker: modeLabel,
+        title: "중요 일정까지 진행 중",
+        stepIndex: index,
+        percent: Math.round((index / SIMULATION_STEPS.length) * 86),
+        steps: SIMULATION_STEPS,
+        note: `${SIMULATION_STEPS[index]} 단계입니다.`
+      }
+    };
+    render(root, state);
+    await waitForUi(SIMULATION_STEP_DELAY_MS);
+  }
+
+  const result = advanceUntilStop(state, { maxDays: 14 });
+  const after = captureSimulationSnapshot(state);
+  const changes = buildSimulationChangeNotes(before, after, state, result.days || 0);
+  state.ui = {
+    ...(state.ui ?? {}),
+    isAdvancing: false,
+    activeTab: "clubhouse",
+    simulationProgress: {
+      id: progressId,
+      status: "complete",
+      kicker: modeLabel,
+      title: result.stopped ? "멈춤 지점 도착" : "계속 진행 완료",
+      stepIndex: SIMULATION_STEPS.length,
+      percent: 100,
+      steps: SIMULATION_STEPS,
+      changes: [result.message ?? "진행을 완료했습니다.", ...changes].slice(0, 7)
+    }
+  };
+  render(root, state);
+  setStatus(root, result.message ?? buildSimulationStatusMessage(before, after, result.days || 0));
+}
+
 async function runCalendarAdvance(root, state, days = 1) {
   if (state?.ui?.isAdvancing) {
     setStatus(root, "이미 날짜 계산이 진행 중입니다.");
@@ -2767,6 +3105,7 @@ async function runCalendarAdvance(root, state, days = 1) {
   state.ui = {
     ...(state.ui ?? {}),
     isAdvancing: false,
+    activeTab: "clubhouse",
     simulationProgress: {
       id: progressId,
       status: "complete",
@@ -2784,12 +3123,16 @@ async function runCalendarAdvance(root, state, days = 1) {
 
 function captureSimulationSnapshot(state) {
   const selectedTeam = getSelectedTeam(state);
+  const mailbox = getMailboxSummary(state);
   return {
     date: state?.currentDate ?? "",
     day: Number(state?.day ?? 0),
     phase: state?.phase ?? "",
     gamesPlayed: Number(state?.gamesPlayed ?? 0),
     logs: Number(state?.logs?.length ?? 0),
+    mailboxTotal: mailbox.total,
+    mailboxUnread: mailbox.unread,
+    openDecisions: mailbox.openDecisions,
     eventLog: Number(state?.eventLog?.length ?? 0),
     mailDecisions: Number(state?.mailDecisions?.length ?? 0),
     pendingMailId: state?.pendingMailDecision?.status === "open" ? String(state.pendingMailDecision.id ?? "") : "",
@@ -2805,7 +3148,10 @@ function captureSimulationSnapshot(state) {
 function buildSimulationChangeNotes(before, after, state, days) {
   const notes = [`${before.date || "-"} → ${after.date || "-"} 일정 반영`];
   const gameDelta = Number(after.gamesPlayed) - Number(before.gamesPlayed);
-  const newsDelta = Math.max(0, (Number(after.logs) - Number(before.logs)) + (Number(after.eventLog) - Number(before.eventLog)) + (Number(after.mailDecisions) - Number(before.mailDecisions)));
+  const mailDelta = Math.max(0, Number(after.mailboxTotal) - Number(before.mailboxTotal));
+  const unreadDelta = Math.max(0, Number(after.mailboxUnread) - Number(before.mailboxUnread));
+  const decisionDelta = Math.max(0, Number(after.openDecisions) - Number(before.openDecisions));
+  const newsDelta = Math.max(0, mailDelta + (Number(after.eventLog) - Number(before.eventLog)) + (Number(after.mailDecisions) - Number(before.mailDecisions)));
   const injuryDelta = Number(after.activeInjuries) - Number(before.activeInjuries);
   const fatigueDelta = Number(after.selectedFatigue) - Number(before.selectedFatigue);
 
@@ -2829,10 +3175,14 @@ function buildSimulationChangeNotes(before, after, state, days) {
     notes.push(`날씨 ${after.weather}`);
   }
 
-  if (newsDelta > 0) {
-    notes.push(`뉴스·공문·비서 보고 ${formatNumber(newsDelta)}건 반영`);
+  if (mailDelta > 0 || unreadDelta > 0) {
+    notes.push(`새 편지 ${formatNumber(Math.max(mailDelta, unreadDelta))}통 도착`);
   } else if (days > 1) {
     notes.push("주간 진행 중 기존 메일함 유지");
+  }
+
+  if (decisionDelta > 0) {
+    notes.push(`결재 안건 ${formatNumber(decisionDelta)}건 추가`);
   }
 
   if (injuryDelta > 0) {
@@ -2878,6 +3228,40 @@ function averageTeamFatigue(team) {
 
 function waitForUi(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function openMailTarget(root, state, target) {
+  const value = String(target ?? "");
+  if (value.startsWith("player:")) {
+    state.ui = {
+      ...(state.ui ?? {}),
+      selectedPlayerId: value.slice("player:".length),
+      selectedPlayerTeamId: state.selectedTeamId || "",
+      activeTab: "players"
+    };
+    render(root, state);
+    scrollToPlayerDetail();
+    return;
+  }
+  if (value.startsWith("tab:")) {
+    state.ui = {
+      ...(state.ui ?? {}),
+      activeTab: normalizeActiveTab(value.slice("tab:".length))
+    };
+    render(root, state);
+    resetViewportToTop();
+    return;
+  }
+  if (value.startsWith("mail:")) {
+    const mailId = value.slice("mail:".length);
+    markMailRead(state, mailId);
+    state.ui = {
+      ...(state.ui ?? {}),
+      selectedMailId: mailId,
+      activeTab: "news"
+    };
+    render(root, state);
+  }
 }
 
 function setStatus(root, message) {

@@ -16,7 +16,18 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const OPENING_DAY = "2026-03-28";
 const OPENING_DAY_MONTH_DAY = "03-28";
 const PRESEASON_MEDIA_OUTLETS = ["SBS 스포츠", "KBS 스포츠", "MBC 스포츠", "JTBC 스포츠", "MBN 스포츠", "SPOTV"];
-const MAIL_DECISION_LIMIT = 24;
+const MAIL_DECISION_LIMIT = 240;
+const MAILBOX_LIMIT = 400;
+const MAILBOX_DECISION_DAILY_LIMIT = 3;
+const MAILBOX_DEFERRED_LIMIT = 60;
+const MAILBOX_IMPORTANCE_TYPES = new Set([
+  "medical-roster",
+  "milestone",
+  "standings-race",
+  "streak",
+  "owner-monthly",
+  "phase-transition"
+]);
 const KBO_OPTION_LOCK_DAYS = 10;
 const KBO_FOREIGN_REGISTERED_LIMIT = 3;
 const KBO_FOREIGN_APPEARANCE_LIMIT = 2;
@@ -216,9 +227,68 @@ export function getSelectedTeam(state) {
   return state?.teams?.find((team) => team.id === state.selectedTeamId) ?? state?.teams?.[0];
 }
 
+export function getMailboxSummary(state) {
+  normalizeMailboxState(state);
+  const items = state.mailbox.items;
+  const openDecisions = items.filter((mail) => isOpenDecisionMail(mail));
+  return {
+    total: items.length,
+    unread: items.filter((mail) => !mail.read).length,
+    openDecisions: openDecisions.length,
+    blockingDecisions: openDecisions.filter((mail) => mail.decision?.blocking).length,
+    importantUnread: items.filter((mail) => !mail.read && isImportantMail(mail)).length
+  };
+}
+
+export function getMailboxItems(state, filter = {}) {
+  normalizeMailboxState(state);
+  const category = String(filter.category ?? "all");
+  const decisionOnly = Boolean(filter.decisionOnly);
+  return [...state.mailbox.items]
+    .filter((mail) => {
+      if (decisionOnly && !isOpenDecisionMail(mail)) return false;
+      if (category === "all") return true;
+      if (category === "decision") return isOpenDecisionMail(mail);
+      return String(mail.category ?? "") === category;
+    })
+    .sort(compareMailItems);
+}
+
+export function getOpenMailDecisions(state) {
+  normalizeMailboxState(state);
+  return state.mailbox.items
+    .filter((mail) => isOpenDecisionMail(mail))
+    .sort(compareMailItems);
+}
+
+export function getBlockingMailDecision(state) {
+  return getOpenMailDecisions(state).find((mail) => mail.decision?.blocking) ?? null;
+}
+
+export function markMailRead(state, mailId) {
+  normalizeMailboxState(state);
+  const mail = state.mailbox.items.find((item) => String(item.id) === String(mailId));
+  if (!mail) return { ok: false, code: "mail-not-found", message: "메일을 찾지 못했습니다." };
+  mail.read = true;
+  refreshMailboxDerivedState(state);
+  return { ok: true, code: "mail-read", mailId: mail.id, unread: state.mailbox.unread };
+}
+
+export function deliverMail(state, mail = {}) {
+  if (!state || !mail) return null;
+  normalizeMailboxState(state);
+  deliverDeferredMail(state, mail.date ?? state.currentDate);
+  const item = normalizeMailItem(mail, state);
+  if (!item.id) return null;
+  insertMailboxItem(state, item, { log: true });
+  return item;
+}
+
 export function buildLineup(team) {
   const activeHitters = (team?.roster ?? []).filter((player) => player.role === "hitter" && isActiveRosterPlayer(player));
-  const hitterPool = activeHitters.length >= 9 ? activeHitters : (team?.roster ?? []).filter((player) => player.role === "hitter");
+  const hitterPool = activeHitters.length >= 9
+    ? activeHitters
+    : (team?.roster ?? []).filter((player) => player.role === "hitter" && !player.gameRestriction);
   const manualLineup = resolveManualLineup(team, hitterPool);
   if (manualLineup.length === 9) return manualLineup;
 
@@ -872,10 +942,17 @@ export function simulateNextUserGame(state, options = {}) {
     const dateKey = formatDateKey(date);
     const weather = buildWeather(state, date);
     state.weather = weather;
+    processMailboxMorning(state, dateKey);
     recoverRoster(state.teams);
 
     if (date.getUTCDay() === 1) {
       addLog(state, `${dateKey} 월요일 휴식일: 다음 경기까지 회복일을 넘깁니다.`);
+      addDailyMorningRoutine(state, {
+        reportDate: dateKey,
+        results: [],
+        focusGame: null,
+        newInjuries: []
+      });
       tickInjuries(state.teams);
       advanceDate(state, date);
       skippedDays += 1;
@@ -950,8 +1027,10 @@ export function simulateDay(state) {
 
   if (state.phase === "preseason") {
     const date = parseDate(state.currentDate);
+    const dateKey = formatDateKey(date);
     const weather = buildWeather(state, date);
     state.weather = weather;
+    processMailboxMorning(state, dateKey);
     recoverRoster(state.teams);
     advanceDate(state, date);
     if (state.currentDate >= openingDayForDateKey(state.currentDate)) {
@@ -967,11 +1046,18 @@ export function simulateDay(state) {
   const dateKey = formatDateKey(date);
   const weather = buildWeather(state, date);
   state.weather = weather;
+  processMailboxMorning(state, dateKey);
 
   recoverRoster(state.teams);
 
   if (date.getUTCDay() === 1) {
     addLog(state, `${dateKey} 월요일 휴식일: 전 구단이 이동과 회복에 집중했습니다.`);
+    addDailyMorningRoutine(state, {
+      reportDate: dateKey,
+      results: [],
+      focusGame: null,
+      newInjuries: []
+    });
   } else if (state.gamesPlayed < REGULAR_SEASON_GAMES && state.teams.length >= KBO_TEAM_COUNT) {
     const remaining = REGULAR_SEASON_GAMES - state.gamesPlayed;
     const matchups = buildMatchups(state.teams, Math.floor(state.gamesPlayed / DAILY_GAME_COUNT));
@@ -1012,10 +1098,47 @@ export function simulateDay(state) {
 export function simulateDays(state, days) {
   const count = Math.max(0, Math.floor(safeNumber(days)));
   for (let i = 0; i < count; i += 1) {
-    if (state?.pendingMailDecision?.status === "open" && state.pendingMailDecision.blocking) break;
+    if (getBlockingMailDecision(state)) break;
     simulateDay(state);
   }
   return state;
+}
+
+export function advanceUntilStop(state, options = {}) {
+  if (!state || ["complete", "postseason", "offseason"].includes(state.phase)) {
+    return { stopped: true, reason: "phase-complete", date: state?.currentDate ?? "", days: 0, message: "진행 가능한 시즌 일정이 없습니다." };
+  }
+  normalizeState(state);
+  const maxDays = Math.max(1, Math.floor(safeNumber(options.maxDays, 14)));
+  let reason = getContinueStopReason(state);
+  if (reason) {
+    return { stopped: true, ...reason, date: state.currentDate, days: 0 };
+  }
+
+  let days = 0;
+  for (; days < maxDays; days += 1) {
+    simulateDay(state);
+    reason = getContinueStopReason(state);
+    if (reason) {
+      return { stopped: true, ...reason, date: state.currentDate, days: days + 1 };
+    }
+    if (["complete", "postseason", "offseason"].includes(state.phase)) {
+      return {
+        stopped: true,
+        reason: "phase-transition",
+        date: state.currentDate,
+        days: days + 1,
+        message: "시즌 단계 전환 지점에서 멈췄습니다."
+      };
+    }
+  }
+  return {
+    stopped: false,
+    reason: "max-days",
+    date: state.currentDate,
+    days,
+    message: `${maxDays}일을 진행했습니다.`
+  };
 }
 
 export function simulateRegularSeason(state) {
@@ -1025,13 +1148,28 @@ export function simulateRegularSeason(state) {
   return state;
 }
 
-export function resolveMailDecision(state, action = "acknowledge") {
-  if (!state?.pendingMailDecision || state.pendingMailDecision.status !== "open") {
+export function resolveMailDecision(state, mailIdOrAction = "acknowledge", maybeAction = null, options = {}) {
+  if (!state) return { ok: false, code: "no-state", message: "처리할 게임 상태가 없습니다." };
+  normalizeState(state);
+  const openDecisions = getOpenMailDecisions(state);
+  const requestedId = String(mailIdOrAction ?? "");
+  let mail = null;
+  let action = "acknowledge";
+
+  if (maybeAction == null) {
+    mail = openDecisions.find((item) => String(item.id) === requestedId || String(item.decision?.id ?? "") === requestedId) ?? null;
+    action = mail ? "acknowledge" : String(mailIdOrAction ?? "acknowledge");
+    if (!mail) mail = openDecisions[0] ?? null;
+  } else {
+    mail = openDecisions.find((item) => String(item.id) === requestedId || String(item.decision?.id ?? "") === requestedId) ?? null;
+    action = String(maybeAction ?? "acknowledge");
+  }
+
+  if (!mail) {
     return { ok: false, code: "no-pending-decision", message: "처리할 긴급 보고가 없습니다." };
   }
 
-  normalizeState(state);
-  const decision = state.pendingMailDecision;
+  const decision = decisionFromMail(mail);
   let result;
   if (decision.type === "medical-roster") {
     result = resolveMedicalRosterDecision(state, decision, action);
@@ -1043,41 +1181,74 @@ export function resolveMailDecision(state, action = "acknowledge") {
     result = resolveTradeOfferDecision(state, decision, action);
   } else if (decision.type === "waiver-claim") {
     result = resolveWaiverClaimDecision(state, decision, action);
+  } else if (decision.type === "bullpen-rest") {
+    result = resolveBullpenRestDecision(state, decision, action);
+  } else if (decision.type === "futures-callup") {
+    result = resolveFuturesCallupDecision(state, decision, action);
+  } else if (decision.type === "opening-roster") {
+    result = resolveOpeningRosterDecision(state, decision, action);
+  } else if (decision.type === "opening-rotation") {
+    result = resolveOpeningRotationDecision(state, decision, action);
+  } else if (decision.type === "interview-request") {
+    result = resolveInterviewDecision(state, decision, action);
+  } else if (decision.type === "slumping-starter") {
+    result = resolveSlumpingStarterDecision(state, decision, action);
   } else {
     result = { ok: true, code: "acknowledged", message: "보고를 확인했습니다." };
   }
 
+  const resolvedDate = String(options.date ?? state.currentDate ?? "");
+  const status = options.expired ? "expired" : "resolved";
+  const resultMessage = options.expired
+    ? `기한 만료로 '${decision.defaultAction ?? action}' 기본안이 자동 처리됐습니다. ${result.message ?? ""}`.trim()
+    : result.message;
+  mail.read = true;
+  mail.decision = {
+    ...mail.decision,
+    status,
+    resolvedAction: action,
+    resolvedDate,
+    resolvedAt: resolvedDate,
+    resultMessage
+  };
   state.mailDecisions = [
     {
       ...decision,
-      status: "resolved",
-      resolvedAt: state.currentDate,
+      status,
+      resolvedAt: resolvedDate,
+      resolvedDate,
       resolution: action,
-      resultMessage: result.message
+      resolvedAction: action,
+      resultMessage,
+      followUpDate: addDaysKey(resolvedDate, 1),
+      followUpSent: false
     },
     ...((state.mailDecisions ?? []).filter((entry) => entry.id !== decision.id))
   ].slice(0, MAIL_DECISION_LIMIT);
-  state.pendingMailDecision = null;
+  refreshMailboxDerivedState(state);
   rememberManagerAction(state, {
     type: `mail-${decision.type ?? "decision"}`,
     teamId: decision.teamId ?? state.selectedTeamId,
     subjectId: decision.id ?? decision.headline ?? action,
     subject: decision.headline ?? "긴급 보고",
     headline: `결재 기록: ${decision.headline ?? "긴급 보고"}`,
-    summary: result.message,
+    summary: resultMessage,
     heat: decision.blocking ? 16 : 10,
     tags: [decision.type ?? "mail", action, "decision"]
   });
-  addLog(state, {
-    date: state.currentDate,
-    type: "assistant",
-    tag: "개인비서",
-    source: "개인비서",
-    headline: "긴급 보고 처리 완료",
-    text: result.message
+  deliverMail(state, {
+    id: `decision-result-${resolvedDate}-${decision.id}`,
+    date: resolvedDate,
+    from: { role: "개인비서", icon: "decision" },
+    category: "club",
+    type: options.expired ? "decision-expired" : "decision-result",
+    headline: options.expired ? "기한 만료 자동 처리" : "결재 처리 완료",
+    body: resultMessage,
+    read: false,
+    links: [{ label: "원문 보기", target: `mail:${mail.id}` }]
   });
 
-  return result;
+  return { ...result, message: resultMessage, mailId: mail.id, status };
 }
 
 export function initializePostseason(state) {
@@ -6053,6 +6224,7 @@ function getAvailablePitchers(team) {
     .filter((player) =>
       player.role === "pitcher" &&
       safeNumber(player.injuredDays) === 0 &&
+      !player.gameRestriction &&
       player.militaryStatus?.availability !== "unavailable"
     );
   const activePitchers = pitchers.filter(isActiveRosterPlayer);
@@ -6190,7 +6362,7 @@ function selectPitcher(team) {
 }
 
 function isActiveRosterPlayer(player) {
-  return player?.status === "active";
+  return player?.status === "active" && !player.gameRestriction;
 }
 
 function hitterScore(player) {
@@ -6348,9 +6520,21 @@ function normalizeState(state) {
     ? state.scoutingReportsById
     : {};
   state.mailDecisions = Array.isArray(state.mailDecisions) ? state.mailDecisions : [];
-  state.pendingMailDecision = state.pendingMailDecision && typeof state.pendingMailDecision === "object"
+  const legacyPendingMailDecision = state.pendingMailDecision && typeof state.pendingMailDecision === "object"
     ? state.pendingMailDecision
     : null;
+  normalizeMailboxState(state);
+  if (legacyPendingMailDecision?.status === "open") {
+    absorbLegacyPendingDecision(state, legacyPendingMailDecision);
+  }
+  refreshMailboxDerivedState(state);
+  state.settings = normalizeSettings(state.settings);
+  state.weeklySnapshot = normalizeWeeklySnapshot(state.weeklySnapshot, state);
+  state.monthlySnapshot = normalizeMonthlySnapshot(state.monthlySnapshot, state);
+  state.milestoneLedger = state.milestoneLedger && typeof state.milestoneLedger === "object"
+    ? state.milestoneLedger
+    : {};
+  state.campStats = normalizeCampStats(state.campStats);
   state.teams = Array.isArray(state.teams) ? state.teams : [];
   state.trades = state.trades && typeof state.trades === "object" ? state.trades : { completed: [] };
   state.trades.completed = Array.isArray(state.trades.completed) ? state.trades.completed : [];
@@ -6379,6 +6563,330 @@ function normalizeState(state) {
   }
 
   syncStateFoundation(state);
+}
+
+function normalizeSettings(source) {
+  const settings = source && typeof source === "object" ? source : {};
+  const continueStops = settings.continueStops && typeof settings.continueStops === "object"
+    ? settings.continueStops
+    : {};
+  return {
+    ...settings,
+    continueStops: {
+      myGameDay: continueStops.myGameDay !== false,
+      openDecision: continueStops.openDecision !== false,
+      importantMail: continueStops.importantMail !== false
+    }
+  };
+}
+
+function normalizeWeeklySnapshot(source, state) {
+  if (source && typeof source === "object") {
+    return {
+      weekStartDate: String(source.weekStartDate ?? ""),
+      teamRecords: source.teamRecords && typeof source.teamRecords === "object" ? source.teamRecords : {},
+      playerStatMarks: source.playerStatMarks && typeof source.playerStatMarks === "object" ? source.playerStatMarks : {}
+    };
+  }
+  return {
+    weekStartDate: state?.currentDate ?? "",
+    teamRecords: {},
+    playerStatMarks: {}
+  };
+}
+
+function normalizeMonthlySnapshot(source, state) {
+  if (source && typeof source === "object") {
+    return {
+      monthKey: String(source.monthKey ?? ""),
+      standings: source.standings && typeof source.standings === "object" ? source.standings : {},
+      teamRecords: source.teamRecords && typeof source.teamRecords === "object" ? source.teamRecords : {}
+    };
+  }
+  return {
+    monthKey: String(state?.currentDate ?? "").slice(0, 7),
+    standings: {},
+    teamRecords: {}
+  };
+}
+
+function normalizeCampStats(source) {
+  const stats = source && typeof source === "object" ? source : {};
+  return {
+    games: Array.isArray(stats.games) ? stats.games.slice(0, 40) : [],
+    notes: Array.isArray(stats.notes) ? stats.notes.slice(0, 80) : []
+  };
+}
+
+function normalizeMailboxState(state) {
+  if (!state || typeof state !== "object") return state;
+  const source = state.mailbox && typeof state.mailbox === "object" ? state.mailbox : {};
+  const seen = new Set();
+  const items = [];
+  for (const raw of Array.isArray(source.items) ? source.items : []) {
+    const item = normalizeMailItem(raw, state);
+    if (!item.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    items.push(item);
+  }
+  const deferred = [];
+  for (const raw of Array.isArray(source.deferred) ? source.deferred : []) {
+    const item = normalizeMailItem(raw, state);
+    if (!item.id || seen.has(`deferred:${item.id}`)) continue;
+    seen.add(`deferred:${item.id}`);
+    deferred.push({
+      ...item,
+      deliverOn: String(raw.deliverOn ?? item.deliverOn ?? item.date ?? state.currentDate ?? "")
+    });
+  }
+  state.mailbox = {
+    version: 2,
+    items: items.sort(compareMailItems).slice(0, MAILBOX_LIMIT),
+    deferred: deferred
+      .sort((a, b) => compareText(a.deliverOn, b.deliverOn) || compareMailItems(a, b))
+      .slice(0, MAILBOX_DEFERRED_LIMIT),
+    unread: 0
+  };
+  refreshMailboxDerivedState(state);
+  return state.mailbox;
+}
+
+function absorbLegacyPendingDecision(state, decision) {
+  if (!decision?.id || state.mailbox.items.some((mail) => String(mail.id) === String(decision.id))) return;
+  const item = normalizeMailItem({
+    id: decision.id,
+    date: decision.date ?? state.currentDate,
+    from: { role: decision.source ?? decision.teamName ?? "개인비서", icon: decision.type ?? "decision" },
+    category: "decision",
+    type: decision.type ?? "decision",
+    headline: decision.headline ?? "긴급 보고",
+    body: decision.body ?? decision.text ?? "",
+    read: false,
+    important: Boolean(decision.blocking),
+    decision
+  }, state);
+  insertMailboxItem(state, item, { log: false });
+}
+
+function normalizeMailItem(raw, state) {
+  const source = typeof raw === "string" ? { body: raw, headline: raw } : (raw && typeof raw === "object" ? raw : {});
+  const decisionSource = source.decision && typeof source.decision === "object" ? source.decision : null;
+  const date = String(source.date ?? decisionSource?.date ?? state?.currentDate ?? "");
+  const type = String(source.type ?? decisionSource?.type ?? "note");
+  const headline = String(source.headline ?? source.title ?? decisionSource?.headline ?? source.body ?? source.text ?? "새 소식");
+  const body = String(source.body ?? source.text ?? source.message ?? decisionSource?.body ?? decisionSource?.text ?? headline);
+  const from = normalizeMailFrom(source.from ?? {
+    role: source.source ?? source.tag ?? decisionSource?.source ?? decisionSource?.teamName ?? "프런트",
+    icon: source.icon ?? type
+  });
+  const decision = decisionSource ? normalizeMailDecision(decisionSource, { id: source.id, date, type, headline, body, from }) : null;
+  const category = String(source.category ?? inferMailCategory(type, decision, from));
+  const id = String(source.id ?? decision?.id ?? buildMailId({ date, type, headline, from }));
+  return {
+    id,
+    date,
+    from,
+    category,
+    type,
+    headline,
+    body,
+    read: Boolean(source.read),
+    important: Boolean(source.important) || Boolean(decision?.blocking) || MAILBOX_IMPORTANCE_TYPES.has(type),
+    decision,
+    links: Array.isArray(source.links) ? source.links.map(normalizeMailLink).filter(Boolean).slice(0, 4) : [],
+    eventId: String(source.eventId ?? ""),
+    deliverOn: source.deliverOn ? String(source.deliverOn) : ""
+  };
+}
+
+function normalizeMailDecision(source, mail = {}) {
+  if (!source || typeof source !== "object") return null;
+  const type = String(source.type ?? mail.type ?? "decision");
+  const date = String(source.date ?? mail.date ?? "");
+  const defaultAction = String(source.defaultAction ?? defaultDecisionAction(type));
+  const expiresOn = String(source.expiresOn ?? defaultDecisionExpiry(date, type));
+  return {
+    ...source,
+    id: String(source.id ?? mail.id ?? buildMailId({ date, type, headline: source.headline ?? mail.headline ?? "decision" })),
+    date,
+    type,
+    status: String(source.status ?? "open"),
+    blocking: Boolean(source.blocking),
+    severity: String(source.severity ?? (source.blocking ? "danger" : "notice")),
+    options: Array.isArray(source.options) ? source.options : [],
+    resolvedAction: String(source.resolvedAction ?? source.resolution ?? ""),
+    resolvedDate: String(source.resolvedDate ?? source.resolvedAt ?? ""),
+    resultMessage: String(source.resultMessage ?? ""),
+    expiresOn,
+    defaultAction
+  };
+}
+
+function normalizeMailFrom(source) {
+  if (source && typeof source === "object") {
+    return {
+      role: String(source.role ?? source.source ?? "프런트"),
+      icon: String(source.icon ?? source.type ?? "mail")
+    };
+  }
+  return {
+    role: String(source ?? "프런트"),
+    icon: "mail"
+  };
+}
+
+function normalizeMailLink(link) {
+  if (!link || typeof link !== "object") return null;
+  const label = String(link.label ?? "").trim();
+  const target = String(link.target ?? "").trim();
+  if (!label || !target) return null;
+  return { label, target };
+}
+
+function inferMailCategory(type, decision, from) {
+  if (decision) return "decision";
+  if (["media", "streak", "milestone", "standings-race", "power-ranking", "sweep"].includes(type)) return "media";
+  if (["kbo-official", "waiver", "league-news", "trade-completed"].includes(type)) return "league";
+  if (String(from?.role ?? "").includes("KBO") || String(from?.role ?? "").includes("사무국")) return "league";
+  return "club";
+}
+
+function buildMailId({ date, type, headline, from }) {
+  return `mail-${date || "date"}-${type || "note"}-${hashParts(date, type, headline, from?.role ?? "from").toString(36)}`;
+}
+
+function insertMailboxItem(state, item, options = {}) {
+  if (!item?.id) return null;
+  normalizeMailboxState(state);
+  const existingIndex = state.mailbox.items.findIndex((entry) => String(entry.id) === String(item.id));
+  if (existingIndex >= 0) {
+    state.mailbox.items[existingIndex] = {
+      ...state.mailbox.items[existingIndex],
+      ...item,
+      read: Boolean(state.mailbox.items[existingIndex].read && item.read)
+    };
+  } else {
+    state.mailbox.items = [item, ...state.mailbox.items];
+  }
+  pruneMailbox(state);
+  refreshMailboxDerivedState(state);
+  if (options.log) addLog(state, mailLogFromItem(item));
+  return item;
+}
+
+function deferMailboxItem(state, item, deliverOn) {
+  if (!item?.id) return null;
+  normalizeMailboxState(state);
+  if (state.mailbox.items.some((mail) => String(mail.id) === String(item.id))) return null;
+  if (state.mailbox.deferred.some((mail) => String(mail.id) === String(item.id))) return null;
+  state.mailbox.deferred = [
+    {
+      ...item,
+      deliverOn: String(deliverOn ?? item.date ?? state.currentDate ?? "")
+    },
+    ...state.mailbox.deferred
+  ].slice(0, MAILBOX_DEFERRED_LIMIT);
+  return item;
+}
+
+function deliverDeferredMail(state, dateKey = state?.currentDate) {
+  normalizeMailboxState(state);
+  const today = String(dateKey ?? state.currentDate ?? "");
+  const ready = [];
+  const pending = [];
+  for (const item of state.mailbox.deferred ?? []) {
+    if (String(item.deliverOn ?? item.date ?? "") <= today) ready.push(item);
+    else pending.push(item);
+  }
+  state.mailbox.deferred = pending;
+  for (const item of ready.sort(compareMailItems)) {
+    insertMailboxItem(state, { ...item, date: item.date || today }, { log: true });
+  }
+  refreshMailboxDerivedState(state);
+  return ready;
+}
+
+function pruneMailbox(state) {
+  const items = [...(state.mailbox?.items ?? [])].sort(compareMailItems);
+  if (items.length <= MAILBOX_LIMIT) {
+    state.mailbox.items = items;
+    return;
+  }
+  const keep = [];
+  const removable = [];
+  for (const item of items) {
+    if (isOpenDecisionMail(item) || !item.read || item.decision) keep.push(item);
+    else removable.push(item);
+  }
+  state.mailbox.items = [...keep, ...removable].slice(0, MAILBOX_LIMIT).sort(compareMailItems);
+}
+
+function refreshMailboxDerivedState(state) {
+  if (!state?.mailbox) return;
+  state.mailbox.items = Array.isArray(state.mailbox.items) ? state.mailbox.items.sort(compareMailItems) : [];
+  state.mailbox.unread = state.mailbox.items.filter((mail) => !mail.read).length;
+  const blocking = state.mailbox.items.find((mail) => isOpenDecisionMail(mail) && mail.decision?.blocking);
+  state.pendingMailDecision = blocking ? decisionFromMail(blocking) : null;
+}
+
+function compareMailItems(a, b) {
+  const decisionDiff = Number(isOpenDecisionMail(b)) - Number(isOpenDecisionMail(a));
+  if (decisionDiff) return decisionDiff;
+  const unreadDiff = Number(!b?.read) - Number(!a?.read);
+  if (unreadDiff) return unreadDiff;
+  const dateDiff = compareText(String(b?.date ?? ""), String(a?.date ?? ""));
+  if (dateDiff) return dateDiff;
+  return compareText(String(a?.headline ?? a?.id ?? ""), String(b?.headline ?? b?.id ?? ""));
+}
+
+function isOpenDecisionMail(mail) {
+  return mail?.decision?.status === "open";
+}
+
+function isImportantMail(mail) {
+  return Boolean(mail?.important) || Boolean(mail?.decision?.blocking) || MAILBOX_IMPORTANCE_TYPES.has(String(mail?.type ?? ""));
+}
+
+function decisionFromMail(mail) {
+  if (!mail?.decision) return null;
+  return {
+    ...mail,
+    ...mail.decision,
+    id: mail.decision.id ?? mail.id,
+    mailId: mail.id,
+    headline: mail.headline ?? mail.decision.headline,
+    body: mail.body ?? mail.decision.body,
+    source: mail.from?.role ?? mail.decision.source ?? ""
+  };
+}
+
+function mailLogFromItem(item) {
+  return {
+    id: `log-${item.id}`,
+    date: item.date,
+    type: item.type,
+    tag: item.from?.role ?? "프런트",
+    source: item.from?.role ?? "프런트",
+    headline: item.headline,
+    text: item.body,
+    eventId: item.eventId ?? ""
+  };
+}
+
+function defaultDecisionAction(type) {
+  if (type === "medical-roster") return "monitor";
+  if (type === "trade-offer") return "reject";
+  if (type === "waiver-claim") return "pass";
+  if (type === "foreign-adaptation") return "acknowledge";
+  if (type === "foreign-lineup") return "acknowledge";
+  if (type === "bullpen-rest") return "manager-discretion";
+  if (type === "futures-callup") return "hold";
+  return "acknowledge";
+}
+
+function defaultDecisionExpiry(dateKey, type) {
+  const days = type === "waiver-claim" ? 7 : type === "trade-offer" ? 3 : 1;
+  return dateKey ? addDaysKey(dateKey, days) : "";
 }
 
 function normalizeGameInterventions(source) {
@@ -7034,10 +7542,14 @@ function addDailyMorningRoutine(state, context = {}) {
   const selectedInjuries = newInjuries.filter((entry) => String(entry.teamId) === String(team?.id));
   const totalRuns = sum(results, "totalRuns");
   const futuresReport = buildFuturesDailyReport(state, team, reportDate);
-  const weeklyPower = summarizeWeeklyPower(results, focusGame, team);
+  const weeklyPower = results.length
+    ? summarizeWeeklyPower(results, focusGame, team)
+    : "전 구단 이동·회복일로 피로도와 엔트리 상태를 재점검";
   const gameText = focusGame
     ? `${focusGame.away} ${focusGame.awayScore}-${focusGame.homeScore} ${focusGame.home}`
-    : `${results.length}경기`;
+    : results.length
+      ? `${results.length}경기`
+      : "경기 없는 이동일";
   const injuryText = selectedInjuries.length
     ? `${selectedInjuries[0].name} ${selectedInjuries[0].injuredDays}일 이탈 보고`
     : newInjuries.length
@@ -7056,8 +7568,10 @@ function addDailyMorningRoutine(state, context = {}) {
   });
   const narrative = buildNarrativeContext(state, team, morningDate);
 
-  addLog(state, {
+  deliverMail(state, {
     date: morningDate,
+    from: { role: "전력분석팀", icon: "analysis" },
+    category: "club",
     type: "daily-report",
     tag: "전력분석",
     source: "전력분석팀",
@@ -7065,8 +7579,10 @@ function addDailyMorningRoutine(state, context = {}) {
     text: `1군 포커스: ${gameText}. 리그 ${results.length}경기 총 ${totalRuns}득점, ${weeklyPower}. 퓨처스리그: ${futuresReport.scoreText}. 2군 감독 보고: ${futuresReport.note}. 장기 서사: ${narrative.reportLine}`
   });
 
-  addLog(state, {
+  deliverMail(state, {
     date: morningDate,
+    from: { role: selectMediaOutlet(reportDate, team?.id ?? "kbo"), icon: "media" },
+    category: "media",
     type: "media",
     tag: selectMediaOutlet(reportDate, team?.id ?? "kbo"),
     source: selectMediaOutlet(reportDate, team?.id ?? "kbo"),
@@ -7074,8 +7590,10 @@ function addDailyMorningRoutine(state, context = {}) {
     text: `${gameText} 이후 ${PRESEASON_MEDIA_OUTLETS.join(", ")} 데스크가 라인업 피로도와 콜업 후보를 주요 이슈로 다뤘습니다. ${narrative.mediaLine}`
   });
 
-  addLog(state, {
+  deliverMail(state, {
     date: morningDate,
+    from: { role: "개인비서", icon: "assistant" },
+    category: "club",
     type: "assistant",
     tag: "개인비서",
     source: "개인비서",
@@ -7089,6 +7607,444 @@ function addDailyMorningRoutine(state, context = {}) {
   addBullpenOverloadLog(state, team, morningDate);
   addForeignAdaptationLog(state, team, morningDate);
   addDailyMarketBreakLog(state, team, morningDate);
+  addRecurringRhythmMails(state, team, morningDate, { reportDate, results, focusGame, futuresReport });
+  addEventTriggerMails(state, team, morningDate, { reportDate, results, focusGame, futuresReport, newInjuries });
+}
+
+function addRecurringRhythmMails(state, team, dateKey, context = {}) {
+  if (!team) return;
+  const date = parseDate(dateKey);
+  const weekday = date.getUTCDay();
+  const dayOfMonth = date.getUTCDate();
+
+  if (weekday === 1) {
+    deliverUniqueMail(state, buildWeeklyReviewMail(state, team, dateKey));
+    deliverUniqueMail(state, buildPowerRankingMail(state, team, dateKey));
+    state.weeklySnapshot = buildWeeklySnapshot(state, dateKey);
+  }
+
+  if (isSeriesFirstGameDay(state, team, dateKey)) {
+    deliverUniqueMail(state, buildSeriesPreviewMail(state, team, dateKey));
+  }
+
+  if (dayOfMonth === 1) {
+    deliverUniqueMail(state, buildMonthlyReviewMail(state, team, dateKey));
+    deliverUniqueMail(state, buildOwnerMonthlyMail(state, team, dateKey));
+    state.monthlySnapshot = buildMonthlySnapshot(state, dateKey);
+  }
+
+  if (dayOfMonth === 25) {
+    deliverUniqueMail(state, buildPayrollMail(state, team, dateKey));
+  }
+
+  if (context.futuresReport?.hot) {
+    addFuturesCallupDecisionMail(state, team, dateKey, context.futuresReport);
+  }
+}
+
+function addEventTriggerMails(state, team, dateKey, context = {}) {
+  if (!team) return;
+  addStreakTriggerMails(state, team, dateKey);
+  addStandingsTriggerMails(state, team, dateKey);
+  addMilestoneTriggerMails(state, team, dateKey);
+  addLeagueTrendMails(state, team, dateKey, context);
+}
+
+function deliverUniqueMail(state, mail) {
+  if (!mail?.id) return null;
+  normalizeMailboxState(state);
+  if (state.mailbox.items.some((item) => String(item.id) === String(mail.id))) return null;
+  if (state.mailbox.deferred.some((item) => String(item.id) === String(mail.id))) return null;
+  return deliverMail(state, mail);
+}
+
+function buildWeeklyReviewMail(state, team, dateKey) {
+  const recent = recentTeamResults(state, team.id, 6);
+  const wins = recent.filter((item) => item.diff > 0).length;
+  const losses = recent.filter((item) => item.diff < 0).length;
+  const mvp = selectWeeklyMvp(team);
+  return {
+    id: `weekly-review-${dateKey}-${team.id}`,
+    date: dateKey,
+    from: { role: "전력분석팀", icon: "analysis" },
+    category: "club",
+    type: "weekly-review",
+    headline: `[전력분석] ${team.shortName ?? team.name} 주간 리뷰`,
+    body: `지난 주 표본 ${recent.length}경기 기준 ${wins}승 ${losses}패입니다. 팀 득실차는 ${formatSignedNumber(safeNumber(team.runsFor) - safeNumber(team.runsAgainst))}, 주간 MVP 후보는 ${mvp?.name ?? "선정 대기"}입니다. 이번 주는 불펜 소모와 상위 타순 출루율을 같이 보겠습니다.`,
+    read: false
+  };
+}
+
+function buildPowerRankingMail(state, team, dateKey) {
+  const standings = getStandings(state);
+  const lines = standings.slice(0, 10).map((entry, index) => {
+    const recent = recentTeamResults(state, entry.id, 5);
+    const wins = recent.filter((item) => item.diff > 0).length;
+    const tone = wins >= 4 ? "상승" : wins <= 1 ? "경계" : "유지";
+    return `${index + 1}. ${entry.shortName ?? entry.name} ${renderRecordText(entry)} · 최근 ${wins}/${recent.length || 0}승 ${tone}`;
+  });
+  return {
+    id: `power-ranking-${dateKey}`,
+    date: dateKey,
+    from: { role: selectMediaOutlet(dateKey, "power-ranking"), icon: "media" },
+    category: "media",
+    type: "power-ranking",
+    headline: "리그 파워랭킹 업데이트",
+    body: lines.join(" / "),
+    read: false,
+    important: standings[0]?.id === team.id
+  };
+}
+
+function buildSeriesPreviewMail(state, team, dateKey) {
+  const preview = getPreviewForDate(state, team.id, dateKey);
+  const opponentId = String(preview.awayTeamId) === String(team.id) ? preview.homeTeamId : preview.awayTeamId;
+  const opponent = findTeamById(state, opponentId);
+  const opponentRecent = recentTeamResults(state, opponentId, 5);
+  const opponentWins = opponentRecent.filter((item) => item.diff > 0).length;
+  const starter = buildPitchingSnapshot(team).nextStarter?.name ?? "";
+  const dangerous = selectDangerousHitters(opponent, dateKey).map((player) => player.name).join(", ") || "상위 타선";
+  return {
+    id: `series-preview-${dateKey}-${team.id}-${opponentId}`,
+    date: dateKey,
+    from: { role: "전력분석팀", icon: "analysis" },
+    category: "club",
+    type: "series-preview",
+    headline: `${opponent?.shortName ?? "상대"} 시리즈 프리뷰`,
+    body: `오늘부터 ${opponent?.shortName ?? "상대"}전입니다. 상대 최근 5경기 ${opponentWins}승, 현재 성적 ${renderRecordText(opponent)}. 우리 예상 선발은 ${starter || "로테이션 확인 중"}이며, 조심할 타자는 ${dangerous}입니다.`,
+    read: false,
+    important: true
+  };
+}
+
+function buildMonthlyReviewMail(state, team, dateKey) {
+  const standings = getStandings(state);
+  const rank = standings.findIndex((entry) => String(entry.id) === String(team.id)) + 1;
+  const attendance = safeNumber(team.attendanceTotal);
+  return {
+    id: `monthly-review-${dateKey}-${team.id}`,
+    date: dateKey,
+    from: { role: "운영팀", icon: "operations" },
+    category: "club",
+    type: "monthly-review",
+    headline: `${String(dateKey).slice(5, 7)}월 구단 운영 결산`,
+    body: `${team.shortName ?? team.name} 현재 ${rank || "-"}위, 성적 ${renderRecordText(team)}, 누적 관중 ${Math.round(attendance).toLocaleString("ko-KR")}명입니다. 전월 대비 순위와 관중 흐름은 운영 회의 안건으로 남겼습니다.`,
+    read: false
+  };
+}
+
+function buildOwnerMonthlyMail(state, team, dateKey) {
+  const standings = getStandings(state);
+  const rank = standings.findIndex((entry) => String(entry.id) === String(team.id)) + 1;
+  const expected = getOwnerExpectedRank(state, team);
+  const tone = rank && rank <= expected ? "격려" : rank && rank >= expected + 3 ? "우려" : "중립";
+  const delta = tone === "격려" ? 1 : tone === "우려" ? -1 : 0;
+  team.morale = clamp(safeNumber(team.morale, 50) + delta, 20, 90);
+  return {
+    id: `owner-monthly-${dateKey}-${team.id}`,
+    date: dateKey,
+    from: { role: "구단주", icon: "owner" },
+    category: "club",
+    type: "owner-monthly",
+    headline: `구단주 월례 평가: ${tone}`,
+    body: `시즌 전 기대 순위 ${expected}위 대비 현재 ${rank || "-"}위입니다. 구단주는 ${tone === "격려" ? "현장 메시지를 긍정적으로 평가했습니다" : tone === "우려" ? "분위기 전환 계획을 요구했습니다" : "현 흐름을 더 지켜보겠다는 입장입니다"}.`,
+    read: false,
+    important: tone !== "중립"
+  };
+}
+
+function buildPayrollMail(state, team, dateKey) {
+  const monthlyPayroll = (safeNumber(team.payroll) * 100_000_000) / 12;
+  const room = (safeNumber(team.budget) - safeNumber(team.payroll)) * 100_000_000;
+  return {
+    id: `payroll-${dateKey}-${team.id}`,
+    date: dateKey,
+    from: { role: "재정팀", icon: "finance" },
+    category: "club",
+    type: "payroll",
+    headline: "월 급여 정산 보고",
+    body: `이번 달 예상 연봉 지출은 ${formatMoneyForLog(monthlyPayroll)}입니다. 예산 여력은 ${formatMoneyForLog(room)}이며, 시장 움직임 전 현금성 지출을 재점검해야 합니다.`,
+    read: false
+  };
+}
+
+function addFuturesCallupDecisionMail(state, team, dateKey, futuresReport) {
+  const player = futuresReport.player;
+  if (!player) return;
+  deliverUniqueMail(state, {
+    id: `futures-hot-${dateKey}-${player.id}`,
+    date: dateKey,
+    from: { role: "2군 감독", icon: "futures" },
+    category: "club",
+    type: "futures",
+    headline: `${player.name} 콜업 건의`,
+    body: `${futuresReport.note} 2군 현장은 지금 1군 테스트 타이밍으로 보고 있습니다.`,
+    read: false,
+    important: true,
+    links: [{ label: "선수 상세", target: `player:${player.id}` }]
+  });
+  queueMailDecision(state, {
+    id: `futures-callup-${dateKey}-${player.id}`,
+    date: dateKey,
+    type: "futures-callup",
+    blocking: false,
+    severity: "notice",
+    teamId: team.id,
+    teamName: team.name,
+    playerId: player.id,
+    playerName: player.name,
+    headline: `${player.name} 1군 콜업 여부`,
+    body: `${player.name}이 퓨처스에서 상승세입니다. 오늘 1군 등록으로 분위기를 바꿀지, 한 차례 더 관찰할지 결정하십시오.`,
+    options: [
+      { action: "callup", label: "콜업", note: "1군 active 전환" },
+      { action: "hold", label: "보류", note: "추가 관찰" }
+    ],
+    links: [{ label: "선수 상세", target: `player:${player.id}` }]
+  });
+}
+
+function addStreakTriggerMails(state, team, dateKey) {
+  const streak = String(team.streak ?? "");
+  const marker = streak[0];
+  const count = safeNumber(streak.slice(1));
+  if (!["W", "L"].includes(marker) || ![3, 5, 8].includes(count)) return;
+  const key = `streak-${team.id}-${marker}-${count}`;
+  if (state.milestoneLedger[key]) return;
+  state.milestoneLedger[key] = dateKey;
+  const winning = marker === "W";
+  deliverUniqueMail(state, {
+    id: `streak-${dateKey}-${team.id}-${marker}-${count}`,
+    date: dateKey,
+    from: { role: selectMediaOutlet(dateKey, "streak"), icon: "media" },
+    category: "media",
+    type: "streak",
+    headline: `${team.shortName ?? team.name} ${count}${winning ? "연승" : "연패"}`,
+    body: winning
+      ? `${team.shortName ?? team.name}가 ${count}연승으로 순위 레이스에 압박을 걸었습니다. 클럽하우스 분위기는 상승세입니다.`
+      : `${team.shortName ?? team.name}가 ${count}연패에 빠졌습니다. 라인업 메시지와 불펜 운용을 둘러싼 질문이 커지고 있습니다.`,
+    read: false,
+    important: count >= 5
+  });
+  if (!winning && count >= 8) {
+    team.morale = clamp(safeNumber(team.morale, 50) - 1, 20, 90);
+    deliverUniqueMail(state, {
+      id: `owner-streak-${dateKey}-${team.id}-${count}`,
+      date: dateKey,
+      from: { role: "구단주", icon: "owner" },
+      category: "club",
+      type: "owner-monthly",
+      headline: "구단주 우려 메시지",
+      body: `${count}연패 흐름에 대해 구단주는 선수단 메시지와 현장 대응 계획을 요구했습니다.`,
+      read: false,
+      important: true
+    });
+  }
+}
+
+function addStandingsTriggerMails(state, team, dateKey) {
+  const standings = getStandings(state);
+  const rank = standings.findIndex((entry) => String(entry.id) === String(team.id)) + 1;
+  if (!rank) return;
+  const band = rank === 1 ? "first" : rank <= 5 ? "top5" : "outside";
+  const key = `rank-band-${team.id}`;
+  if (state.milestoneLedger[key] === band) return;
+  const previous = state.milestoneLedger[key];
+  state.milestoneLedger[key] = band;
+  if (!previous) return;
+  deliverUniqueMail(state, {
+    id: `rank-event-${dateKey}-${team.id}-${band}`,
+    date: dateKey,
+    from: { role: selectMediaOutlet(dateKey, "rank"), icon: "media" },
+    category: "media",
+    type: "standings-race",
+    headline: band === "first" ? `${team.shortName ?? team.name} 1위 등극` : band === "top5" ? `${team.shortName ?? team.name} 5위권 진입` : `${team.shortName ?? team.name} 5위권 이탈`,
+    body: `현재 순위는 ${rank}위, 성적은 ${renderRecordText(team)}입니다. 순위 레이스의 체감 압박이 바뀌었습니다.`,
+    read: false,
+    important: true
+  });
+}
+
+function addMilestoneTriggerMails(state, team, dateKey) {
+  for (const player of team.roster ?? []) {
+    const batting = player.seasonStats?.batting ?? {};
+    const pitching = player.seasonStats?.pitching ?? {};
+    const checks = player.role === "pitcher"
+      ? [
+          ["wins", safeNumber(pitching.wins), [10]],
+          ["saves", safeNumber(pitching.saves), [20]],
+          ["strikeouts", safeNumber(pitching.strikeouts), [100]]
+        ]
+      : [
+          ["homeRuns", safeNumber(batting.homeRuns), [10, 20, 30]],
+          ["hits", safeNumber(batting.hits), [100]],
+          ["stolenBases", safeNumber(batting.stolenBases), [30]]
+        ];
+    for (const [stat, value, thresholds] of checks) {
+      for (const threshold of thresholds) {
+        const key = `milestone-${team.id}-${player.id}-${stat}-${threshold}`;
+        if (value >= threshold && !state.milestoneLedger[key]) {
+          state.milestoneLedger[key] = dateKey;
+          deliverMilestoneMail(state, team, player, stat, threshold, dateKey);
+        } else if (value === threshold - 2) {
+          const paceKey = `pace-${team.id}-${player.id}-${stat}-${threshold}`;
+          if (!state.milestoneLedger[paceKey]) {
+            state.milestoneLedger[paceKey] = dateKey;
+            deliverPaceMail(state, team, player, stat, threshold, dateKey);
+          }
+        }
+      }
+    }
+  }
+}
+
+function addLeagueTrendMails(state, team, dateKey, context = {}) {
+  const completedTrade = (state.trades?.completed ?? [])[0];
+  if (completedTrade?.date === dateKey) {
+    deliverUniqueMail(state, {
+      id: `league-trade-${dateKey}-${completedTrade.id}`,
+      date: dateKey,
+      from: { role: "리그 동향", icon: "league" },
+      category: "league",
+      type: "trade-completed",
+      headline: "타 구단 트레이드 완료",
+      body: completedTrade.summary ?? "리그 내 트레이드가 완료됐습니다. 순위 경쟁 구도와 포지션 수급에 영향을 줄 수 있습니다.",
+      read: false
+    });
+  }
+  const leagueInjury = (context.newInjuries ?? []).find((entry) => String(entry.teamId) !== String(team.id) && safeNumber(entry.ovr) >= 135);
+  if (leagueInjury) {
+    deliverUniqueMail(state, {
+      id: `league-injury-${dateKey}-${leagueInjury.teamId}-${leagueInjury.playerId}`,
+      date: dateKey,
+      from: { role: "리그 동향", icon: "league" },
+      category: "league",
+      type: "league-news",
+      headline: `${leagueInjury.teamShortName} 주전급 부상 소식`,
+      body: `${leagueInjury.name} 선수가 ${leagueInjury.injuredDays}일 이탈 예정입니다. 해당 구단의 로스터 운용과 트레이드 수요가 변할 수 있습니다.`,
+      read: false
+    });
+  }
+}
+
+function deliverMilestoneMail(state, team, player, stat, threshold, dateKey) {
+  deliverUniqueMail(state, {
+    id: `milestone-mail-${dateKey}-${player.id}-${stat}-${threshold}`,
+    date: dateKey,
+    from: { role: selectMediaOutlet(dateKey, player.id), icon: "media" },
+    category: "media",
+    type: "milestone",
+    headline: `${player.name} 시즌 ${formatMilestoneStat(stat, threshold)} 달성`,
+    body: `${team.shortName ?? team.name} ${player.name}이 시즌 ${formatMilestoneStat(stat, threshold)} 고지를 밟았습니다. 팀 서사와 팬 반응에 남을 장면입니다.`,
+    read: false,
+    important: true,
+    links: [{ label: "선수 상세", target: `player:${player.id}` }]
+  });
+}
+
+function deliverPaceMail(state, team, player, stat, threshold, dateKey) {
+  deliverUniqueMail(state, {
+    id: `pace-mail-${dateKey}-${player.id}-${stat}-${threshold}`,
+    date: dateKey,
+    from: { role: "전력분석팀", icon: "analysis" },
+    category: "club",
+    type: "milestone",
+    headline: `${player.name} ${formatMilestoneStat(stat, threshold)} 임박`,
+    body: `${player.name}이 ${formatMilestoneStat(stat, threshold)}까지 2개를 남겼습니다. 기용 타이밍과 타순/등판 간격을 조정하면 이번 시리즈 안에 달성 가능성이 있습니다.`,
+    read: false,
+    links: [{ label: "선수 상세", target: `player:${player.id}` }]
+  });
+}
+
+function isSeriesFirstGameDay(state, team, dateKey) {
+  const preview = getPreviewForDate(state, team.id, dateKey);
+  if (!preview?.ok || String(preview.date) !== String(dateKey)) return false;
+  const opponentId = String(preview.awayTeamId) === String(team.id) ? preview.homeTeamId : preview.awayTeamId;
+  if (!opponentId) return false;
+  const key = `series-preview-opponent-${team.id}`;
+  if (state.milestoneLedger[key] === `${dateKey}:${opponentId}`) return false;
+  const lastOpponent = state.milestoneLedger[`series-last-opponent-${team.id}`];
+  state.milestoneLedger[`series-preview-opponent-${team.id}`] = `${dateKey}:${opponentId}`;
+  state.milestoneLedger[`series-last-opponent-${team.id}`] = opponentId;
+  return lastOpponent !== opponentId;
+}
+
+function getPreviewForDate(state, teamId, dateKey) {
+  return getNextGamePreview({ ...state, currentDate: dateKey }, teamId);
+}
+
+function selectWeeklyMvp(team) {
+  return [...(team?.roster ?? [])]
+    .sort((a, b) => playerRecentValue(b) - playerRecentValue(a) || compareText(a.name, b.name))[0] ?? null;
+}
+
+function playerRecentValue(player) {
+  const batting = player?.seasonStats?.batting ?? {};
+  const pitching = player?.seasonStats?.pitching ?? {};
+  if (player?.role === "pitcher") {
+    return safeNumber(pitching.wins) * 18 + safeNumber(pitching.saves) * 12 + safeNumber(pitching.holds) * 6 + safeNumber(pitching.strikeouts) - safeNumber(pitching.earnedRuns) * 2;
+  }
+  return safeNumber(batting.homeRuns) * 12 + safeNumber(batting.hits) * 2 + safeNumber(batting.rbi) + safeNumber(batting.stolenBases) * 1.5;
+}
+
+function selectDangerousHitters(team, dateKey) {
+  return [...(team?.roster ?? [])]
+    .filter((player) => player.role !== "pitcher")
+    .sort((a, b) =>
+      (hitterScore(b) + deterministicRange(dateKey, b.id, "danger", 0, 8)) -
+      (hitterScore(a) + deterministicRange(dateKey, a.id, "danger", 0, 8))
+    )
+    .slice(0, 2);
+}
+
+function getOwnerExpectedRank(state, team) {
+  const standings = [...(state.teams ?? [])]
+    .sort((a, b) => teamStrengthScore(b) - teamStrengthScore(a));
+  return Math.max(1, standings.findIndex((entry) => String(entry.id) === String(team.id)) + 1);
+}
+
+function teamStrengthScore(team) {
+  const roster = team?.roster ?? [];
+  const top = [...roster].sort((a, b) => safeNumber(b.ovr) - safeNumber(a.ovr)).slice(0, 18);
+  return averageNumbers(...top.map((player) => safeNumber(player.ovr))) + safeNumber(team?.budget) * 0.05;
+}
+
+function buildWeeklySnapshot(state, dateKey) {
+  return {
+    weekStartDate: dateKey,
+    teamRecords: Object.fromEntries((state.teams ?? []).map((team) => [team.id, { wins: safeNumber(team.wins), losses: safeNumber(team.losses), ties: safeNumber(team.ties) }])),
+    playerStatMarks: {}
+  };
+}
+
+function buildMonthlySnapshot(state, dateKey) {
+  const standings = getStandings(state);
+  return {
+    monthKey: String(dateKey).slice(0, 7),
+    standings: Object.fromEntries(standings.map((team, index) => [team.id, index + 1])),
+    teamRecords: Object.fromEntries((state.teams ?? []).map((team) => [team.id, { wins: safeNumber(team.wins), losses: safeNumber(team.losses), ties: safeNumber(team.ties) }]))
+  };
+}
+
+function renderRecordText(team) {
+  if (!team) return "-";
+  return `${safeNumber(team.wins)}승 ${safeNumber(team.losses)}패 ${safeNumber(team.ties)}무`;
+}
+
+function formatSignedNumber(value) {
+  const number = safeNumber(value);
+  return number > 0 ? `+${number}` : `${number}`;
+}
+
+function formatMilestoneStat(stat, threshold) {
+  const labels = {
+    homeRuns: `${threshold}홈런`,
+    hits: `${threshold}안타`,
+    stolenBases: `${threshold}도루`,
+    wins: `${threshold}승`,
+    saves: `${threshold}세이브`,
+    strikeouts: `${threshold}탈삼진`
+  };
+  return labels[stat] ?? `${threshold}${stat}`;
 }
 
 function resolveMedicalRosterDecision(state, decision, action) {
@@ -7227,6 +8183,117 @@ function resolveWaiverClaimDecision(state, decision, action) {
   return { ok: true, code: "waiver-pass", message: "웨이버 후보를 패스하고 현재 로스터를 유지했습니다." };
 }
 
+function resolveBullpenRestDecision(state, decision, action) {
+  const entry = findPlayerEntry(state, decision.playerId, decision.teamId);
+  const player = entry?.player ?? null;
+  if (action === "rest" && player) {
+    player.gameRestriction = {
+      type: "bullpen-rest",
+      date: state.currentDate,
+      reason: "수석코치 혹사 경고"
+    };
+    player.fatigue = clamp(safeNumber(player.fatigue) - 6, 0, 100);
+    player.armFreshness = clamp(safeNumber(player.armFreshness, 80) + 6, 20, 100);
+    return { ok: true, code: "bullpen-rested", message: `${player.name}에게 오늘 휴식 지시를 내렸습니다. 경기 엔진은 해당 투수를 등판 제한 대상으로 표시합니다.` };
+  }
+  return { ok: true, code: "bullpen-discretion", message: `${decision.playerName ?? player?.name ?? "불펜 투수"} 등판 여부를 경기 흐름에 맡겼습니다.` };
+}
+
+function resolveFuturesCallupDecision(state, decision, action) {
+  const entry = findPlayerEntry(state, decision.playerId, decision.teamId);
+  const player = entry?.player ?? null;
+  if (action === "callup" && player) {
+    player.status = "active";
+    player.morale = clamp(safeNumber(player.morale, 50) + 6, 20, 95);
+    player.dailyCondition = clamp(safeNumber(player.dailyCondition, player.form) + 4, 20, 98);
+    return { ok: true, code: "futures-callup", message: `${player.name}을 1군 콜업 후보에서 실제 등록으로 전환했습니다.` };
+  }
+  if (player) player.morale = clamp(safeNumber(player.morale, 50) - 1, 20, 95);
+  return { ok: true, code: "futures-hold", message: `${decision.playerName ?? player?.name ?? "퓨처스 후보"} 콜업은 보류하고 추가 관찰합니다.` };
+}
+
+function resolveOpeningRosterDecision(state, decision, action) {
+  const selectedId = action === "choose-b" ? decision.candidateBId : decision.candidateAId;
+  const entry = findPlayerEntry(state, selectedId, decision.teamId);
+  if (entry?.player) {
+    entry.player.status = "active";
+    entry.player.morale = clamp(safeNumber(entry.player.morale, 50) + 5, 20, 95);
+    return { ok: true, code: "opening-roster-selected", message: `${entry.player.name}을 개막 엔트리 마지막 자리 후보로 확정했습니다.` };
+  }
+  return { ok: true, code: "opening-roster-reviewed", message: "개막 엔트리 마지막 자리는 현재 코칭스태프 안을 유지합니다." };
+}
+
+function resolveOpeningRotationDecision(state, decision, action) {
+  if (action === "review-lineup") {
+    return { ok: true, code: "opening-rotation-review", message: "개막 로테이션을 라인업 탭에서 재검토하기로 했습니다." };
+  }
+  return { ok: true, code: "opening-rotation-confirmed", message: "현재 투수 운용표를 개막 로테이션 기준안으로 확정했습니다." };
+}
+
+function resolveInterviewDecision(state, decision, action) {
+  const team = findTeamById(state, decision.teamId) ?? findTeamById(state, state.selectedTeamId);
+  const delta = action === "protect-clubhouse" ? 2 : action === "challenge" ? 1 : 0;
+  if (team) team.morale = clamp(safeNumber(team.morale, 50) + delta, 20, 90);
+  return { ok: true, code: "interview-answered", message: "인터뷰 답변 톤이 클럽하우스 서사에 기록됐습니다." };
+}
+
+function resolveSlumpingStarterDecision(state, decision, action) {
+  const entry = findPlayerEntry(state, decision.playerId, decision.teamId);
+  const player = entry?.player ?? null;
+  if (action === "demote" && player) {
+    player.status = "futures";
+    player.morale = clamp(safeNumber(player.morale, 50) - 8, 10, 90);
+    return { ok: true, code: "slump-demoted", message: `${player.name}을 2군 조정 대상으로 내렸습니다. 선수단 반응은 후속 보고로 확인됩니다.` };
+  }
+  if (player) player.morale = clamp(safeNumber(player.morale, 50) + 1, 20, 95);
+  return { ok: true, code: "slump-trusted", message: `${decision.playerName ?? player?.name ?? "부진 주전"}에게 한 번 더 기회를 주기로 했습니다.` };
+}
+
+function sendDecisionFollowUps(state, dateKey = state?.currentDate) {
+  const today = String(dateKey ?? state.currentDate ?? "");
+  for (const decision of state.mailDecisions ?? []) {
+    if (decision.followUpSent) continue;
+    if (!decision.followUpDate || String(decision.followUpDate) > today) continue;
+    deliverMail(state, buildDecisionFollowUpMail(state, decision, today));
+    decision.followUpSent = true;
+  }
+}
+
+function buildDecisionFollowUpMail(state, decision, dateKey) {
+  const subject = decision.playerName ?? decision.incomingPlayerName ?? decision.headline ?? "결재 안건";
+  const action = decision.resolvedAction ?? decision.resolution ?? "";
+  let body = `${decision.headline ?? "전일 결재"} 처리 결과가 반영됐습니다. ${decision.resultMessage ?? ""}`.trim();
+  if (decision.type === "medical-roster") {
+    body = action === "rush"
+      ? `${subject} 강행 결정 이후 트레이닝 파트가 재검진 일정을 잡았습니다. 피로도와 재발 위험은 계속 관찰됩니다.`
+      : `${subject} 관련 엔트리 조치가 코칭스태프 회의록에 반영됐습니다. 대체 선수 기용 결과는 다음 경기 후 다시 보고됩니다.`;
+  } else if (decision.type === "trade-offer") {
+    body = action === "accept"
+      ? "전일 수락한 트레이드가 라커룸과 프런트 예산표에 반영됐습니다. 상대 구단 반응은 리그 동향으로 추적합니다."
+      : "보류/거절한 트레이드 제안은 시장 메모에 남겼습니다. 상대 구단은 다른 카드를 찾는 분위기입니다.";
+  } else if (decision.type === "waiver-claim") {
+    body = action === "claim"
+      ? "웨이버 클레임 요청이 접수됐습니다. 선수 등록과 잔여 연봉 반영 상태를 운영팀이 확인 중입니다."
+      : "웨이버 공시 선수 패스 결정이 확정됐습니다. 해당 선수의 향후 행선지는 리그 동향에 남깁니다.";
+  } else if (decision.type === "bullpen-rest") {
+    body = action === "rest"
+      ? `${subject} 휴식 지시가 불펜 운용표에 반영됐습니다. 수석코치는 단기 실점 위험보다 장기 컨디션 보전을 우선 평가했습니다.`
+      : `${subject} 등판 여부를 현장 재량에 맡긴 결정이 기록됐습니다. 팔 컨디션은 다음 보고에서 다시 확인됩니다.`;
+  }
+  return {
+    id: `decision-follow-${dateKey}-${decision.id}`,
+    date: dateKey,
+    from: { role: decisionSourceRole(decision), icon: decision.type ?? "decision" },
+    category: "club",
+    type: "decision-follow-up",
+    headline: `후속 보고: ${decision.headline ?? "전일 결재"}`,
+    body,
+    read: false,
+    important: false,
+    links: decision.mailId ? [{ label: "결재 원문", target: `mail:${decision.mailId}` }] : []
+  };
+}
+
 function buildFuturesDailyReport(state, team, dateKey) {
   const player = selectFuturesReportPlayer(team, dateKey);
   const runsFor = deterministicRange(dateKey, team?.id ?? "kbo", "futures-rf", 1, 9);
@@ -7265,16 +8332,17 @@ function summarizeWeeklyPower(results, focusGame, team) {
 function addMedicalReportLog(state, team, injury, morningDate) {
   const candidate = selectCallupCandidate(team, injury, morningDate);
   const hospital = selectMedicalHospital(injury, morningDate);
-  addLog(state, {
+  deliverMail(state, {
     date: morningDate,
+    from: { role: "트레이닝 파트", icon: "medical" },
+    category: "club",
     type: "medical",
     tag: "트레이닝 파트",
     source: "트레이닝 파트",
     headline: `[트레이닝 파트] ${injury.name} 선수 정밀 검진 결과 보고`,
     text: `${hospital} 검진 결과, ${injury.position ?? injury.role ?? "주전"} ${injury.name} 선수는 ${injuryLabel(injury.injuredDays)} 판정입니다. 1군 엔트리 말소(10일 통보)가 필요하며, 대체 후보는 ${candidate?.name ?? "추가 확인 필요"}입니다.`
   });
-  if (hasOpenMailDecision(state)) return;
-  state.pendingMailDecision = buildPendingDecision({
+  queueMailDecision(state, {
     id: `medical-${morningDate}-${injury.playerId}`,
     date: morningDate,
     type: "medical-roster",
@@ -7304,8 +8372,10 @@ function addRosterReentryNotices(state, team, dateKey) {
     if (player.status === "active" || String(lock.noticeSent ?? "") === dateKey) continue;
     if (String(lock.eligibleDate ?? "") > dateKey) continue;
     lock.noticeSent = dateKey;
-    addLog(state, {
+    deliverMail(state, {
       date: dateKey,
+      from: { role: "운영팀", icon: "operations" },
+      category: "club",
       type: "operations",
       tag: "운영팀",
       source: "운영팀",
@@ -7323,8 +8393,10 @@ function addForeignLineupWarningLog(state, team, dateKey) {
   );
   const activeRegistered = registered.filter((player) => player.status === "active");
   if (activeRegistered.length > KBO_FOREIGN_REGISTERED_LIMIT) {
-    addLog(state, {
+    deliverMail(state, {
       date: dateKey,
+      from: { role: "운영팀", icon: "operations" },
+      category: "club",
       type: "operations",
       tag: "운영팀",
       source: "운영팀",
@@ -7341,16 +8413,17 @@ function addForeignLineupWarningLog(state, team, dateKey) {
   if (appearanceCount <= KBO_FOREIGN_APPEARANCE_LIMIT) return;
 
   const benchPlayer = foreignHitters.at(-1) ?? null;
-  addLog(state, {
+  deliverMail(state, {
     date: dateKey,
+    from: { role: "코칭스태프", icon: "coaching" },
+    category: "club",
     type: "coaching",
     tag: "코칭스태프",
     source: "코칭스태프",
     headline: "[코칭스태프] 오늘 경기 외국인 선수 선발 라인업 경고",
     text: `선발 ${starter?.name ?? "확인 필요"}와 외국인 타자 ${foreignHitters.length}명을 동시에 쓰면 경기당 ${KBO_FOREIGN_APPEARANCE_LIMIT}명 출전 제한을 넘습니다. ${benchPlayer?.name ?? "외국인 타자 1명"} 벤치 대기가 필요합니다.`
   });
-  if (hasOpenMailDecision(state)) return;
-  state.pendingMailDecision = buildPendingDecision({
+  queueMailDecision(state, {
     id: `foreign-lineup-${dateKey}-${team.id}`,
     date: dateKey,
     type: "foreign-lineup",
@@ -7379,13 +8452,32 @@ function addBullpenOverloadLog(state, team, dateKey) {
     .filter((player) => safeNumber(player.fatigue) >= 58 || safeNumber(player.armFreshness, 80) <= 46)
     .sort((a, b) => (safeNumber(b.fatigue) - safeNumber(b.armFreshness, 80)) - (safeNumber(a.fatigue) - safeNumber(a.armFreshness, 80)))[0];
   if (!overloaded) return;
-  addLog(state, {
+  deliverMail(state, {
     date: dateKey,
+    from: { role: "수석코치", icon: "bullpen" },
+    category: "club",
     type: "coaching",
     tag: "수석코치",
     source: "수석코치",
     headline: `[수석코치] 불펜 투수진 과부하(혹사) 경고`,
     text: `${overloaded.name} 투수의 피로도는 ${Math.round(safeNumber(overloaded.fatigue))}%, 팔 컨디션은 ${Math.round(safeNumber(overloaded.armFreshness, 80))}%입니다. 오늘 또 등판시키면 장기 부상 위험이 크게 올라갑니다.`
+  });
+  queueMailDecision(state, {
+    id: `bullpen-rest-${dateKey}-${overloaded.id}`,
+    date: dateKey,
+    type: "bullpen-rest",
+    blocking: false,
+    severity: "warning",
+    teamId: team.id,
+    teamName: team.name,
+    playerId: overloaded.id,
+    playerName: overloaded.name,
+    headline: `${overloaded.name} 휴식 지시 여부`,
+    body: `${overloaded.name} 투수의 피로 누적이 위험 구간입니다. 오늘 경기에서 등판 제외 지시를 내리면 단기 전력은 내려가지만 부상 위험을 낮출 수 있습니다.`,
+    options: [
+      { action: "rest", label: "오늘 휴식", note: "등판 제외 표시" },
+      { action: "manager-discretion", label: "감독 재량", note: "경기 흐름에 맡김" }
+    ]
   });
 }
 
@@ -7407,16 +8499,17 @@ function addForeignAdaptationLog(state, team, dateKey) {
     safeNumber(player.dailyCondition, player.form) < 45 ||
     deterministicRange(dateKey, team.id, player.id, "homesick", 0, 13) === 0;
   if (!shouldReport) return;
-  addLog(state, {
+  deliverMail(state, {
     date: dateKey,
+    from: { role: "통역 파트", icon: "interpreter" },
+    category: "club",
     type: "interpreter",
     tag: "통역 파트",
     source: "통역 파트",
     headline: `[통역 파트] ${player.name} 선수 최근 컨디션 저하 사유 보고`,
     text: `${player.name} 선수가 한국 생활 적응 및 향수병 스트레스를 호소했습니다. 가족 초청 비용은 ${formatMoneyForLog(FOREIGN_FAMILY_SUPPORT_KRW)}로 추산됩니다.`
   });
-  if (hasOpenMailDecision(state)) return;
-  state.pendingMailDecision = buildPendingDecision({
+  queueMailDecision(state, {
     id: `foreign-adapt-${dateKey}-${player.id}`,
     date: dateKey,
     type: "foreign-adaptation",
@@ -7449,16 +8542,17 @@ function addDailyMarketBreakLog(state, team, dateKey) {
 function addTradeOfferBreakLog(state, team, dateKey) {
   const offer = buildBreakTradeOffer(state, team, dateKey);
   if (!offer) return;
-  addLog(state, {
+  deliverMail(state, {
     date: dateKey,
+    from: { role: offer.sourceTeamName, icon: "trade" },
+    category: "decision",
     type: "trade-offer",
     tag: "트레이드",
     source: offer.sourceTeamName,
     headline: `[트레이드] ${offer.sourceTeamName} 구단으로부터의 선수 트레이드 제안`,
     text: `${offer.sourceTeamShortName}에서 취약 포지션 보강 카드 ${offer.incomingPlayerName}을 제시했습니다. 대가로 ${offer.outgoingPlayerName}와 현금 ${formatMoneyForLog(offer.cashKRW)}을 요구합니다.`
   });
-  if (hasOpenMailDecision(state)) return;
-  state.pendingMailDecision = buildPendingDecision({
+  queueMailDecision(state, {
     ...offer,
     id: `trade-offer-${dateKey}-${offer.sourceTeamId}-${team.id}`,
     date: dateKey,
@@ -7478,16 +8572,17 @@ function addTradeOfferBreakLog(state, team, dateKey) {
 function addWaiverNoticeBreakLog(state, team, dateKey) {
   const candidate = buildWaiverCandidate(state, team, dateKey);
   if (!candidate) return;
-  addLog(state, {
+  deliverMail(state, {
     date: dateKey,
+    from: { role: "KBO 사무국", icon: "league" },
+    category: "league",
     type: "waiver",
     tag: "KBO 사무국",
     source: "KBO 사무국",
     headline: "[KBO 사무국] 타 구단 웨이버 공시 선수 명단 통보",
     text: `${candidate.sourceTeamShortName} ${candidate.playerName} 선수가 웨이버 공시됐습니다. 7일 이내 잔여 연봉 ${formatMoneyForLog(candidate.salaryKRW)} 승계 신청이 가능합니다.`
   });
-  if (hasOpenMailDecision(state)) return;
-  state.pendingMailDecision = buildPendingDecision({
+  queueMailDecision(state, {
     ...candidate,
     id: `waiver-${dateKey}-${candidate.playerId}`,
     date: dateKey,
@@ -7504,10 +8599,16 @@ function addWaiverNoticeBreakLog(state, team, dateKey) {
 }
 
 function buildPendingDecision(decision) {
+  const date = String(decision.date ?? "");
+  const type = String(decision.type ?? "decision");
   return {
     status: "open",
     text: decision.body ?? "",
     ...decision,
+    date,
+    type,
+    expiresOn: decision.expiresOn ?? defaultDecisionExpiry(date, type),
+    defaultAction: decision.defaultAction ?? defaultDecisionAction(type),
     options: Array.isArray(decision.options) ? decision.options : []
   };
 }
@@ -7682,8 +8783,145 @@ function selectMediaOutlet(dateKey, salt) {
   return PRESEASON_MEDIA_OUTLETS[hashParts(dateKey, salt, "daily-media") % PRESEASON_MEDIA_OUTLETS.length];
 }
 
+function processMailboxMorning(state, dateKey = state?.currentDate) {
+  normalizeMailboxState(state);
+  clearExpiredGameRestrictions(state, dateKey);
+  deliverDeferredMail(state, dateKey);
+  expireOpenMailDecisions(state, dateKey);
+  sendDecisionFollowUps(state, dateKey);
+  refreshMailboxDerivedState(state);
+}
+
+function clearExpiredGameRestrictions(state, dateKey = state?.currentDate) {
+  const today = String(dateKey ?? "");
+  for (const { player } of allPlayerEntries(state)) {
+    if (!player.gameRestriction?.date) continue;
+    if (String(player.gameRestriction.date) < today) {
+      player.gameRestriction = null;
+    }
+  }
+}
+
+function getContinueStopReason(state) {
+  normalizeMailboxState(state);
+  state.settings = normalizeSettings(state.settings);
+  const blocking = getBlockingMailDecision(state);
+  if (blocking) {
+    return {
+      reason: "blocking-decision",
+      mailId: blocking.id,
+      headline: blocking.headline,
+      message: `${blocking.headline ?? "긴급 결재"} 처리 대기로 멈췄습니다.`
+    };
+  }
+
+  if (state.settings.continueStops.myGameDay && isUserGameDayMorning(state)) {
+    const preview = getNextGamePreview(state, state.selectedTeamId);
+    const matchup = `${preview.awayShortName ?? "원정"} @ ${preview.homeShortName ?? "홈"}`;
+    return {
+      reason: "my-game-day",
+      gameDate: preview.date,
+      headline: "오늘 경기",
+      message: `오늘 경기(${matchup}) 아침에 멈췄습니다.`
+    };
+  }
+
+  const openDecision = getOpenMailDecisions(state)[0];
+  if (state.settings.continueStops.openDecision && openDecision) {
+    return {
+      reason: "open-decision",
+      mailId: openDecision.id,
+      headline: openDecision.headline,
+      message: `${openDecision.headline ?? "결재 요청"} 결재 대기로 멈췄습니다.`
+    };
+  }
+
+  const important = (state.mailbox.items ?? []).find((mail) => !mail.read && isImportantMail(mail));
+  if (state.settings.continueStops.importantMail && important) {
+    return {
+      reason: "important-mail",
+      mailId: important.id,
+      headline: important.headline,
+      message: `${important.headline ?? "중요 메일"} 도착으로 멈췄습니다.`
+    };
+  }
+
+  return null;
+}
+
+function isUserGameDayMorning(state) {
+  if (state?.phase !== "regular") return false;
+  const preview = getNextGamePreview(state, state.selectedTeamId);
+  return Boolean(preview?.ok && String(preview.date ?? "") === String(state.currentDate ?? "") && safeNumber(preview.skippedDays) === 0);
+}
+
+function expireOpenMailDecisions(state, dateKey = state?.currentDate) {
+  const today = String(dateKey ?? state.currentDate ?? "");
+  const expired = getOpenMailDecisions(state).filter((mail) => {
+    const expiresOn = String(mail.decision?.expiresOn ?? "");
+    return expiresOn && expiresOn < today;
+  });
+  for (const mail of expired) {
+    resolveMailDecision(state, mail.id, mail.decision.defaultAction || defaultDecisionAction(mail.decision.type), { expired: true, date: today });
+  }
+  return expired;
+}
+
+function queueMailDecision(state, decision) {
+  normalizeMailboxState(state);
+  const baseDecision = buildPendingDecision(decision);
+  const dateKey = String(baseDecision.date ?? state.currentDate ?? "");
+  if (state.mailbox.items.some((mail) => String(mail.id) === String(baseDecision.id))) {
+    refreshMailboxDerivedState(state);
+    return null;
+  }
+  if ((state.mailDecisions ?? []).some((entry) => String(entry.id) === String(baseDecision.id))) {
+    refreshMailboxDerivedState(state);
+    return null;
+  }
+  const sameDayOpen = state.mailbox.items.filter((mail) =>
+    isOpenDecisionMail(mail) && String(mail.date ?? "") === dateKey
+  ).length;
+  const item = normalizeMailItem({
+    id: baseDecision.id,
+    date: dateKey,
+    from: { role: baseDecision.source ?? decisionSourceRole(baseDecision), icon: baseDecision.type },
+    category: "decision",
+    type: baseDecision.type,
+    headline: baseDecision.headline ?? "결재 요청",
+    body: baseDecision.body ?? baseDecision.text ?? "",
+    read: false,
+    important: Boolean(baseDecision.blocking),
+    decision: baseDecision,
+    links: baseDecision.links ?? []
+  }, state);
+  if (sameDayOpen >= MAILBOX_DECISION_DAILY_LIMIT) {
+    const deliverOn = addDaysKey(dateKey, 1);
+    item.date = deliverOn;
+    item.decision.date = deliverOn;
+    item.decision.expiresOn = defaultDecisionExpiry(deliverOn, item.decision.type);
+    deferMailboxItem(state, item, deliverOn);
+    return item;
+  }
+  insertMailboxItem(state, item, { log: false });
+  return item;
+}
+
+function decisionSourceRole(decision) {
+  if (decision.type === "medical-roster") return "트레이닝 파트";
+  if (decision.type === "foreign-lineup") return "코칭스태프";
+  if (decision.type === "foreign-adaptation") return "통역 파트";
+  if (decision.type === "trade-offer") return decision.sourceTeamShortName ?? decision.sourceTeamName ?? "트레이드";
+  if (decision.type === "waiver-claim") return "KBO 사무국";
+  if (decision.type === "bullpen-rest") return "수석코치";
+  if (decision.type === "futures-callup") return "2군 감독";
+  if (decision.type === "opening-roster") return "운영팀";
+  if (decision.type === "opening-rotation") return "코칭스태프";
+  return "개인비서";
+}
+
 function hasOpenMailDecision(state) {
-  return state.pendingMailDecision?.status === "open";
+  return getOpenMailDecisions(state).length > 0;
 }
 
 function addDaysKey(dateKey, days) {
@@ -7768,9 +9006,158 @@ function addPreseasonActivityLog(state, dateKey, weather) {
   const context = buildPreseasonContext(state, team, dateKey, weather);
   recordPreseasonNarratives(state, context);
   context.narrative = buildNarrativeContext(state, team, dateKey);
-  addLog(state, buildPreseasonMediaLog(context));
-  addLog(state, buildPreseasonMailboxLog(context));
-  addLog(state, buildPreseasonAssistantLog(context));
+  deliverMail(state, buildPreseasonMediaLog(context));
+  deliverMail(state, buildPreseasonMailboxLog(context));
+  deliverMail(state, buildPreseasonAssistantLog(context));
+  addPreseasonCampPack(state, context);
+}
+
+function addPreseasonCampPack(state, context) {
+  const dateKey = context.dateKey;
+  const weekday = parseDate(dateKey).getUTCDay();
+  state.campStats = state.campStats && typeof state.campStats === "object" ? state.campStats : { games: [], notes: [] };
+
+  if (dateKey >= `${dateKey.slice(0, 4)}-03-08` && dateKey <= `${dateKey.slice(0, 4)}-03-24` && [2, 4, 6].includes(weekday)) {
+    addPreseasonPracticeGameMail(state, context);
+  }
+
+  if (weekday === 1) {
+    addPreseasonCompetitionMail(state, context);
+    deliverUniqueMail(state, {
+      id: `camp-weekly-${dateKey}-${context.team.id}`,
+      date: dateKey,
+      from: { role: "수석코치", icon: "camp" },
+      category: "club",
+      type: "preseason",
+      headline: "캠프 위클리 리포트",
+      body: `부상자 ${context.injuredCount}명, 컨디션 상승 후보 ${context.topHitter?.name ?? "타자"}·${context.topPitcher?.name ?? "투수"}·${context.prospect?.name ?? "유망주"}입니다. 개막까지 ${context.daysToOpening}일 남았습니다.`,
+      read: false
+    });
+  }
+
+  if (context.daysToOpening === 7) {
+    addOpeningRosterDecisionMail(state, context);
+  }
+  if (context.daysToOpening === 3) {
+    addOpeningRotationDecisionMail(state, context);
+  }
+}
+
+function addPreseasonPracticeGameMail(state, context) {
+  const team = context.team;
+  const runsFor = deterministicRange(context.dateKey, team.id, "camp-rf", 1, 9);
+  const runsAgainst = deterministicRange(context.dateKey, team.id, "camp-ra", 0, 8);
+  const standout = deterministicRange(context.dateKey, team.id, "camp-standout", 0, 1) === 0 ? context.topHitter : context.topPitcher;
+  if (standout) {
+    standout.form = clamp(safeNumber(standout.form, 50) + 1, 20, 90);
+    standout.sharpness = clamp(safeNumber(standout.sharpness, standout.form) + 3, 20, 98);
+  }
+  const game = {
+    id: `camp-game-${context.dateKey}-${team.id}`,
+    date: context.dateKey,
+    teamId: team.id,
+    runsFor,
+    runsAgainst,
+    standoutPlayerId: standout?.id ?? ""
+  };
+  if (!(state.campStats.games ?? []).some((entry) => entry.id === game.id)) {
+    state.campStats.games = [game, ...(state.campStats.games ?? [])].slice(0, 40);
+  }
+  deliverUniqueMail(state, {
+    id: game.id,
+    date: context.dateKey,
+    from: { role: "수석코치", icon: "camp" },
+    category: "club",
+    type: "preseason",
+    headline: `연습경기 결과: ${context.shortName} ${runsFor}-${runsAgainst} 캠프 상대`,
+    body: `${standout?.name ?? "주요 선수"}가 눈에 띄었습니다. 이 경기는 공식 기록에는 반영하지 않고 캠프 컨디션과 sharpness에만 반영했습니다.`,
+    read: false,
+    links: standout?.id ? [{ label: "선수 상세", target: `player:${standout.id}` }] : []
+  });
+}
+
+function addPreseasonCompetitionMail(state, context) {
+  const candidates = [...(context.team.roster ?? [])]
+    .filter((player) => safeNumber(player.injuredDays) === 0)
+    .sort((a, b) => Math.abs(safeNumber(a.ovr) - safeNumber(a.pot, a.ovr)) - Math.abs(safeNumber(b.ovr) - safeNumber(b.pot, b.ovr)))
+    .slice(0, 3);
+  deliverUniqueMail(state, {
+    id: `camp-competition-${context.dateKey}-${context.team.id}`,
+    date: context.dateKey,
+    from: { role: "코칭스태프", icon: "camp" },
+    category: "club",
+    type: "preseason",
+    headline: "포지션 경쟁 현황",
+    body: candidates.length
+      ? `${candidates.map((player) => `${player.name}(${player.position})`).join(", ")}가 개막 엔트리 경쟁권입니다. 남은 캠프에서 수비 포지션과 대타 활용도를 집중 확인합니다.`
+      : "포지션 경쟁 표본이 부족합니다. 개막 엔트리 회의 전 추가 점검이 필요합니다.",
+    read: false
+  });
+}
+
+function addOpeningRosterDecisionMail(state, context) {
+  const candidates = [...(context.team.roster ?? [])]
+    .filter((player) => player.status !== "active" && safeNumber(player.injuredDays) === 0)
+    .sort((a, b) => safeNumber(b.ovr) + safeNumber(b.pot, b.ovr) * 0.25 - (safeNumber(a.ovr) + safeNumber(a.pot, a.ovr) * 0.25))
+    .slice(0, 2);
+  if (candidates.length < 2) return;
+  deliverUniqueMail(state, {
+    id: `opening-roster-brief-${context.dateKey}-${context.team.id}`,
+    date: context.dateKey,
+    from: { role: "운영팀", icon: "roster" },
+    category: "club",
+    type: "preseason",
+    headline: "개막 엔트리 마지막 한 자리",
+    body: `운영팀은 베테랑 안정안 ${candidates[0].name}, 상승세 후보 ${candidates[1].name} 두 안을 올렸습니다.`,
+    read: false
+  });
+  queueMailDecision(state, {
+    id: `opening-roster-${context.dateKey}-${context.team.id}`,
+    date: context.dateKey,
+    type: "opening-roster",
+    blocking: false,
+    severity: "notice",
+    teamId: context.team.id,
+    candidateAId: candidates[0].id,
+    candidateBId: candidates[1].id,
+    headline: "개막 엔트리 마지막 한 자리 결정",
+    body: `${candidates[0].name}은 안정감, ${candidates[1].name}은 상승세가 장점입니다. 개막 엔트리 마지막 한 자리를 선택하십시오.`,
+    options: [
+      { action: "choose-a", label: candidates[0].name, note: "베테랑/안정안" },
+      { action: "choose-b", label: candidates[1].name, note: "유망주/상승세" }
+    ]
+  });
+}
+
+function addOpeningRotationDecisionMail(state, context) {
+  const snapshot = buildPitchingSnapshot(context.team);
+  const rotation = (snapshot.rotation ?? []).map((entry) => entry.name).slice(0, 5).join(" · ");
+  deliverUniqueMail(state, {
+    id: `opening-rotation-brief-${context.dateKey}-${context.team.id}`,
+    date: context.dateKey,
+    from: { role: "코칭스태프", icon: "pitching" },
+    category: "club",
+    type: "preseason",
+    headline: "개막 로테이션 최종안",
+    body: `현재 로테이션 안은 ${rotation || "자동 추천 대기"}입니다. 개막 전 마지막 조정 여부를 확인해야 합니다.`,
+    read: false,
+    links: [{ label: "라인업 탭", target: "tab:lineup" }]
+  });
+  queueMailDecision(state, {
+    id: `opening-rotation-${context.dateKey}-${context.team.id}`,
+    date: context.dateKey,
+    type: "opening-rotation",
+    blocking: false,
+    severity: "notice",
+    teamId: context.team.id,
+    headline: "개막 로테이션 확정",
+    body: `현재 투수 운용표를 개막 로테이션으로 확정할지, 라인업 탭에서 조정할지 선택하십시오.`,
+    options: [
+      { action: "confirm", label: "그대로 확정", note: "현재 투수 운용 유지" },
+      { action: "review-lineup", label: "라인업에서 조정", note: "투수 운용 탭 확인" }
+    ],
+    links: [{ label: "라인업 탭", target: "tab:lineup" }]
+  });
 }
 
 function buildPreseasonContext(state, team, dateKey, weather) {

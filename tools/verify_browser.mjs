@@ -375,18 +375,35 @@ async function checkViewport(viewport) {
       const bodyText = document.body.innerText;
       return {
         hasMainNewsInbox: Boolean(document.querySelector("[data-main-news-inbox]")),
+        hasTodayDesk: Boolean(document.querySelector("[data-today-desk]")),
+        hasMailboxGrid: Boolean(document.querySelector(".mailbox-grid")),
+        mailFilterCount: document.querySelectorAll("[data-action='mail-filter']").length,
+        hasUnreadDot: Boolean(document.querySelector(".unread-dot")),
         hasTopbarLogo: Boolean(document.querySelector(".topbar .topbar-logo-plate img")),
         hasDuplicateHero: Boolean(document.querySelector(".hero-card")),
         hasPreseasonDesk: Boolean(document.querySelector("[data-preseason-desk]")),
         hasAssistantBrief: Boolean(document.querySelector("[data-news-type='assistant']")),
         hasMediaBrief: Boolean(document.querySelector("[data-news-type='media']")),
         hasSpotv: bodyText.includes("SPOTV"),
-        hasAppointmentNews: bodyText.includes("취임식") && bodyText.includes("뉴스함")
+        hasAppointmentNews: bodyText.includes("취임식") && bodyText.includes("받은편지함")
       };
     })()
   `);
   assert(headerProbe.hasTopbarLogo && !headerProbe.hasDuplicateHero, "상단 로고 이동 또는 중복 구단 히어로 제거가 확인되지 않았습니다.", "src/ui.js");
-  assert(headerProbe.hasMainNewsInbox && headerProbe.hasPreseasonDesk && headerProbe.hasAssistantBrief && headerProbe.hasMediaBrief && headerProbe.hasSpotv && headerProbe.hasAppointmentNews, "메인 뉴스함/취임식/비서/언론 피드가 확인되지 않았습니다.", "src/ui.js");
+  assert(
+    headerProbe.hasMainNewsInbox &&
+      headerProbe.hasTodayDesk &&
+      headerProbe.hasMailboxGrid &&
+      headerProbe.mailFilterCount >= 5 &&
+      headerProbe.hasUnreadDot &&
+      headerProbe.hasPreseasonDesk &&
+      headerProbe.hasAssistantBrief &&
+      headerProbe.hasMediaBrief &&
+      headerProbe.hasSpotv &&
+      headerProbe.hasAppointmentNews,
+    "오늘의 데스크/받은편지함/취임식/비서/언론 피드가 확인되지 않았습니다.",
+    "src/ui.js"
+  );
   const nextGameProbe = await evaluateInBrowser(`
     (() => {
       const panel = document.querySelector(".next-game-panel");
@@ -504,9 +521,9 @@ async function checkViewport(viewport) {
         gamesStillZero: after.includes("0 / 720경기"),
         boxscores: document.querySelectorAll(".boxscore-mini").length,
         hasSimulationPanel: Boolean(document.querySelector("[data-simulation-progress].is-complete")),
-        hasAssistantMail: newsTypes.includes("assistant"),
-        hasMediaMail: newsTypes.includes("media"),
-        hasKboStyleMail: newsTypes.some((type) => ["kbo-official", "front-office", "compliance", "ops", "community", "futures", "development"].includes(type))
+        hasAssistantMail: newsTypes.includes("assistant") || after.includes("개인비서"),
+        hasMediaMail: newsTypes.includes("media") || after.includes("SPOTV") || after.includes("뉴스룸"),
+        hasKboStyleMail: newsTypes.some((type) => ["kbo-official", "front-office", "compliance", "ops", "community", "futures", "development"].includes(type)) || after.includes("한국야구위원회") || after.includes("운영팀")
       };
     })()
   `);

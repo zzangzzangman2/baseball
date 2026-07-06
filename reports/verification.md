@@ -1,10 +1,10 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-06T05:59:28.237Z
+- 실행 시각: 2026-07-06T06:37:03.500Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Program Files\nodejs\node.exe (v24.18.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
-- 종합 결과: 통과 (32/32 통과)
+- 종합 결과: 통과 (33/33 통과)
 
 ## 체크 결과
 
@@ -24,15 +24,16 @@
 | 가짜 이름 생성 잔재 없음 | PASS | 현재 src ESM 앱과 생성된 선수명에서 placeholder/name-generator 잔재 미검출 | - |
 | 개막 라인업 active 로스터 검증 | PASS | LG 타선 9명/투수 12명, 두산 타선 9명/투수 12명, KIA 타선 9명/투수 12명, 삼성 타선 9명/투수 12명, 롯데 타선 9명/투수 12명, 한화 타선 9명/투수 12명, SSG 타선 9명/투수 12명, KT 타선 9명/투수 12명, NC 타선 9명/투수 12명, 키움 타선 9명/투수 12명 모두 active 로스터, 수동 라인업 우선 적용 | - |
 | simulateDay 실행 및 하루 5경기 | PASS | 2026-03-29로 진행, 누적 5경기, 최근 경기 5건 | - |
-| 다음 경기 보기/시뮬레이션 플로우 | PASS | 프리시즌 차단 후 2026-03-28 KT@LG, Gamecast PA 85개 포커스 | - |
-| 선수 누적 기록 모델 | PASS | 타자 90명/투수 38명 기록, 득점 42, PA 418 | - |
-| 경기 박스스코어/eventLog | PASS | game.final 5개, 박스스코어 5경기, PA 이벤트 418개, 실책 1, 병살 1 | - |
-| 로테이션/불펜 운용 snapshot | PASS | 7일 선발 38명, 등판 투수 92명, W-L 28-28, SV 11, HLD 11 | - |
-| 수동 투수 운용 우선 적용 | PASS | 수동 nextStarter 리오스, CL 함덕주, 부상 슬롯 자동 보정 확인 | - |
-| 운영 깊이 v0: 개인성/전략/스카우트/서사 | PASS | 개인성 55명, 전략 강공, 스카우트 리포트 5건, 서사 21개 | - |
+| 다음 경기 보기/시뮬레이션 플로우 | PASS | 프리시즌 차단 후 2026-03-28 KT@LG, Gamecast PA 80개 포커스 | - |
+| 선수 누적 기록 모델 | PASS | 타자 90명/투수 38명 기록, 득점 41, PA 413 | - |
+| 경기 박스스코어/eventLog | PASS | game.final 5개, 박스스코어 5경기, PA 이벤트 413개, 실책 1, 병살 1 | - |
+| 로테이션/불펜 운용 snapshot | PASS | 7일 선발 38명, 등판 투수 90명, W-L 28-28, SV 11, HLD 11 | - |
+| 수동 투수 운용 우선 적용 | PASS | 수동 nextStarter 리오스, CL 김윤식, 부상 슬롯 자동 보정 확인 | - |
+| 운영 깊이 v0: 개인성/전략/스카우트/서사 | PASS | 개인성 55명, 전략 강공, 스카우트 리포트 5건, 서사 24개 | - |
+| FM식 daily loop: mailbox/continue/content | PASS | mailbox 4통/open 1건, 만료 1건, camp 101통/7경기 | - |
 | simulateDays 실행 | PASS | 7일 진행 후 day=35, gamesPlayed=30 | - |
 | simulateRegularSeason 종료 상태 | PASS | 정규시즌 종료: 720/720경기, day=196, phase=complete | - |
-| 포스트시즌/시상식 자동 생성 | PASS | 한화 이글스 우승, PS 18경기, MVP 이건욱, GG 10명 | - |
+| 포스트시즌/시상식 자동 생성 | PASS | 삼성 라이온즈 우승, PS 17경기, MVP 올러, GG 10명 | - |
 | 신인 드래프트 v1 | PASS | 2027 드래프트 150명 풀, 110픽, 팀당 11명, 보류권 110명, 코드형 신인 56명 roster 반영 | - |
 | 2차 드래프트 v1 | PASS | 2027 2차 드래프트 보호 35명x10팀, 비보호 128명, 36/36픽, 36명 실제 이동 | - |
 | 트레이드 v2 command | PASS | LG 트윈스 이용현 영입, KT 위즈 서영준 영입, 자산 player+cash+conditional+ptbnl, 자산타입 player/cash/draftPick/conditional/ptbnl, 조건부/현금/PTBNL ledger | - |

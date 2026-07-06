@@ -275,6 +275,7 @@ async function main() {
   await runCheck("로테이션/불펜 운용 snapshot", checkPitchingSnapshotUsage);
   await runCheck("수동 투수 운용 우선 적용", checkManualPitchingPlan);
   await runCheck("운영 깊이 v0: 개인성/전략/스카우트/서사", checkManagementDepthV0);
+  await runCheck("FM식 daily loop: mailbox/continue/content", checkDailyLoopV1);
   await runCheck("simulateDays 실행", checkSimulateDays);
   await runCheck("simulateRegularSeason 종료 상태", checkSimulateRegularSeason);
   await runCheck("포스트시즌/시상식 자동 생성", checkPostseasonAwards);
@@ -332,8 +333,15 @@ async function checkModuleImports() {
   assertExport(dataModule, "createInitialState", MODULE_PATHS.data);
   assertExport(engineModule, "simulateDay", MODULE_PATHS.engine);
   assertExport(engineModule, "simulateDays", MODULE_PATHS.engine);
+  assertExport(engineModule, "advanceUntilStop", MODULE_PATHS.engine);
   assertExport(engineModule, "getNextGamePreview", MODULE_PATHS.engine);
   assertExport(engineModule, "simulateNextUserGame", MODULE_PATHS.engine);
+  assertExport(engineModule, "deliverMail", MODULE_PATHS.engine);
+  assertExport(engineModule, "markMailRead", MODULE_PATHS.engine);
+  assertExport(engineModule, "getMailboxSummary", MODULE_PATHS.engine);
+  assertExport(engineModule, "getMailboxItems", MODULE_PATHS.engine);
+  assertExport(engineModule, "getOpenMailDecisions", MODULE_PATHS.engine);
+  assertExport(engineModule, "resolveMailDecision", MODULE_PATHS.engine);
   assertExport(engineModule, "simulateRegularSeason", MODULE_PATHS.engine);
   assertExport(engineModule, "initializePostseason", MODULE_PATHS.engine);
   assertExport(engineModule, "simulatePostseason", MODULE_PATHS.engine);
@@ -1269,6 +1277,121 @@ function checkManagementDepthV0() {
   assert(arcs.some((arc) => String(arc.type).includes("scouting-report")), "스카우트 리포트 장기 서사가 기록되지 않았습니다.", MODULE_PATHS.engine);
 
   return `개인성 ${personalities.length}명, 전략 ${played.game.managerPlans[side].label}, 스카우트 리포트 ${scout.reports.length}건, 서사 ${arcs.length}개`;
+}
+
+function checkDailyLoopV1() {
+  ensureImportsReady();
+  assert(saveModule, "save.js import가 선행되지 않았습니다.", MODULE_PATHS.save);
+  const state = dataModule.createInitialState();
+  state.selectedTeamId = "lg";
+  const team = state.teams.find((entry) => entry.id === state.selectedTeamId) ?? state.teams[0];
+  const player = team.roster[0];
+
+  const initialSummary = engineModule.getMailboxSummary(state);
+  assert(initialSummary.total >= 1 && initialSummary.unread >= 1, "초기 mailbox unread 메일이 없습니다.", MODULE_PATHS.engine);
+
+  engineModule.deliverMail(state, {
+    id: "verify-medical-decision",
+    date: state.currentDate,
+    from: { role: "트레이닝 파트", icon: "medical" },
+    category: "decision",
+    type: "medical-roster",
+    headline: "검증용 부상 결재",
+    body: "blocking 결재 큐 검증",
+    decision: {
+      id: "verify-medical-decision",
+      date: state.currentDate,
+      type: "medical-roster",
+      status: "open",
+      blocking: true,
+      severity: "danger",
+      teamId: team.id,
+      playerId: player.id,
+      playerName: player.name,
+      options: [{ action: "monitor", label: "관찰", note: "검증" }]
+    }
+  });
+  engineModule.deliverMail(state, {
+    id: "verify-interview-decision",
+    date: state.currentDate,
+    from: { role: "미디어 담당", icon: "media" },
+    category: "decision",
+    type: "interview-request",
+    headline: "검증용 인터뷰 결재",
+    body: "비차단 결재 큐 검증",
+    decision: {
+      id: "verify-interview-decision",
+      date: state.currentDate,
+      type: "interview-request",
+      status: "open",
+      blocking: false,
+      severity: "notice",
+      teamId: team.id,
+      options: [{ action: "challenge", label: "도전", note: "검증" }]
+    }
+  });
+
+  let open = engineModule.getOpenMailDecisions(state);
+  assert(open.length >= 2, `결재 큐가 다건을 보존하지 못했습니다: ${open.length}`, MODULE_PATHS.engine);
+  assert(engineModule.getMailboxSummary(state).blockingDecisions >= 1, "blocking 결재 selector가 동작하지 않습니다.", MODULE_PATHS.engine);
+
+  const beforeUnread = engineModule.getMailboxSummary(state).unread;
+  const readResult = engineModule.markMailRead(state, "verify-medical-decision");
+  assert(readResult.ok && engineModule.getMailboxSummary(state).unread < beforeUnread, "markMailRead 후 unread가 감소하지 않았습니다.", MODULE_PATHS.engine);
+
+  const resolved = engineModule.resolveMailDecision(state, "verify-interview-decision", "challenge");
+  assert(resolved.ok, `특정 mailId 결재 처리 실패: ${resolved.message}`, MODULE_PATHS.engine);
+  open = engineModule.getOpenMailDecisions(state);
+  assert(open.some((mail) => mail.id === "verify-medical-decision") && !open.some((mail) => mail.id === "verify-interview-decision"), "특정 결재만 처리되지 않았습니다.", MODULE_PATHS.engine);
+
+  const imported = saveModule.importGameState(saveModule.exportGameState(state));
+  assert(engineModule.getMailboxSummary(imported).total === engineModule.getMailboxSummary(state).total, "저장 roundtrip 후 mailbox 총량이 달라졌습니다.", MODULE_PATHS.save);
+  assert(
+    engineModule.getOpenMailDecisions(imported).some((mail) => mail.id === "verify-medical-decision"),
+    "저장 roundtrip 후 open 결재가 보존되지 않았습니다.",
+    MODULE_PATHS.save
+  );
+
+  const expireState = dataModule.createInitialState();
+  engineModule.deliverMail(expireState, {
+    id: "verify-waiver-expire",
+    date: expireState.currentDate,
+    from: { role: "KBO 사무국", icon: "league" },
+    category: "decision",
+    type: "waiver-claim",
+    headline: "검증용 웨이버",
+    body: "만료 자동 처리 검증",
+    decision: {
+      id: "verify-waiver-expire",
+      date: expireState.currentDate,
+      type: "waiver-claim",
+      status: "open",
+      blocking: false,
+      expiresOn: expireState.currentDate,
+      defaultAction: "pass",
+      options: [{ action: "pass", label: "패스", note: "검증" }]
+    }
+  });
+  engineModule.simulateDay(expireState);
+  engineModule.simulateDay(expireState);
+  assert((expireState.mailDecisions ?? []).some((entry) => entry.id === "verify-waiver-expire" && entry.status === "expired"), "만료 결재가 자동 처리되지 않았습니다.", MODULE_PATHS.engine);
+
+  const continueState = dataModule.createInitialState();
+  advanceToRegularSeason(continueState);
+  const stopped = engineModule.advanceUntilStop(continueState, { maxDays: 14 });
+  assert(stopped.stopped && stopped.reason === "my-game-day" && stopped.days === 0, `Continue가 내 경기일 아침에서 멈추지 않았습니다: ${JSON.stringify(stopped)}`, MODULE_PATHS.engine);
+  continueState.settings = { continueStops: { myGameDay: false, openDecision: false, importantMail: false } };
+  const maxed = engineModule.advanceUntilStop(continueState, { maxDays: 3 });
+  assert(!maxed.stopped && maxed.days === 3, `멈춤 OFF 상태에서 maxDays를 완주하지 않았습니다: ${JSON.stringify(maxed)}`, MODULE_PATHS.engine);
+
+  const campState = dataModule.createInitialState();
+  for (let index = 0; index < 27; index += 1) engineModule.simulateDay(campState);
+  const campMailTypes = new Set([...(campState.mailbox?.items ?? []), ...(campState.mailDecisions ?? [])].map((item) => item.type));
+  assert((campState.mailbox?.items ?? []).length >= 25, `프리시즌 메일이 25통 미만입니다: ${campState.mailbox?.items?.length ?? 0}`, MODULE_PATHS.engine);
+  assert((campState.campStats?.games ?? []).length >= 6, `연습경기 campStats가 부족합니다: ${campState.campStats?.games?.length ?? 0}`, MODULE_PATHS.engine);
+  assert(campMailTypes.has("opening-roster") && campMailTypes.has("opening-rotation"), "프리시즌 개막 엔트리/로테이션 결재가 발생하지 않았습니다.", MODULE_PATHS.engine);
+
+  return `mailbox ${engineModule.getMailboxSummary(state).total}통/open ${engineModule.getOpenMailDecisions(state).length}건, 만료 ${expireState.mailDecisions.length}건, camp ${campState.mailbox.items.length}통/${campState.campStats.games.length}경기`;
 }
 
 function checkSimulateDays() {
