@@ -145,7 +145,10 @@ const GAMECAST_WATCH_PA_MS = 2600;
 const GAMECAST_WATCH_GAP_MS = 340;
 const GAMECAST_PA_MS = 850;
 const GAMECAST_PA_GAP_MS = 120;
-const GAMECAST_SPEED_OPTIONS = [1, 2, 3, 4];
+const GAMECAST_SPEED_OPTIONS = [0.5, 1, 1.5, 2, 4];
+const GAMECAST_RESUME_COUNTDOWN_MS = 400;
+const GAMECAST_HOLD_LEVERAGE_THRESHOLD = 0.55;
+const GAMECAST_SCORE_SLOW_RATE = 0.35;
 const GAMECAST_DEFAULT_ENGINE = "phaser";
 const SIMULATION_STEP_DELAY_MS = 95;
 const SIMULATION_STEPS = [
@@ -162,7 +165,11 @@ let gamecastPlaybackStore = {
   sequenceId: "",
   elapsedMs: 0,
   playbackRate: 1,
-  done: false
+  done: false,
+  paused: false,
+  stepMode: false,
+  hold: null,
+  lastHoldKey: ""
 };
 let gamecastSoundEnabled = true;
 let gamecastAudioUnlocked = false;
@@ -4681,6 +4688,12 @@ function renderGamecastPixelStage(instanceId, engine = GAMECAST_DEFAULT_ENGINE, 
       </div>
       <span class="gamecast-player-label" data-gamecast-player-label></span>
       <span class="gamecast-action-burst" data-gamecast-action-burst></span>
+      <div class="gamecast-pause-overlay" data-gamecast-pause-overlay hidden>
+        <span data-gamecast-pause-kicker>HOLD</span>
+        <strong data-gamecast-pause-title>일시정지</strong>
+        <small data-gamecast-pause-detail>Space 또는 화면 클릭으로 이어갑니다.</small>
+        <button class="gamecast-pause-next" data-gamecast-pause-action type="button">계속 ▶</button>
+      </div>
       ${showFps ? `<div class="gamecast-fps-overlay" data-gamecast-fps>FPS --<small>1% --ms</small></div>` : ""}
     </div>
   `;
@@ -4690,12 +4703,16 @@ function renderGamecastControls(sequence, variant = "inline") {
   if (sequence.mode !== "watch") return "";
   const activeSpeed = sanitizeGamecastSpeed(sequence.playbackRate);
   const soundOn = sequence.soundEnabled !== false;
+  const paused = Boolean(sequence.paused || sequence.hold);
+  const stepMode = Boolean(sequence.stepMode);
   return `
     <div class="gamecast-controls ${variant === "broadcast" ? "is-broadcast" : ""}" aria-label="중계 재생 속도">
+      <button class="gamecast-speed-button gamecast-pause-button ${paused ? "is-active" : ""}" data-gamecast-pause type="button" aria-pressed="${paused ? "true" : "false"}">${paused ? "▶ 계속" : "⏸ 정지"}</button>
       ${GAMECAST_SPEED_OPTIONS.map((speed) => `
         <button class="gamecast-speed-button ${speed === activeSpeed ? "is-active" : ""}" data-gamecast-speed="${speed}" type="button" aria-pressed="${speed === activeSpeed ? "true" : "false"}">x${formatNumber(speed)}</button>
       `).join("")}
-      <button class="gamecast-speed-button gamecast-sound-button ${soundOn ? "is-active" : ""}" data-gamecast-sound type="button" aria-pressed="${soundOn ? "true" : "false"}">${soundOn ? "소리 켬" : "소리 끔"}</button>
+      <button class="gamecast-speed-button gamecast-step-button ${stepMode ? "is-active" : ""}" data-gamecast-step type="button" aria-pressed="${stepMode ? "true" : "false"}">타석 확인</button>
+      <button class="gamecast-speed-button gamecast-sound-button ${soundOn ? "is-active" : ""}" data-gamecast-sound type="button" aria-pressed="${soundOn ? "true" : "false"}">${soundOn ? "🔊 켜짐" : "🔇 꺼짐"}</button>
       <button class="gamecast-speed-button is-skip" data-gamecast-skip type="button">스킵</button>
     </div>
   `;
@@ -4722,6 +4739,17 @@ function renderGamecastEvent(event, state, index = 0) {
 
 function renderGamecastEmptyFeedItem() {
   return `<li data-gamecast-empty><span>경기 이벤트 대기</span><small>PA 기록 없음</small></li>`;
+}
+
+function createGamecastEmptyFeedItem() {
+  const item = document.createElement("li");
+  item.dataset.gamecastEmpty = "";
+  const label = document.createElement("span");
+  label.textContent = "경기 이벤트 대기";
+  const detail = document.createElement("small");
+  detail.textContent = "PA 기록 없음";
+  item.append(label, detail);
+  return item;
 }
 
 function createGamecastFeedItem(event, index = 0) {
@@ -4777,6 +4805,9 @@ function buildGamecastSequence(game, state) {
     mode,
     paMs: mode === "watch" ? GAMECAST_WATCH_PA_MS : GAMECAST_PA_MS,
     gapMs: mode === "watch" ? GAMECAST_WATCH_GAP_MS : GAMECAST_PA_GAP_MS,
+    defaultPlaybackRate: sanitizeGamecastSpeed(state.ui?.gamecastPlaybackRate ?? gamecastPlaybackStore.playbackRate),
+    stepMode: Boolean(state.ui?.gamecastStepMode),
+    holdsEnabled: state.settings?.gamecastHolds !== false && state.ui?.gamecastHolds !== false,
     soundEnabled: state.ui?.gamecastSound !== false && gamecastSoundEnabled,
     events: tail.map((event) => normalizeGamecastEvent(event, state))
   };
@@ -4790,7 +4821,11 @@ function hydrateGamecastSequence(sequence) {
     ...sequence,
     playbackRate: sanitizeGamecastSpeed(store.playbackRate),
     initialElapsedMs: elapsedMs,
-    done: Boolean(store.done) || (totalMs > 0 && elapsedMs >= totalMs)
+    done: Boolean(store.done) || (totalMs > 0 && elapsedMs >= totalMs),
+    paused: Boolean(store.paused) && !store.done,
+    stepMode: Boolean(store.stepMode),
+    hold: store.done ? null : normalizeGamecastHold(store.hold),
+    lastHoldKey: String(store.lastHoldKey ?? "")
   };
 }
 
@@ -4800,8 +4835,12 @@ function ensureGamecastPlaybackStore(sequence) {
     gamecastPlaybackStore = {
       sequenceId,
       elapsedMs: 0,
-      playbackRate: 1,
-      done: false
+      playbackRate: sanitizeGamecastSpeed(sequence?.defaultPlaybackRate ?? gamecastPlaybackStore.playbackRate ?? 1),
+      done: false,
+      paused: false,
+      stepMode: Boolean(sequence?.stepMode),
+      hold: null,
+      lastHoldKey: ""
     };
   }
   return gamecastPlaybackStore;
@@ -4816,7 +4855,35 @@ function persistGamecastPlayback(playbackState, patch = {}) {
   store.elapsedMs = elapsedMs;
   store.playbackRate = sanitizeGamecastSpeed(patch.playbackRate ?? playbackState.playbackRate ?? store.playbackRate);
   store.done = Boolean(patch.done ?? playbackState.done ?? (totalMs > 0 && elapsedMs >= totalMs));
-  if (store.done && totalMs > 0) store.elapsedMs = totalMs;
+  store.paused = Boolean(patch.paused ?? playbackState.paused ?? store.paused) && !store.done;
+  store.stepMode = Boolean(patch.stepMode ?? playbackState.stepMode ?? store.stepMode);
+  if (Object.prototype.hasOwnProperty.call(patch, "hold")) {
+    store.hold = normalizeGamecastHold(patch.hold);
+  } else if (Object.prototype.hasOwnProperty.call(playbackState, "hold")) {
+    store.hold = normalizeGamecastHold(playbackState.hold);
+  }
+  store.lastHoldKey = String(patch.lastHoldKey ?? playbackState.lastHoldKey ?? store.lastHoldKey ?? "");
+  if (store.done && totalMs > 0) {
+    store.elapsedMs = totalMs;
+    store.paused = false;
+    store.hold = null;
+  }
+}
+
+function normalizeGamecastHold(hold) {
+  if (!hold || typeof hold !== "object") return null;
+  const type = ["manual", "step", "inning", "leverage", "resume"].includes(hold.type) ? hold.type : "manual";
+  const eventIndex = Number.isFinite(Number(hold.eventIndex)) ? Math.max(0, Math.floor(Number(hold.eventIndex))) : -1;
+  const resumeElapsedMs = Number.isFinite(Number(hold.resumeElapsedMs)) ? Math.max(0, Number(hold.resumeElapsedMs)) : null;
+  return {
+    type,
+    key: String(hold.key ?? ""),
+    eventIndex,
+    resumeElapsedMs,
+    title: String(hold.title ?? ""),
+    detail: String(hold.detail ?? ""),
+    action: String(hold.action ?? "")
+  };
 }
 
 function gamecastPlaybackSequenceId(sequence) {
@@ -4860,8 +4927,11 @@ function getGamecastPlaybackView(sequence, fallbackEvents, state) {
   const currentIndex = done
     ? sequence.events.length - 1
     : Math.max(0, Math.min(sequence.events.length - 1, Math.floor(elapsedMs / Math.max(1, slotMs))));
+  const localMs = done ? slotMs : elapsedMs - currentIndex * slotMs;
+  const revealCurrent = done || localMs > Math.max(80, Number(sequence.paMs ?? GAMECAST_WATCH_PA_MS)) * 0.62;
+  const feedEndIndex = revealCurrent ? currentIndex : currentIndex - 1;
   return {
-    feedEvents: sequence.events.slice(0, currentIndex + 1),
+    feedEvents: feedEndIndex >= 0 ? sequence.events.slice(0, feedEndIndex + 1) : [],
     featured: sequence.events[currentIndex] ?? sequence.events[0] ?? null
   };
 }
@@ -5089,11 +5159,15 @@ function initGamecastPixelScreen(root, appState = null) {
       matchup: board.querySelector("[data-gamecast-matchup]"),
       playerLabel,
       actionBurst,
+      pauseOverlay: collectGamecastPauseOverlay(screen),
       fpsNode: screen.querySelector("[data-gamecast-fps]"),
       hud: collectGamecastHud(screen),
       feedList: instanceRoot.querySelector("[data-gamecast-feed]"),
       feedItems: [...instanceRoot.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")],
       speedControls: [...board.querySelectorAll("[data-gamecast-speed]")],
+      pauseControls: [...board.querySelectorAll("[data-gamecast-pause]")],
+      pauseActionControls: [...screen.querySelectorAll("[data-gamecast-pause-action]")],
+      stepControls: [...board.querySelectorAll("[data-gamecast-step]")],
       soundControls: [...board.querySelectorAll("[data-gamecast-sound]")],
       skipControls: [...board.querySelectorAll("[data-gamecast-skip]")]
     };
@@ -5119,6 +5193,18 @@ function initGamecastPixelScreen(root, appState = null) {
 
   cleanupGamecastPixelScreen = () => {
     for (const controller of controllers) controller.cleanup();
+  };
+}
+
+function collectGamecastPauseOverlay(screen) {
+  const root = screen?.querySelector?.("[data-gamecast-pause-overlay]");
+  if (!root) return null;
+  return {
+    root,
+    kicker: root.querySelector("[data-gamecast-pause-kicker]"),
+    title: root.querySelector("[data-gamecast-pause-title]"),
+    detail: root.querySelector("[data-gamecast-pause-detail]"),
+    action: root.querySelector("[data-gamecast-pause-action]")
   };
 }
 
@@ -5195,12 +5281,17 @@ function createGamecastPalette() {
   };
 }
 
-function createGamecastPhaserController({ screen, stage, canvas, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, fpsNode, hud, feedList, feedItems, speedControls = [], soundControls = [], skipControls = [] }) {
+function createGamecastPhaserController({ screen, stage, canvas, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [] }) {
   const palette = createGamecastPalette();
   const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const normalizedSequence = normalizeGamecastSequenceForPlayback(sequence);
   const state = {
     playbackRate: sanitizeGamecastSpeed(normalizedSequence.playbackRate),
+    paused: Boolean(normalizedSequence.paused || normalizedSequence.hold),
+    stepMode: Boolean(normalizedSequence.stepMode),
+    holdsEnabled: normalizedSequence.holdsEnabled !== false,
+    hold: normalizeGamecastHold(normalizedSequence.hold) ?? (normalizedSequence.paused ? { type: "manual", key: "manual" } : null),
+    lastHoldKey: String(normalizedSequence.lastHoldKey ?? ""),
     soundEnabled: normalizedSequence.soundEnabled !== false && gamecastSoundEnabled,
     soundMarks: new Set(),
     elapsedMs: Number(normalizedSequence.initialElapsedMs ?? 0),
@@ -5215,6 +5306,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     matchup,
     playerLabel,
     actionBurst,
+    pauseOverlay,
     fpsNode,
     fpsStats: createGamecastFpsStats(),
     hud,
@@ -5223,6 +5315,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     palette,
     prefersReducedMotion,
     shakeTimer: 0,
+    resumeTimer: 0,
     shakenEventId: ""
   };
   if (state.done) state.elapsedMs = gamecastTotalDuration(state.sequence);
@@ -5245,7 +5338,10 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
       return buildGamecastFrameState(state, forceFinal);
     },
     onFrame(frame) {
+      state.currentFrame = frame;
       syncGamecastDom(state, frame);
+      phaser.setSpeed(gamecastEffectivePlaybackRate(state, frame));
+      maybeHoldGamecastPlayback(state, frame, applyHold);
     },
     onImpact(frame) {
       if (!frame?.event || state.shakenEventId === frame.event.id || state.prefersReducedMotion) return;
@@ -5256,18 +5352,110 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
       state.done = true;
       state.elapsedMs = gamecastTotalDuration(state.sequence);
       persistGamecastPlayback(state, { done: true, elapsedMs: state.elapsedMs });
-      syncGamecastSpeedControls(state, speedControls, skipControls);
+      syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
     }
   });
 
   if (!phaser) return null;
 
+  const renderHoldFrame = () => {
+    const frame = buildGamecastFrameState(state, false);
+    syncGamecastDom(state, { ...frame, paused: true, hold: state.hold });
+    return frame;
+  };
+  const clearResumeTimer = () => {
+    if (!state.resumeTimer) return;
+    window.clearTimeout(state.resumeTimer);
+    state.resumeTimer = 0;
+  };
+  const setPaused = (paused, hold = null) => {
+    if (state.done) return;
+    clearResumeTimer();
+    state.paused = Boolean(paused);
+    state.hold = state.paused ? normalizeGamecastHold(hold) ?? { type: "manual", key: "manual" } : null;
+    persistGamecastPlayback(state, {
+      paused: state.paused,
+      hold: state.hold,
+      lastHoldKey: state.lastHoldKey
+    });
+    if (state.paused) {
+      phaser.pause();
+      renderHoldFrame();
+    } else if (state.visible && !state.hidden) {
+      phaser.setSpeed(gamecastEffectivePlaybackRate(state));
+      phaser.resume();
+    }
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+  };
+  const requestResume = () => {
+    if (!state.paused || state.done) return;
+    const hold = normalizeGamecastHold(state.hold);
+    if (hold?.resumeElapsedMs !== null && hold?.resumeElapsedMs !== undefined) {
+      state.elapsedMs = Math.min(gamecastTotalDuration(state.sequence), hold.resumeElapsedMs);
+      phaser.seek?.(state.elapsedMs);
+    }
+    state.hold = {
+      type: "resume",
+      key: hold?.key ?? "resume",
+      eventIndex: hold?.eventIndex ?? -1,
+      resumeElapsedMs: null,
+      title: "재개",
+      detail: "잠시 후 이어집니다.",
+      action: ""
+    };
+    persistGamecastPlayback(state, { paused: true, hold: state.hold, elapsedMs: state.elapsedMs });
+    renderHoldFrame();
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+    clearResumeTimer();
+    state.resumeTimer = window.setTimeout(() => {
+      state.resumeTimer = 0;
+      state.paused = false;
+      state.hold = null;
+      persistGamecastPlayback(state, { paused: false, hold: null, elapsedMs: state.elapsedMs });
+      syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+      if (state.visible && !state.hidden && !state.done) {
+        phaser.setSpeed(gamecastEffectivePlaybackRate(state));
+        phaser.resume();
+      }
+    }, GAMECAST_RESUME_COUNTDOWN_MS);
+  };
+  const applyHold = (hold) => {
+    const normalizedHold = normalizeGamecastHold(hold);
+    if (!normalizedHold || state.done) return false;
+    state.lastHoldKey = normalizedHold.key || state.lastHoldKey;
+    phaser.seek?.(state.elapsedMs);
+    setPaused(true, normalizedHold);
+    return true;
+  };
+  const togglePause = (allowUnlock = false) => {
+    if (state.done) return;
+    if (allowUnlock && state.soundEnabled) resumeGamecastAudio(true);
+    if (state.paused) requestResume();
+    else setPaused(true, { type: "manual", key: "manual", eventIndex: -1, title: "일시정지" });
+  };
+  const setStepMode = (enabled) => {
+    state.stepMode = Boolean(enabled);
+    if (state.appState) {
+      state.appState.ui = {
+        ...(state.appState.ui ?? {}),
+        gamecastStepMode: state.stepMode
+      };
+    }
+    persistGamecastPlayback(state, { stepMode: state.stepMode });
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+  };
   const setSpeed = (speed) => {
     if (state.done) return;
     state.playbackRate = sanitizeGamecastSpeed(speed);
+    if (state.appState) {
+      state.appState.ui = {
+        ...(state.appState.ui ?? {}),
+        gamecastPlaybackRate: state.playbackRate
+      };
+    }
     persistGamecastPlayback(state, { playbackRate: state.playbackRate });
-    phaser.setSpeed(state.playbackRate);
-    syncGamecastSpeedControls(state, speedControls, skipControls);
+    phaser.setSpeed(gamecastEffectivePlaybackRate(state));
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
   };
   const setSound = (enabled, allowUnlock = false) => {
     state.soundEnabled = Boolean(enabled);
@@ -5282,11 +5470,22 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     syncGamecastSoundControls(state, soundControls);
   };
   const finish = () => {
+    clearResumeTimer();
     state.done = true;
+    state.paused = false;
+    state.hold = null;
     state.elapsedMs = gamecastTotalDuration(state.sequence);
-    persistGamecastPlayback(state, { done: true, elapsedMs: state.elapsedMs });
+    persistGamecastPlayback(state, { done: true, paused: false, hold: null, elapsedMs: state.elapsedMs });
     phaser.finish();
-    syncGamecastSpeedControls(state, speedControls, skipControls);
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+  };
+  const onPauseClick = (event) => {
+    event.preventDefault();
+    togglePause(Boolean(event.isTrusted));
+  };
+  const onStepClick = (event) => {
+    event.preventDefault();
+    setStepMode(!state.stepMode);
   };
   const onSpeedClick = (event) => {
     event.preventDefault();
@@ -5300,41 +5499,68 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     event.preventDefault();
     setSound(!state.soundEnabled, Boolean(event.isTrusted));
   };
+  const onScreenClick = (event) => {
+    if (event.target?.closest?.("button, a, input, select, textarea")) return;
+    togglePause(Boolean(event.isTrusted));
+  };
+  const onKeyDown = (event) => {
+    if (event.code !== "Space" || event.repeat) return;
+    if (!screen.isConnected) return;
+    if (event.target?.closest?.("button, input, select, textarea, [contenteditable='true']")) return;
+    event.preventDefault();
+    togglePause(Boolean(event.isTrusted));
+  };
   const onVisibilityChange = () => {
     state.hidden = Boolean(document.hidden);
     if (state.hidden) phaser.pause();
-    else if (state.visible) phaser.resume();
+    else if (state.visible && !state.paused) phaser.resume();
   };
 
-  syncGamecastSpeedControls(state, speedControls, skipControls);
+  syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
   syncGamecastSoundControls(state, soundControls);
   for (const button of speedControls) button.addEventListener("click", onSpeedClick);
+  for (const button of pauseControls) button.addEventListener("click", onPauseClick);
+  for (const button of pauseActionControls) button.addEventListener("click", onPauseClick);
+  for (const button of stepControls) button.addEventListener("click", onStepClick);
   for (const button of soundControls) button.addEventListener("click", onSoundClick);
   for (const button of skipControls) button.addEventListener("click", onSkipClick);
+  screen.addEventListener("click", onScreenClick);
 
   const intersectionObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver((entries) => {
     state.visible = entries.some((entry) => entry.isIntersecting);
-    if (state.visible && !state.hidden) phaser.resume();
+    if (state.visible && !state.hidden && !state.paused) phaser.resume();
     else phaser.pause();
   }, { threshold: 0.05 }) : null;
   intersectionObserver?.observe(screen);
 
   if (typeof document !== "undefined") {
     document.addEventListener("visibilitychange", onVisibilityChange);
+    document.addEventListener("keydown", onKeyDown);
   }
 
   screen.classList.add("is-phaser-active");
+  if (state.paused) {
+    phaser.pause();
+    renderHoldFrame();
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+  }
 
   return {
     cleanup() {
       persistGamecastPlayback(state);
+      clearResumeTimer();
       phaser.cleanup();
       intersectionObserver?.disconnect();
       for (const button of speedControls) button.removeEventListener("click", onSpeedClick);
+      for (const button of pauseControls) button.removeEventListener("click", onPauseClick);
+      for (const button of pauseActionControls) button.removeEventListener("click", onPauseClick);
+      for (const button of stepControls) button.removeEventListener("click", onStepClick);
       for (const button of soundControls) button.removeEventListener("click", onSoundClick);
       for (const button of skipControls) button.removeEventListener("click", onSkipClick);
+      screen.removeEventListener("click", onScreenClick);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibilityChange);
+        document.removeEventListener("keydown", onKeyDown);
       }
       if (state.shakeTimer) window.clearTimeout(state.shakeTimer);
       screen.classList.remove("is-shaking", "is-phaser-active");
@@ -5345,7 +5571,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
   };
 }
 
-function createGamecastPixelController({ screen, stage, canvas, ctx, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, fpsNode, hud, feedList, feedItems, speedControls = [], soundControls = [], skipControls = [] }) {
+function createGamecastPixelController({ screen, stage, canvas, ctx, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [] }) {
   const palette = createGamecastPalette();
   const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const normalizedSequence = normalizeGamecastSequenceForPlayback(sequence);
@@ -5356,6 +5582,11 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     scale: 1,
     dpr: 1,
     playbackRate: sanitizeGamecastSpeed(normalizedSequence.playbackRate),
+    paused: Boolean(normalizedSequence.paused || normalizedSequence.hold),
+    stepMode: Boolean(normalizedSequence.stepMode),
+    holdsEnabled: normalizedSequence.holdsEnabled !== false,
+    hold: normalizeGamecastHold(normalizedSequence.hold) ?? (normalizedSequence.paused ? { type: "manual", key: "manual" } : null),
+    lastHoldKey: String(normalizedSequence.lastHoldKey ?? ""),
     soundEnabled: normalizedSequence.soundEnabled !== false && gamecastSoundEnabled,
     soundMarks: new Set(),
     elapsedMs: Number(normalizedSequence.initialElapsedMs ?? 0),
@@ -5363,6 +5594,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     done: Boolean(normalizedSequence.done),
     shakeTimer: 0,
     offscreenTimer: 0,
+    resumeTimer: 0,
     sequence: normalizedSequence,
     appState,
     scoreNodes,
@@ -5371,6 +5603,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     matchup,
     playerLabel,
     actionBurst,
+    pauseOverlay,
     fpsNode,
     fpsStats: createGamecastFpsStats(),
     hud,
@@ -5393,18 +5626,98 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
   };
   const renderCurrentFrame = (forceFinal = false) => {
     const frame = buildGamecastFrameState(state, forceFinal);
+    state.currentFrame = frame;
     drawGamecastFrame(ctx, state, frame);
-    syncGamecastDom(state, frame);
+    syncGamecastDom(state, state.paused ? { ...frame, paused: true, hold: state.hold } : frame);
     persistGamecastPlayback(state);
     return frame;
   };
+  const clearResumeTimer = () => {
+    if (!state.resumeTimer) return;
+    window.clearTimeout(state.resumeTimer);
+    state.resumeTimer = 0;
+  };
+  const setPaused = (paused, hold = null) => {
+    if (state.done) return;
+    clearResumeTimer();
+    state.paused = Boolean(paused);
+    state.hold = state.paused ? normalizeGamecastHold(hold) ?? { type: "manual", key: "manual" } : null;
+    persistGamecastPlayback(state, {
+      paused: state.paused,
+      hold: state.hold,
+      lastHoldKey: state.lastHoldKey
+    });
+    if (state.paused) {
+      stop();
+      renderCurrentFrame(false);
+    } else {
+      start();
+    }
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+  };
+  const requestResume = () => {
+    if (!state.paused || state.done) return;
+    const hold = normalizeGamecastHold(state.hold);
+    if (hold?.resumeElapsedMs !== null && hold?.resumeElapsedMs !== undefined) {
+      state.elapsedMs = Math.min(gamecastTotalDuration(state.sequence), hold.resumeElapsedMs);
+    }
+    state.hold = {
+      type: "resume",
+      key: hold?.key ?? "resume",
+      eventIndex: hold?.eventIndex ?? -1,
+      resumeElapsedMs: null,
+      title: "재개",
+      detail: "잠시 후 이어집니다.",
+      action: ""
+    };
+    persistGamecastPlayback(state, { paused: true, hold: state.hold, elapsedMs: state.elapsedMs });
+    renderCurrentFrame(false);
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+    clearResumeTimer();
+    state.resumeTimer = window.setTimeout(() => {
+      state.resumeTimer = 0;
+      state.paused = false;
+      state.hold = null;
+      state.lastTimestamp = 0;
+      persistGamecastPlayback(state, { paused: false, hold: null, elapsedMs: state.elapsedMs });
+      syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+      start();
+    }, GAMECAST_RESUME_COUNTDOWN_MS);
+  };
+  const applyHold = (hold) => {
+    const normalizedHold = normalizeGamecastHold(hold);
+    if (!normalizedHold || state.done) return false;
+    state.lastHoldKey = normalizedHold.key || state.lastHoldKey;
+    setPaused(true, normalizedHold);
+    return true;
+  };
+  const togglePause = (allowUnlock = false) => {
+    if (state.done) return;
+    if (allowUnlock && state.soundEnabled) resumeGamecastAudio(true);
+    if (state.paused) requestResume();
+    else setPaused(true, { type: "manual", key: "manual", eventIndex: -1, title: "일시정지" });
+  };
+  const setStepMode = (enabled) => {
+    state.stepMode = Boolean(enabled);
+    if (state.appState) {
+      state.appState.ui = {
+        ...(state.appState.ui ?? {}),
+        gamecastStepMode: state.stepMode
+      };
+    }
+    persistGamecastPlayback(state, { stepMode: state.stepMode });
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+  };
   const finish = () => {
+    clearResumeTimer();
     state.done = true;
+    state.paused = false;
+    state.hold = null;
     state.elapsedMs = gamecastTotalDuration(state.sequence);
-    persistGamecastPlayback(state, { done: true, elapsedMs: state.elapsedMs });
+    persistGamecastPlayback(state, { done: true, paused: false, hold: null, elapsedMs: state.elapsedMs });
     stop();
     renderCurrentFrame(true);
-    syncGamecastSpeedControls(state, speedControls, skipControls);
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
   };
   const pauseOffscreen = () => {
     stop();
@@ -5432,6 +5745,11 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
       stop();
       return;
     }
+    if (state.paused) {
+      stop();
+      renderCurrentFrame(false);
+      return;
+    }
     if (!state.visible) {
       pauseOffscreen();
       return;
@@ -5439,8 +5757,9 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     if (!state.lastTimestamp) state.lastTimestamp = timestamp;
     const delta = Math.min(80, Math.max(0, timestamp - state.lastTimestamp));
     state.lastTimestamp = timestamp;
-    state.elapsedMs += delta * state.playbackRate;
+    state.elapsedMs += delta * gamecastEffectivePlaybackRate(state, state.currentFrame);
     const frame = renderCurrentFrame(false);
+    if (maybeHoldGamecastPlayback(state, frame, applyHold)) return;
     if (shouldTriggerGamecastImpactShake(frame) && !state.prefersReducedMotion && state.shakenEventId !== frame.event.id) {
       triggerGamecastShake(screen, state);
       state.shakenEventId = frame.event.id;
@@ -5450,7 +5769,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
       state.elapsedMs = gamecastTotalDuration(state.sequence);
       persistGamecastPlayback(state, { done: true, elapsedMs: state.elapsedMs });
       stop();
-      syncGamecastSpeedControls(state, speedControls, skipControls);
+      syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
       return;
     }
     state.animationFrame = window.requestAnimationFrame(loop);
@@ -5465,22 +5784,28 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
       renderCurrentFrame(state.done || state.prefersReducedMotion || !state.sequence.events.length);
       return;
     }
-    if (!state.animationFrame && state.visible && !state.hidden) {
+    if (!state.animationFrame && state.visible && !state.hidden && !state.paused) {
       state.animationFrame = window.requestAnimationFrame(loop);
     }
   };
   const onVisibilityChange = () => {
     state.hidden = Boolean(document.hidden);
     if (state.hidden) stop();
-    else start();
+    else if (!state.paused) start();
   };
   const setSpeed = (speed) => {
     if (state.done) return;
     state.playbackRate = sanitizeGamecastSpeed(speed);
+    if (state.appState) {
+      state.appState.ui = {
+        ...(state.appState.ui ?? {}),
+        gamecastPlaybackRate: state.playbackRate
+      };
+    }
     state.done = false;
     state.lastTimestamp = 0;
     persistGamecastPlayback(state, { playbackRate: state.playbackRate, done: false });
-    syncGamecastSpeedControls(state, speedControls, skipControls);
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
     start();
   };
   const setSound = (enabled, allowUnlock = false) => {
@@ -5499,6 +5824,14 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     event.preventDefault();
     setSpeed(event.currentTarget?.dataset?.gamecastSpeed);
   };
+  const onPauseClick = (event) => {
+    event.preventDefault();
+    togglePause(Boolean(event.isTrusted));
+  };
+  const onStepClick = (event) => {
+    event.preventDefault();
+    setStepMode(!state.stepMode);
+  };
   const onSoundClick = (event) => {
     event.preventDefault();
     setSound(!state.soundEnabled, Boolean(event.isTrusted));
@@ -5507,14 +5840,29 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     event.preventDefault();
     finish();
   };
+  const onScreenClick = (event) => {
+    if (event.target?.closest?.("button, a, input, select, textarea")) return;
+    togglePause(Boolean(event.isTrusted));
+  };
+  const onKeyDown = (event) => {
+    if (event.code !== "Space" || event.repeat) return;
+    if (!screen.isConnected) return;
+    if (event.target?.closest?.("button, input, select, textarea, [contenteditable='true']")) return;
+    event.preventDefault();
+    togglePause(Boolean(event.isTrusted));
+  };
 
   resize();
   renderCurrentFrame(state.done || state.prefersReducedMotion || !state.sequence.events.length);
-  syncGamecastSpeedControls(state, speedControls, skipControls);
+  syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
   syncGamecastSoundControls(state, soundControls);
   for (const button of speedControls) button.addEventListener("click", onSpeedClick);
+  for (const button of pauseControls) button.addEventListener("click", onPauseClick);
+  for (const button of pauseActionControls) button.addEventListener("click", onPauseClick);
+  for (const button of stepControls) button.addEventListener("click", onStepClick);
   for (const button of soundControls) button.addEventListener("click", onSoundClick);
   for (const button of skipControls) button.addEventListener("click", onSkipClick);
+  screen.addEventListener("click", onScreenClick);
 
   const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
     resize();
@@ -5526,7 +5874,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     state.visible = entries.some((entry) => entry.isIntersecting);
     if (state.visible) {
       clearOffscreenPause();
-      start();
+      if (!state.paused) start();
     } else {
       scheduleOffscreenPause();
     }
@@ -5535,22 +5883,29 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
 
   if (typeof document !== "undefined") {
     document.addEventListener("visibilitychange", onVisibilityChange);
+    document.addEventListener("keydown", onKeyDown);
   }
   start();
 
   return {
     cleanup() {
       persistGamecastPlayback(state);
+      clearResumeTimer();
       stop();
       if (state.shakeTimer) window.clearTimeout(state.shakeTimer);
       clearOffscreenPause();
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
       for (const button of speedControls) button.removeEventListener("click", onSpeedClick);
+      for (const button of pauseControls) button.removeEventListener("click", onPauseClick);
+      for (const button of pauseActionControls) button.removeEventListener("click", onPauseClick);
+      for (const button of stepControls) button.removeEventListener("click", onStepClick);
       for (const button of soundControls) button.removeEventListener("click", onSoundClick);
       for (const button of skipControls) button.removeEventListener("click", onSkipClick);
+      screen.removeEventListener("click", onScreenClick);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibilityChange);
+        document.removeEventListener("keydown", onKeyDown);
       }
       screen.classList.remove("is-shaking");
       if (state.playerLabel) state.playerLabel.classList.remove("is-visible", "is-scoring");
@@ -5575,11 +5930,20 @@ function normalizeGamecastSequenceForPlayback(sequence) {
     playbackRate: sanitizeGamecastSpeed(sequence?.playbackRate),
     initialElapsedMs: Math.max(0, Number(sequence?.initialElapsedMs ?? 0)),
     done: Boolean(sequence?.done),
+    paused: Boolean(sequence?.paused),
+    stepMode: Boolean(sequence?.stepMode),
+    holdsEnabled: sequence?.holdsEnabled !== false,
+    hold: normalizeGamecastHold(sequence?.hold),
+    lastHoldKey: String(sequence?.lastHoldKey ?? ""),
     soundEnabled: sequence?.soundEnabled !== false,
     events: Array.isArray(sequence?.events) ? sequence.events : []
   };
   normalized.initialElapsedMs = Math.min(gamecastTotalDuration(normalized), normalized.initialElapsedMs);
-  if (normalized.done) normalized.initialElapsedMs = gamecastTotalDuration(normalized);
+  if (normalized.done) {
+    normalized.initialElapsedMs = gamecastTotalDuration(normalized);
+    normalized.paused = false;
+    normalized.hold = null;
+  }
   return {
     ...normalized
   };
@@ -5604,6 +5968,12 @@ function shouldTriggerGamecastImpactShake(frame) {
   return false;
 }
 
+function syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls) {
+  syncGamecastSpeedControls(state, speedControls, skipControls);
+  syncGamecastPauseControls(state, pauseControls);
+  syncGamecastStepControls(state, stepControls);
+}
+
 function syncGamecastSpeedControls(state, speedControls, skipControls) {
   for (const button of speedControls ?? []) {
     const speed = sanitizeGamecastSpeed(button.dataset?.gamecastSpeed);
@@ -5617,12 +5987,29 @@ function syncGamecastSpeedControls(state, speedControls, skipControls) {
   }
 }
 
+function syncGamecastPauseControls(state, pauseControls) {
+  for (const button of pauseControls ?? []) {
+    const active = Boolean(state.paused || state.hold) && !state.done;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.textContent = active ? "▶ 계속" : "⏸ 정지";
+  }
+}
+
+function syncGamecastStepControls(state, stepControls) {
+  for (const button of stepControls ?? []) {
+    const active = Boolean(state.stepMode) && !state.done;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+}
+
 function syncGamecastSoundControls(state, soundControls) {
   for (const button of soundControls ?? []) {
     const enabled = state.soundEnabled !== false;
     button.classList.toggle("is-active", enabled);
     button.setAttribute("aria-pressed", enabled ? "true" : "false");
-    button.textContent = enabled ? "소리 켬" : "소리 끔";
+    button.textContent = enabled ? "🔊 켜짐" : "🔇 꺼짐";
   }
 }
 
@@ -6792,7 +7179,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
     ? Math.max(0, Math.min(1, (localMs - paMs) / gapMs))
     : 0;
   const leverage = gamecastLeverageScore(seq, events, index);
-  const progress = gapProgress > 0 ? 1 : gamecastTempoProgress(event, rawProgress, leverage);
+  const progress = gapProgress > 0 ? 1 : gamecastTempoProgress(event, rawProgress, leverage, state.stepMode);
   const settling = progress >= 0.72;
   const clearingInning = event.inningEnded && progress >= 0.92;
   const baseOccupancy = settling
@@ -6855,19 +7242,98 @@ function gamecastLeverageScore(seq, events, index) {
   else if (diff <= 3) score += 0.12;
   score += Math.min(0.22, baseCount * 0.075);
   if (outsInInning(event.outsBefore) >= 2) score += 0.08;
-  if (Number(event.runs ?? 0) > 0 || event.outcome === "homeRun") score += 0.1;
   return Math.max(0, Math.min(1, score));
 }
 
-function gamecastTempoProgress(event, rawProgress, leverage) {
+function gamecastTempoProgress(event, rawProgress, leverage, stepMode = false) {
   const raw = Math.max(0, Math.min(1, Number(rawProgress) || 0));
   const lev = Math.max(0, Math.min(1, Number(leverage) || 0));
   const lowLeverageOut = event?.outcome === "out" && lev < 0.25 && Number(event?.runs ?? 0) <= 0;
-  if (lowLeverageOut) return Math.min(1, raw * 1.18);
-  const hold = 0.12 * lev;
-  if (raw < hold) return raw * 0.24;
-  const shifted = (raw - hold) / Math.max(0.01, 1 - hold);
-  return Math.max(0, Math.min(1, shifted));
+  if (lowLeverageOut && !stepMode) return Math.min(1, raw * 1.18);
+  return raw;
+}
+
+function gamecastEffectivePlaybackRate(state, frame = null) {
+  if (state?.paused || state?.done) return 0;
+  const rate = sanitizeGamecastSpeed(state?.playbackRate);
+  const activeFrame = frame ?? state?.currentFrame;
+  if (activeFrame?.scoreFlash && state?.sequence?.mode === "watch") {
+    return Math.min(rate, GAMECAST_SCORE_SLOW_RATE);
+  }
+  return rate;
+}
+
+function maybeHoldGamecastPlayback(state, frame, applyHold) {
+  if (!state || !frame?.event || frame.done || state.done || state.paused || state.prefersReducedMotion) return false;
+  if (state.sequence?.mode !== "watch") return false;
+  if (typeof applyHold !== "function") return false;
+
+  const events = state.sequence.events ?? [];
+  const eventIndex = Math.max(0, Math.min(events.length - 1, Number(frame.eventIndex ?? 0)));
+  const event = events[eventIndex] ?? frame.event;
+  const nextEvent = events[eventIndex + 1] ?? null;
+  const totalMs = gamecastTotalDuration(state.sequence);
+  const slotMs = gamecastEventDuration(state.sequence);
+  const holdElapsedMs = Math.max(0, Math.min(totalMs, (eventIndex + 1) * slotMs - 1));
+  const resumeElapsedMs = Math.max(0, Math.min(totalMs, (eventIndex + 1) * slotMs + 1));
+  const setBoundaryHoldTime = () => {
+    state.elapsedMs = holdElapsedMs;
+    state.done = false;
+  };
+  const issueHold = (hold) => {
+    if (!hold?.key || state.lastHoldKey === hold.key) return false;
+    setBoundaryHoldTime();
+    return applyHold({
+      ...hold,
+      eventIndex,
+      resumeElapsedMs
+    });
+  };
+
+  if (state.holdsEnabled !== false && Number(frame.rawProgress ?? 0) <= 0.035 && Number(frame.gapProgress ?? 0) <= 0) {
+    const key = `leverage:${event.id}`;
+    if (state.lastHoldKey !== key && Number(frame.leverage ?? 0) >= GAMECAST_HOLD_LEVERAGE_THRESHOLD) {
+      return applyHold({
+        type: "leverage",
+        key,
+        eventIndex,
+        resumeElapsedMs: Math.max(0, Math.min(totalMs, eventIndex * slotMs + 1)),
+        title: "승부처",
+        detail: gamecastHoldSituationDetail(event),
+        action: "승부 보기 ▶"
+      });
+    }
+  }
+
+  if (state.stepMode && nextEvent && Number(frame.progress ?? 0) >= 0.68) {
+    return issueHold({
+      type: "step",
+      key: `step:${event.id}`,
+      title: "타석 확인",
+      detail: `${gamecastOutcomeShort(event)} · ${event.hitterName || "타자"}`,
+      action: "다음 타석 ▶"
+    });
+  }
+
+  if (!nextEvent || Number(frame.gapProgress ?? 0) < 0.68) return false;
+
+  if (state.holdsEnabled !== false && (event.inningEnded || event.inning !== nextEvent.inning || event.side !== nextEvent.side)) {
+    return issueHold({
+      type: "inning",
+      key: `inning:${event.id}`,
+      title: "이닝 교대",
+      detail: `${formatNumber(event.inning)}회 ${event.side === "home" ? "말" : "초"} 종료 · ${gamecastOutcomeShort(event)}`,
+      action: "계속 ▶"
+    });
+  }
+
+  return false;
+}
+
+function gamecastHoldSituationDetail(event) {
+  if (!event) return "상황 대기";
+  const score = `${formatNumber(outsInInning(event.outsBefore))}아웃 · ${gamecastBaseSummary(event.basesBefore)}`;
+  return `${formatNumber(event.inning)}회 ${event.side === "home" ? "말" : "초"} · ${score} · ${event.hitterName || "타자"} vs ${event.pitcherName || "투수"}`;
 }
 
 function buildGamecastBaseCallout(event, progress) {
@@ -7545,6 +8011,7 @@ function syncGamecastDom(state, frame) {
   syncGamecastPlayerLabel(state.playerLabel, frame.done ? null : frame.playerLabel);
   syncGamecastActionBurst(state.actionBurst, frame.done ? null : frame.actionBurst);
   syncGamecastHud(state.hud, frame);
+  syncGamecastPauseOverlay(state.pauseOverlay, state, frame);
   syncGamecastFeed(state, frame);
   syncGamecastFpsOverlay(state);
   playGamecastSoundForFrame(state, frame);
@@ -7756,10 +8223,21 @@ function syncGamecastFeed(state, frame) {
   if (!state.feedList || state.sequence?.mode !== "watch") return;
   const events = state.sequence.events ?? [];
   if (!events.length) return;
-  const targetIndex = frame.done
-    ? events.length - 1
-    : Math.max(0, Math.min(events.length - 1, Number(frame.eventIndex ?? events.findIndex((event) => event.id === frame.event?.id))));
+  const rawIndex = Math.max(0, Math.min(events.length - 1, Number(frame.eventIndex ?? events.findIndex((event) => event.id === frame.event?.id))));
+  const revealCurrent = Boolean(frame.done || frame.bridge || Number(frame.gapProgress ?? 0) > 0 || Number(frame.progress ?? 0) >= 0.62);
+  const targetIndex = frame.done ? events.length - 1 : (revealCurrent ? rawIndex : rawIndex - 1);
+  for (const item of [...(state.feedList.querySelectorAll?.("li[data-gamecast-event-id]") ?? [])]) {
+    const itemIndex = Number(item.dataset.gamecastEventIndex ?? -1);
+    if (itemIndex > targetIndex) item.remove();
+  }
   const existingIds = new Set([...(state.feedList.querySelectorAll?.("li[data-gamecast-event-id]") ?? [])].map((item) => item.dataset.gamecastEventId));
+  if (targetIndex < 0) {
+    if (!state.feedList.querySelector("[data-gamecast-empty]")) {
+      state.feedList.append(createGamecastEmptyFeedItem());
+    }
+    state.feedItems = [];
+    return;
+  }
   state.feedList.querySelector("[data-gamecast-empty]")?.remove();
   for (let index = 0; index <= targetIndex; index += 1) {
     const event = events[index];
@@ -7772,6 +8250,81 @@ function syncGamecastFeed(state, frame) {
   if (active && !frame.done) {
     active.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }
+}
+
+function syncGamecastPauseOverlay(overlay, state, frame) {
+  if (!overlay?.root) return;
+  const hold = normalizeGamecastHold(frame?.hold ?? state?.hold);
+  const active = Boolean((frame?.paused || state?.paused || hold) && !frame?.done);
+  overlay.root.hidden = !active;
+  overlay.root.classList.toggle("is-visible", active);
+  overlay.root.dataset.holdType = hold?.type ?? (active ? "manual" : "");
+  if (!active) return;
+
+  const copy = gamecastHoldCopy(hold, frame);
+  if (overlay.kicker) overlay.kicker.textContent = copy.kicker;
+  if (overlay.title) overlay.title.textContent = copy.title;
+  if (overlay.detail) overlay.detail.textContent = copy.detail;
+  if (overlay.action) overlay.action.textContent = copy.action;
+}
+
+function gamecastHoldCopy(hold, frame) {
+  const event = frame?.event;
+  const situation = event
+    ? `${formatNumber(event.inning)}회 ${event.side === "home" ? "말" : "초"} · ${formatNumber(outsInInning(event.outsBefore))}아웃 · ${gamecastBaseSummary(event.basesBefore)}`
+    : "중계 대기";
+  const matchup = event ? `${event.hitterName || "타자"} vs ${event.pitcherName || "투수"}` : "";
+  if (hold?.type === "step") {
+    return {
+      kicker: "PA CHECK",
+      title: hold.title || "타석 확인",
+      detail: hold.detail || `${gamecastOutcomeShort(event)} · ${matchup}`,
+      action: hold.action || "다음 타석 ▶"
+    };
+  }
+  if (hold?.type === "inning") {
+    return {
+      kicker: "INNING BREAK",
+      title: hold.title || "이닝 교대",
+      detail: hold.detail || `${situation} · 다음 공격 준비`,
+      action: hold.action || "계속 ▶"
+    };
+  }
+  if (hold?.type === "leverage") {
+    return {
+      kicker: "KEY MOMENT",
+      title: hold.title || "승부처",
+      detail: hold.detail || `${situation} · ${matchup}`,
+      action: hold.action || "승부 보기 ▶"
+    };
+  }
+  if (hold?.type === "resume") {
+    return {
+      kicker: "READY",
+      title: hold.title || "재개",
+      detail: hold.detail || "잠시 후 이어집니다.",
+      action: hold.action || "준비 중"
+    };
+  }
+  return {
+    kicker: "PAUSE",
+    title: hold?.title || "일시정지",
+    detail: hold?.detail || `${situation}${matchup ? ` · ${matchup}` : ""}`,
+    action: hold?.action || "계속 ▶"
+  };
+}
+
+function gamecastBaseSummary(bases) {
+  const names = ["1루", "2루", "3루"];
+  const occupied = (bases ?? []).map((value, index) => value ? names[index] : "").filter(Boolean);
+  return occupied.length ? occupied.join("·") : "주자 없음";
+}
+
+function gamecastOutcomeShort(event) {
+  if (!event) return "결과 대기";
+  const runs = Number(event.runs ?? 0);
+  const runText = runs > 0 ? ` · ${formatNumber(runs)}득점` : "";
+  return `${gamecastMatchupResult(event)}${runText}`;
 }
 
 function syncGamecastHud(hud, frame) {

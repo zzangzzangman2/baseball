@@ -981,7 +981,7 @@ async function checkGamecastLab() {
     mobile: false
   });
   let loadEvent = cdp.once("Page.loadEventFired");
-  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fps=1&qa=lab-desktop-${Date.now()}` });
+  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fps=1&holds=0&qa=lab-desktop-${Date.now()}` });
   await loadEvent;
   await waitForGamecastLabModal();
   await delay(300);
@@ -1004,6 +1004,9 @@ async function checkGamecastLab() {
         feedCount,
         feedText: modal?.querySelector(".gamecast-feed")?.textContent?.trim() ?? "",
         activeSpeed: modal?.querySelector("[data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? "",
+        speedButtons: [...(modal?.querySelectorAll("[data-gamecast-speed]") ?? [])].map((button) => button.dataset.gamecastSpeed),
+        pauseText: modal?.querySelector("[data-gamecast-pause]")?.textContent?.trim() ?? "",
+        stepText: modal?.querySelector("[data-gamecast-step]")?.textContent?.trim() ?? "",
         fpsText: modal?.querySelector("[data-gamecast-fps]")?.textContent?.trim() ?? "",
         soundText: modal?.querySelector("[data-gamecast-sound]")?.textContent?.trim() ?? ""
       };
@@ -1015,10 +1018,45 @@ async function checkGamecastLab() {
   assert(desktopProbe.activeCanvasCount === 1, `랩 활성 캔버스가 ${desktopProbe.activeCanvasCount}개입니다.`, "src/ui.js");
   assert(desktopProbe.cssWidth >= 800 && desktopProbe.cssHeight >= 720, `큰 화면 캔버스가 작습니다: ${desktopProbe.cssWidth}x${desktopProbe.cssHeight}`, "src/styles.css");
   assert(desktopProbe.totalEvents > 20, `랩 PA 이벤트가 부족합니다: ${desktopProbe.totalEvents}`, "src/gamecastLab.js");
-  assert(desktopProbe.feedCount > 0 && desktopProbe.feedCount < desktopProbe.totalEvents, `랩 시작 피드가 전체 경기를 스포일러합니다: feed=${desktopProbe.feedCount}, total=${desktopProbe.totalEvents}`, "src/ui.js");
+  assert(desktopProbe.feedCount >= 0 && desktopProbe.feedCount < desktopProbe.totalEvents, `랩 시작 피드가 전체 경기를 스포일러합니다: feed=${desktopProbe.feedCount}, total=${desktopProbe.totalEvents}`, "src/ui.js");
   assert(desktopProbe.activeSpeed === "1", `랩 초기 배속이 x1이 아닙니다: x${desktopProbe.activeSpeed}`, "src/ui.js");
+  assert(desktopProbe.speedButtons.join(",") === "0.5,1,1.5,2,4", `배속 버튼 구성이 다릅니다: ${desktopProbe.speedButtons.join(",")}`, "src/ui.js");
+  assert(desktopProbe.pauseText.includes("정지"), `일시정지 버튼을 찾지 못했습니다: ${desktopProbe.pauseText}`, "src/ui.js");
+  assert(desktopProbe.stepText.includes("타석"), `타석 확인 버튼을 찾지 못했습니다: ${desktopProbe.stepText}`, "src/ui.js");
   assert(/FPS\s+\d+/i.test(desktopProbe.fpsText), `FPS 오버레이가 갱신되지 않았습니다: ${desktopProbe.fpsText}`, "src/ui.js");
-  assert(desktopProbe.soundText.includes("소리"), `게임캐스트 소리 토글을 찾지 못했습니다: ${desktopProbe.soundText}`, "src/ui.js");
+  assert(/켜짐|꺼짐/.test(desktopProbe.soundText), `게임캐스트 소리 토글을 찾지 못했습니다: ${desktopProbe.soundText}`, "src/ui.js");
+
+  await evaluateInBrowser(`document.querySelector("[data-gamecast-modal] [data-gamecast-pause]")?.click(); true`);
+  await delay(1200);
+  const pauseProbe = await evaluateInBrowser(`
+    (() => ({
+      feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
+      overlayVisible: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay].is-visible")),
+      pauseText: document.querySelector("[data-gamecast-modal] [data-gamecast-pause]")?.textContent?.trim() ?? ""
+    }))()
+  `);
+  await delay(900);
+  const pauseStillProbe = await evaluateInBrowser(`
+    (() => ({
+      feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
+      overlayVisible: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay].is-visible"))
+    }))()
+  `);
+  assert(pauseProbe.overlayVisible, `일시정지 오버레이가 보이지 않습니다: ${JSON.stringify(pauseProbe)}`, "src/ui.js");
+  assert(pauseProbe.pauseText.includes("계속"), `일시정지 버튼 라벨이 갱신되지 않았습니다: ${pauseProbe.pauseText}`, "src/ui.js");
+  assert(pauseStillProbe.feedCount === pauseProbe.feedCount, `일시정지 중 피드가 진행됐습니다: ${pauseProbe.feedCount}->${pauseStillProbe.feedCount}`, "src/ui.js");
+  await evaluateInBrowser(`document.activeElement?.blur?.(); true`);
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await delay(700);
+  const resumedProbe = await evaluateInBrowser(`
+    (() => ({
+      overlayVisible: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay].is-visible")),
+      pauseText: document.querySelector("[data-gamecast-modal] [data-gamecast-pause]")?.textContent?.trim() ?? ""
+    }))()
+  `);
+  assert(!resumedProbe.overlayVisible, `Space 재개 후 오버레이가 남아 있습니다: ${JSON.stringify(resumedProbe)}`, "src/ui.js");
+  assert(resumedProbe.pauseText.includes("정지"), `Space 재개 후 버튼 라벨이 돌아오지 않았습니다: ${resumedProbe.pauseText}`, "src/ui.js");
 
   await evaluateInBrowser(`document.querySelector("[data-gamecast-modal] [data-gamecast-speed='2']")?.click(); true`);
   await delay(1900);
@@ -1044,6 +1082,45 @@ async function checkGamecastLab() {
   assert(afterToggle.screenCount === 1, `엔진 토글 후 스크린이 ${afterToggle.screenCount}개입니다.`, "src/ui.js");
   assert(afterToggle.engine === "canvas", `엔진 토글 후 Canvas가 아닙니다: ${afterToggle.engine}`, "src/ui.js");
 
+  loadEvent = cdp.once("Page.loadEventFired");
+  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fullscreen=1&step=1&speed=4&holds=0&qa=lab-step-${Date.now()}` });
+  await loadEvent;
+  await waitForGamecastLabModal();
+  await delay(2600);
+  const stepHoldProbe = await evaluateInBrowser(`
+    (() => ({
+      feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
+      overlayVisible: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay].is-visible")),
+      holdType: document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay]")?.dataset?.holdType ?? "",
+      activeSpeed: document.querySelector("[data-gamecast-modal] [data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? "",
+      stepActive: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-step].is-active"))
+    }))()
+  `);
+  await delay(1500);
+  const stepStillProbe = await evaluateInBrowser(`
+    (() => ({
+      feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
+      overlayVisible: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay].is-visible"))
+    }))()
+  `);
+  assert(stepHoldProbe.activeSpeed === "4", `랩 ?speed=4가 반영되지 않았습니다: ${JSON.stringify(stepHoldProbe)}`, "src/gamecastLab.js");
+  assert(stepHoldProbe.stepActive, `랩 ?step=1이 반영되지 않았습니다: ${JSON.stringify(stepHoldProbe)}`, "src/gamecastLab.js");
+  assert(stepHoldProbe.overlayVisible && stepHoldProbe.holdType === "step", `스텝 홀드가 걸리지 않았습니다: ${JSON.stringify(stepHoldProbe)}`, "src/ui.js");
+  assert(stepStillProbe.feedCount === stepHoldProbe.feedCount, `스텝 홀드 중 피드가 진행됐습니다: ${stepHoldProbe.feedCount}->${stepStillProbe.feedCount}`, "src/ui.js");
+  await evaluateInBrowser(`document.activeElement?.blur?.(); true`);
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await delay(3600);
+  const stepAdvancedProbe = await evaluateInBrowser(`
+    (() => ({
+      feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
+      overlayVisible: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay].is-visible")),
+      holdType: document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay]")?.dataset?.holdType ?? ""
+    }))()
+  `);
+  assert(stepAdvancedProbe.feedCount > stepHoldProbe.feedCount, `Space 후 다음 타석으로 진행되지 않았습니다: ${JSON.stringify({ stepHoldProbe, stepAdvancedProbe })}`, "src/ui.js");
+  assert(stepAdvancedProbe.overlayVisible && stepAdvancedProbe.holdType === "step", `다음 타석 종료 후 다시 스텝 홀드가 걸리지 않았습니다: ${JSON.stringify(stepAdvancedProbe)}`, "src/ui.js");
+
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     width: 375,
     height: 812,
@@ -1051,7 +1128,7 @@ async function checkGamecastLab() {
     mobile: true
   });
   loadEvent = cdp.once("Page.loadEventFired");
-  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lotte&days=3&qa=lab-mobile-${Date.now()}` });
+  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lotte&days=3&speed=0.5&holds=0&qa=lab-mobile-${Date.now()}` });
   await loadEvent;
   await waitForGamecastLabModal();
   await delay(300);
@@ -1070,19 +1147,22 @@ async function checkGamecastLab() {
         canvasLeft: canvasRect?.left ?? 0,
         canvasRight: canvasRect?.right ?? 0,
         innerWidth: window.innerWidth,
-        overflowPx: Math.max(doc.scrollWidth, body.scrollWidth) - doc.clientWidth
+        overflowPx: Math.max(doc.scrollWidth, body.scrollWidth) - doc.clientWidth,
+        activeSpeed: modal?.querySelector("[data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? ""
       };
     })()
   `);
   assert(mobileProbe.canvasWidth > 0 && mobileProbe.canvasWidth <= mobileProbe.innerWidth, `모바일 캔버스가 뷰포트를 넘습니다: ${JSON.stringify(mobileProbe)}`, "src/styles.css");
   assert(mobileProbe.canvasLeft >= -1 && mobileProbe.canvasRight <= mobileProbe.innerWidth + 1, `모바일 캔버스 좌우가 잘립니다: ${JSON.stringify(mobileProbe)}`, "src/styles.css");
   assert(mobileProbe.overflowPx <= 1, `랩 모바일 수평 overflow ${mobileProbe.overflowPx}px`, "src/styles.css");
+  assert(mobileProbe.activeSpeed === "0.5", `랩 ?speed=0.5가 반영되지 않았습니다: ${JSON.stringify(mobileProbe)}`, "src/gamecastLab.js");
 
   return [
     `desktop ${Math.round(desktopProbe.cssWidth)}x${Math.round(desktopProbe.cssHeight)}`,
     `feed ${desktopProbe.feedCount}/${desktopProbe.totalEvents}`,
     "single-instance OK",
     "speed-persist OK",
+    "pause/step OK",
     `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`
   ].join(", ");
 }

@@ -4,6 +4,9 @@
 //   ?days=N                개막 후 N일 추가 진행 (기본 3)
 //   ?fullscreen=0          큰 화면 자동 열기 끄기
 //   ?team=lg|doosan|...    구단 선택 (기본 lg)
+//   ?step=1                타석 확인 모드로 시작
+//   ?speed=0.5|1|1.5|2|4   시작 배속 선택
+//   ?holds=0               자동 홀드 끄기
 import { createInitialState } from "./data.js";
 import { simulateDay, resolveMailDecision } from "./engine.js";
 import { mountApp } from "./ui.js";
@@ -16,6 +19,9 @@ state.manager = { name: "랩 테스터", age: 45, style: "balanced" };
 state.ui.screen = "game";
 if (params.get("engine")) state.ui.gamecastEngine = params.get("engine");
 state.ui.gamecastFps = params.get("fps") === "1";
+state.ui.gamecastStepMode = params.get("step") === "1";
+if (params.get("holds") === "0") state.ui.gamecastHolds = false;
+if (params.get("speed")) state.ui.gamecastPlaybackRate = Number(params.get("speed"));
 
 function clearOpenMail() {
   for (let guard = 0; guard < 6; guard += 1) {
@@ -66,6 +72,10 @@ const clickWhenReady = (selector, timeoutMs = 6000) => new Promise((resolve) => 
   if (params.get("fullscreen") !== "0") {
     await new Promise((resolve) => setTimeout(resolve, 900));
     await clickWhenReady("[data-action='open-gamecast-broadcast']", 8000);
+  }
+  const speed = Number(params.get("speed"));
+  if ([0.5, 1, 1.5, 2, 4].includes(speed)) {
+    await clickWhenReady(`[data-gamecast-speed='${speed}']`, 3000);
   }
   console.info("[gamecast-lab] ready", { date: state.currentDate, phase: state.phase, engine: state.ui.gamecastEngine });
 })();

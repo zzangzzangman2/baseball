@@ -99,6 +99,10 @@ export function mountGamecastPhaser(options) {
       runtime.playbackRate = Number(speed) || 1;
       if (!runtime.done && runtime.paused === false) startRuntimeLoop(runtime);
     },
+    seek(elapsedMs) {
+      runtime.elapsedMs = Math.max(0, Math.min(getRuntimeTotalMs(runtime), Number(elapsedMs) || 0));
+      renderRuntimeFrame(runtime, false);
+    },
     finish() {
       finishRuntime(runtime);
     },
