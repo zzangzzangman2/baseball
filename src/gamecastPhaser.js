@@ -1,6 +1,8 @@
 const PHASER_DESIGN_W = 400;
 const PHASER_DESIGN_H = 360;
 const PLAYER_ATLAS_SIZE = 48;
+const PLAYER_MIN_RENDER_SCALE = 0.48;
+const PLAYER_MAX_RENDER_SCALE = 0.7;
 const PLAYER_ATLAS_FRAMES = {
   stance: [0, 0],
   load: [1, 0],
@@ -152,6 +154,10 @@ export function mountGamecastPhaser(options) {
     ? new ResizeObserver(() => resizeRuntime(runtime))
     : null;
   runtime.resizeObserver?.observe(runtime.screen);
+  if (typeof window !== "undefined") {
+    window.requestAnimationFrame?.(() => resizeRuntime(runtime));
+    window.setTimeout?.(() => resizeRuntime(runtime), 80);
+  }
 
   return {
     setSpeed(speed) {
@@ -390,12 +396,19 @@ function renderScene(scene, runtime, frame) {
   beginGamecastPoolFrame(scene);
 
   drawPhaserAtmosphere(fx, runtime, frame);
-  drawStaticDefense(scene, player, runtime, frame, useSprites);
-  for (const defender of frame.defenseSprites ?? []) drawGamecastPlayer(scene, player, runtime, defender, "defender", useSprites);
+  const actors = [
+    ...buildStaticDefenseSprites(runtime, frame).map((sprite) => ({ sprite, role: "defenderStatic" })),
+    ...(frame.defenseSprites ?? []).map((sprite) => ({ sprite, role: "defender" })),
+    ...(frame.runners ?? []).map((sprite) => ({ sprite, role: "runner" })),
+    ...(frame.batter ? [{ sprite: frame.batter, role: "batter" }] : []),
+    ...(() => {
+      const umpire = buildUmpireSprite(runtime, frame);
+      return umpire ? [{ sprite: umpire, role: "umpire" }] : [];
+    })()
+  ].sort(compareGamecastActorDepth);
+
   for (const runner of frame.runners ?? []) drawRunnerEffects(fx, runtime, runner, palette);
-  for (const runner of frame.runners ?? []) drawGamecastPlayer(scene, player, runtime, runner, "runner", useSprites);
-  if (frame.batter) drawGamecastPlayer(scene, player, runtime, frame.batter, "batter", useSprites);
-  drawUmpire(scene, player, runtime, frame, useSprites);
+  for (const actor of actors) drawGamecastPlayer(scene, player, runtime, actor.sprite, actor.role, useSprites);
   drawThrowLines(ball, runtime, frame);
   drawBallTrail(ball, runtime, frame);
   if (frame.ballShadow) drawBallShadow(ball, runtime, frame.ballShadow);
@@ -501,13 +514,15 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
         } else if (distanceToWall < 5.8) {
           ctx.fillStyle = Math.floor((x + y) / Math.max(1, sx(5))) % 2 ? "#d1ad68" : palette.track;
         } else {
-          const ring = Math.floor((ly - wallY + Math.abs(lx - 60) * 0.16) / 8);
+          const radial = Math.hypot((lx - 60) * 0.92, (ly - 101) * 0.72);
+          const ring = Math.floor((radial + Math.max(0, ly - wallY) * 0.3) / 7);
           const stripe = profile.mow === "checker"
             ? Math.floor(lx / 7) + Math.floor(ly / 6)
             : profile.mow === "stripes"
               ? Math.floor((lx + ly * 0.25) / 7)
-              : Math.floor(Math.hypot(lx - 60, ly - 101) / 8);
-          ctx.fillStyle = (ring + stripe) % 2 ? palette.grassLo : palette.grassHi;
+              : Math.floor(radial / 9);
+          const grain = (x * 17 + y * 31) % 113 === 0;
+          ctx.fillStyle = grain ? (palette.grassL ?? palette.grassHi) : ((ring + stripe) % 2 ? palette.grassLo : palette.grassHi);
         }
         ctx.fillRect(x, y, 1, 1);
       }
@@ -598,6 +613,7 @@ function lerp(from, to, amount) {
 function drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale) {
   const shirts = [palette.crowdA, palette.crowdB, palette.crowdC, palette.defenderL, palette.runnerL, palette.base, palette.spark, "#ff8f83", profile.homeColor];
   const dense = Math.max(0.16, Math.min(1, Number(profile.attendanceRatio ?? 0.62)));
+  const unit = Math.max(1, Math.round(scale * 0.62));
   const startY = sy(3);
   const endY = sy(42);
   const stepX = Math.max(scale * (dense > 0.82 ? 4 : dense > 0.52 ? 5 : 7), sx(dense > 0.82 ? 3 : dense > 0.52 ? 4 : 6));
@@ -611,24 +627,24 @@ function drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale) {
       if (((row * 19 + x) % 100) > dense * 100) continue;
       if ((row * 17 + x) % 41 === 0) {
         ctx.fillStyle = palette.outline;
-        ctx.fillRect(x - scale, y + scale, scale * 7, scale * 4);
+        ctx.fillRect(x - unit, y + unit, unit * 7, unit * 4);
         ctx.fillStyle = palette.base;
-        ctx.fillRect(x, y + scale * 2, scale * 5, scale);
+        ctx.fillRect(x, y + unit * 2, unit * 5, unit);
         ctx.fillStyle = shirts[(row + x) % shirts.length];
-        ctx.fillRect(x + scale, y + scale, scale * 3, scale);
+        ctx.fillRect(x + unit, y + unit, unit * 3, unit);
         continue;
       }
       ctx.fillStyle = palette.crowdHair;
-      ctx.fillRect(x, y, scale * 4, scale);
+      ctx.fillRect(x, y, unit * 4, unit);
       ctx.fillStyle = palette.crowdSkin;
-      ctx.fillRect(x + scale, y + scale, scale * 2, scale * 2);
+      ctx.fillRect(x + unit, y + unit, unit * 2, unit * 2);
       ctx.fillStyle = palette.outline;
-      ctx.fillRect(x + scale, y + scale * 2, scale, scale);
-      ctx.fillRect(x + scale * 2, y + scale * 2, scale, scale);
+      ctx.fillRect(x + unit, y + unit * 2, unit, unit);
+      ctx.fillRect(x + unit * 2, y + unit * 2, unit, unit);
       ctx.fillStyle = shirts[(row + x) % shirts.length];
-      ctx.fillRect(x, y + scale * 3, scale * 4, scale * 2);
+      ctx.fillRect(x, y + unit * 3, unit * 4, unit * 2);
       ctx.fillStyle = row % 3 === 0 ? palette.sparkL : palette.stand;
-      ctx.fillRect(x, y + scale * 5, scale * 4, scale);
+      ctx.fillRect(x, y + unit * 5, unit * 4, unit);
     }
   }
 }
@@ -760,8 +776,8 @@ function drawLineCanvas(ctx, x1, y1, x2, y2, color, width = 1) {
   ctx.stroke();
 }
 
-function drawStaticDefense(scene, graphics, runtime, frame, useSprites) {
-  if (!frame.event) return;
+function buildStaticDefenseSprites(runtime, frame) {
+  if (!frame.event) return [];
   const movingFielders = new Set(frame.activeFielders ?? []);
   const color = frame.defenseColor ?? runtime.palette.defender;
   const jerseyColor = frame.defenseJerseyColor ?? runtime.palette.defenderL;
@@ -773,13 +789,14 @@ function drawStaticDefense(scene, graphics, runtime, frame, useSprites) {
     { key: "2B", x: fieldX(runtime, 78), y: fieldY(runtime, 65) },
     { key: "3B", x: fieldX(runtime, 26), y: fieldY(runtime, 77) },
     { key: "SS", x: fieldX(runtime, 42), y: fieldY(runtime, 66) },
-    { key: "LF", x: fieldX(runtime, 22), y: fieldY(runtime, 43) },
-    { key: "CF", x: fieldX(runtime, 60), y: fieldY(runtime, 31) },
-    { key: "RF", x: fieldX(runtime, 98), y: fieldY(runtime, 43) }
+    { key: "LF", x: fieldX(runtime, 25), y: fieldY(runtime, 55) },
+    { key: "CF", x: fieldX(runtime, 60), y: fieldY(runtime, 36) },
+    { key: "RF", x: fieldX(runtime, 95), y: fieldY(runtime, 55) }
   ];
+  const sprites = [];
   for (const item of positions) {
     if (movingFielders.has(item.key)) continue;
-    drawGamecastPlayer(scene, graphics, runtime, {
+    sprites.push({
       position: { x: item.x, y: item.y },
       color,
       jerseyColor,
@@ -788,8 +805,32 @@ function drawStaticDefense(scene, graphics, runtime, frame, useSprites) {
       pose: "field",
       runFrame: 0,
       fieldingKey: item.key
-    }, "defenderStatic", useSprites);
+    });
   }
+  return sprites;
+}
+
+function compareGamecastActorDepth(a, b) {
+  const ay = gamecastActorDepthY(a);
+  const by = gamecastActorDepthY(b);
+  if (ay !== by) return ay - by;
+  return gamecastActorRoleOrder(a) - gamecastActorRoleOrder(b);
+}
+
+function gamecastActorDepthY(actor) {
+  const y = Number(actor?.sprite?.position?.y ?? 0);
+  if (actor?.role === "umpire") return y + 4;
+  if (actor?.role === "batter") return y + 2;
+  return y;
+}
+
+function gamecastActorRoleOrder(actor) {
+  if (actor?.role === "defenderStatic") return 1;
+  if (actor?.role === "defender") return 2;
+  if (actor?.role === "runner") return 3;
+  if (actor?.role === "batter") return 4;
+  if (actor?.role === "umpire") return 5;
+  return 0;
 }
 
 function drawPhaserAtmosphere(graphics, runtime, frame) {
@@ -834,7 +875,8 @@ function drawSpritePlayer(scene, graphics, runtime, sprite, role) {
   const frame = spriteFrameForPose(scene, textureKey, sprite, role);
   if (!scene.textures.exists(textureKey) || !scene.textures.getFrame(textureKey, frame)) return false;
 
-  rect(graphics, runtime, x - 13, y + 1, 26, 5, palette.shadow, 0.28);
+  const renderScale = gamecastPlayerRenderScale(runtime, sprite, role);
+  rect(graphics, runtime, x - 13 * renderScale, y + 1, 26 * renderScale, Math.max(2, 5 * renderScale), palette.shadow, 0.26);
 
   const metrics = runtime.metrics;
   const facing = Number(sprite.facing ?? (role === "batter" ? -1 : 1));
@@ -845,31 +887,25 @@ function drawSpritePlayer(scene, graphics, runtime, sprite, role) {
   image
     .setPosition(Math.round(x * metrics.drawScaleX), Math.round(y * metrics.drawScaleY))
     .setOrigin(CENTER_ORIGIN_X, BASELINE_ORIGIN_Y)
-    .setScale(metrics.drawScaleX * (facing < 0 ? -squashX : squashX), metrics.drawScaleY * squashY)
+    .setScale(
+      metrics.drawScaleX * renderScale * (facing < 0 ? -squashX : squashX),
+      metrics.drawScaleY * renderScale * squashY
+    )
     .setRotation(0);
-  drawSpriteSkinOverlay(scene, runtime, sprite, role);
   return true;
 }
 
-function drawSpriteSkinOverlay(scene, runtime, sprite, role) {
-  const graphics = scene?.skinHighlightGraphics;
-  if (!graphics || role === "umpire" || sprite?.fieldingKey === "C") return;
-  const palette = runtime.palette;
-  const x = Number(sprite.position?.x ?? 0);
-  const y = Number(sprite.position?.y ?? 0);
-  const pose = String(sprite.pose ?? "");
-  if (pose === "slide") {
-    rect(graphics, runtime, x + 2, y - 12, 8, 5, palette.skin, 0.96);
-    rect(graphics, runtime, x + 5, y - 10, 1, 1, palette.outline, 0.9);
-    return;
+function gamecastPlayerRenderScale(runtime, sprite, role) {
+  if (Number.isFinite(Number(sprite?.renderScale))) {
+    return Math.max(PLAYER_MIN_RENDER_SCALE, Math.min(PLAYER_MAX_RENDER_SCALE, Number(sprite.renderScale)));
   }
-  const faceY = pose === "catch" || pose === "dive" ? y - 29 : y - 30;
-  rect(graphics, runtime, x - 8, faceY, 16, 11, palette.skin, 0.98);
-  rect(graphics, runtime, x - 6, faceY + 9, 12, 2, palette.skin, 0.88);
-  rect(graphics, runtime, x - 4, faceY + 4, 1, 2, palette.outline, 0.88);
-  rect(graphics, runtime, x + 3, faceY + 4, 1, 2, palette.outline, 0.88);
-  rect(graphics, runtime, x - 8, y - 20, 3, 4, palette.skin, 0.9);
-  rect(graphics, runtime, x + 5, y - 20, 3, 4, palette.skin, 0.9);
+  const y = Math.max(0, Math.min(runtime.height, Number(sprite?.position?.y ?? runtime.height * 0.7)));
+  const depth = y / Math.max(1, runtime.height);
+  const base = PLAYER_MIN_RENDER_SCALE + depth * (PLAYER_MAX_RENDER_SCALE - PLAYER_MIN_RENDER_SCALE);
+  if (role === "batter") return Math.min(PLAYER_MAX_RENDER_SCALE, base + 0.025);
+  if (role === "umpire") return Math.min(PLAYER_MAX_RENDER_SCALE, base - 0.015);
+  if (["LF", "CF", "RF"].includes(String(sprite?.fieldingKey ?? ""))) return Math.max(0.43, base - 0.035);
+  return base;
 }
 
 const CENTER_ORIGIN_X = 24 / PLAYER_ATLAS_SIZE;
@@ -1108,16 +1144,16 @@ function drawPlayer(graphics, runtime, sprite, role) {
   }
 }
 
-function drawUmpire(scene, graphics, runtime, frame, useSprites) {
-  if (!frame.event) return;
+function buildUmpireSprite(runtime, frame) {
+  if (!frame.event) return null;
   const bases = runtime.basePositions;
-  drawGamecastPlayer(scene, graphics, runtime, {
+  return {
     position: { x: bases.home.x - fieldSize(runtime, 8), y: bases.home.y + fieldSize(runtime, 2) },
     jerseyColor: "#25232c",
     jerseyShadow: "#15131a",
     accentColor: "#5f5b67",
     pose: "idle"
-  }, "umpire", useSprites);
+  };
 }
 
 function drawThrowLines(graphics, runtime, frame) {

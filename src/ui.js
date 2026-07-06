@@ -5246,7 +5246,8 @@ function initGamecastPixelScreen(root, appState = null) {
       skipControls: [...board.querySelectorAll("[data-gamecast-skip]")]
     };
 
-    if (engine === "phaser" && canUseGamecastPhaser()) {
+    const phaserScreen = screen.classList.contains("gamecast-screen-large");
+    if (engine === "phaser" && phaserScreen && canUseGamecastPhaser()) {
       const controller = createGamecastPhaserController(controllerOptions);
       if (controller) {
         controllers.push(controller);
@@ -5255,6 +5256,9 @@ function initGamecastPixelScreen(root, appState = null) {
     }
 
     if (typeof canvas.getContext !== "function") continue;
+    screen.classList.remove("is-phaser", "is-phaser-active");
+    screen.classList.add("is-canvas");
+    screen.dataset.gamecastEngineCurrent = "canvas";
 
     const ctx = canvas.getContext("2d");
     if (!ctx) continue;
@@ -6234,13 +6238,15 @@ function drawBallparkOutfield(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neu
       } else if (distanceToWall < 5.8) {
         drawPixel(ctx, x, y, Math.floor((x + y) / gamecastSize(5)) % 2 ? "#d1ad68" : palette.track);
       } else {
-        const ring = Math.floor((ly - wallY + Math.abs(lx - 60) * 0.16) / 8);
+        const radial = Math.hypot((lx - 60) * 0.92, (ly - 101) * 0.72);
+        const ring = Math.floor((radial + Math.max(0, ly - wallY) * 0.3) / 7);
         const stripe = profile.mow === "checker"
           ? Math.floor(lx / 7) + Math.floor(ly / 6)
           : profile.mow === "stripes"
             ? Math.floor((lx + ly * 0.25) / 7)
-            : Math.floor((Math.hypot(lx - 60, ly - 101)) / 8);
-        drawPixel(ctx, x, y, (ring + stripe) % 2 ? palette.grassLo : palette.grassHi);
+            : Math.floor(radial / 9);
+        const grain = (x * 17 + y * 31) % 113 === 0;
+        drawPixel(ctx, x, y, grain ? palette.grassL : ((ring + stripe) % 2 ? palette.grassLo : palette.grassHi));
       }
     }
   }
@@ -6356,34 +6362,36 @@ function drawPixelCrowd(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) 
 }
 
 function drawPixelFan(ctx, palette, x, y, shirt) {
+  const u = Math.max(1, Math.round(gamecastSize(1) * 0.62));
   ctx.fillStyle = palette.crowdHair;
-  ctx.fillRect(x, y, gamecastSize(4), gamecastSize(1));
+  ctx.fillRect(x, y, u * 4, u);
   ctx.fillStyle = palette.crowdSkin;
-  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), gamecastSize(2), gamecastSize(2));
+  ctx.fillRect(x + u, y + u, u * 2, u * 2);
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
-  ctx.fillRect(x + gamecastSize(2), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
+  ctx.fillRect(x + u, y + u * 2, u, u);
+  ctx.fillRect(x + u * 2, y + u * 2, u, u);
   ctx.fillStyle = shirt;
-  ctx.fillRect(x, y + gamecastSize(3), gamecastSize(4), gamecastSize(2));
+  ctx.fillRect(x, y + u * 3, u * 4, u * 2);
   ctx.fillStyle = palette.crowdSkin;
-  ctx.fillRect(x - gamecastSize(1), y + gamecastSize(3), gamecastSize(1), gamecastSize(1));
-  ctx.fillRect(x + gamecastSize(4), y + gamecastSize(3), gamecastSize(1), gamecastSize(1));
+  ctx.fillRect(x - u, y + u * 3, u, u);
+  ctx.fillRect(x + u * 4, y + u * 3, u, u);
   ctx.fillStyle = palette.stand;
-  ctx.fillRect(x, y + gamecastSize(5), gamecastSize(4), gamecastSize(1));
+  ctx.fillRect(x, y + u * 5, u * 4, u);
 }
 
 function drawPixelFanSign(ctx, palette, x, y, color) {
+  const u = Math.max(1, Math.round(gamecastSize(1) * 0.62));
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(x, y, gamecastSize(7), gamecastSize(4));
+  ctx.fillRect(x, y, u * 7, u * 4);
   ctx.fillStyle = palette.base;
-  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), gamecastSize(5), gamecastSize(2));
+  ctx.fillRect(x + u, y + u, u * 5, u * 2);
   ctx.fillStyle = color;
-  ctx.fillRect(x + gamecastSize(2), y + gamecastSize(1), gamecastSize(3), gamecastSize(1));
-  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
-  ctx.fillRect(x + gamecastSize(5), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
+  ctx.fillRect(x + u * 2, y + u, u * 3, u);
+  ctx.fillRect(x + u, y + u * 2, u, u);
+  ctx.fillRect(x + u * 5, y + u * 2, u, u);
   ctx.fillStyle = palette.crowdSkin;
-  ctx.fillRect(x, y + gamecastSize(4), gamecastSize(1), gamecastSize(1));
-  ctx.fillRect(x + gamecastSize(6), y + gamecastSize(4), gamecastSize(1), gamecastSize(1));
+  ctx.fillRect(x, y + u * 4, u, u);
+  ctx.fillRect(x + u * 6, y + u * 4, u, u);
 }
 
 function drawBallparkInfield(ctx, palette) {
@@ -7201,9 +7209,9 @@ function drawPixelFielders(ctx, palette, frame) {
 function gamecastDefensiveAlignment() {
   const bases = gamecastBasePositions();
   return [
-    { key: "LF", position: { x: gamecastX(22), y: gamecastY(43) }, frame: 1 },
-    { key: "CF", position: { x: gamecastX(60), y: gamecastY(31) }, frame: 2 },
-    { key: "RF", position: { x: gamecastX(98), y: gamecastY(43) }, frame: 0 },
+    { key: "LF", position: { x: gamecastX(25), y: gamecastY(55) }, frame: 1 },
+    { key: "CF", position: { x: gamecastX(60), y: gamecastY(36) }, frame: 2 },
+    { key: "RF", position: { x: gamecastX(95), y: gamecastY(55) }, frame: 0 },
     { key: "SS", position: { x: gamecastX(42), y: gamecastY(66) }, frame: 1 },
     { key: "2B", position: { x: gamecastX(78), y: gamecastY(65) }, frame: 0 },
     { key: "3B", position: { x: gamecastX(26), y: gamecastY(77) }, frame: 2 },
@@ -8172,23 +8180,21 @@ function battedBallTarget(event) {
   const pullSide = gamecastEventNoise(event, 1) >= 0 ? 1 : -1;
   const xJitter = gamecastEventNoise(event, 2) * 7;
   const yJitter = gamecastEventNoise(event, 3) * 5;
-  const clampX = (value) => gamecastX(Math.max(10, Math.min(110, value)));
-  const clampY = (value) => gamecastY(Math.max(18, Math.min(88, value)));
+  const fieldPoint = (x, y, options = {}) => gamecastPlayableFieldPoint(event, x, y, options);
   const fieldingSpot = gamecastFieldingSpot(event);
   if (fieldingSpot) {
     const battedType = String(event?.battedBallType ?? "");
     const liftY = battedType === "flyBall" ? -6 : battedType === "groundBall" ? 5 : 0;
-    return {
-      x: clampX(fieldingSpot.x + xJitter * 0.35),
-      y: clampY(fieldingSpot.y + liftY + yJitter * 0.35)
-    };
+    return fieldPoint(fieldingSpot.x + xJitter * 0.35, fieldingSpot.y + liftY + yJitter * 0.35, {
+      warningTrack: ["LF", "CF", "RF"].includes(normalizeFieldingPosition(event?.fieldingPosition))
+    });
   }
-  if (event?.outcome === "homeRun") return { x: clampX((pullSide > 0 ? 102 : 18) + xJitter), y: clampY(22 + yJitter * 0.5) };
-  if (event?.outcome === "triple") return { x: clampX((pullSide > 0 ? 104 : 16) + xJitter), y: clampY(35 + yJitter) };
-  if (event?.outcome === "double") return { x: clampX((pullSide > 0 ? 94 : 26) + xJitter), y: clampY(43 + yJitter) };
-  if (event?.outcome === "single") return { x: clampX((pullSide > 0 ? 78 : 42) + xJitter), y: clampY(58 + yJitter) };
-  if (event?.outcome === "error") return { x: clampX((pullSide > 0 ? 74 : 46) + xJitter * 0.7), y: clampY(75 + yJitter * 0.5) };
-  return { x: clampX((pullSide > 0 ? 82 : 38) + xJitter), y: clampY(48 + yJitter) };
+  if (event?.outcome === "homeRun") return fieldPoint((pullSide > 0 ? 102 : 18) + xJitter, 30 + yJitter * 0.5, { warningTrack: true });
+  if (event?.outcome === "triple") return fieldPoint((pullSide > 0 ? 104 : 16) + xJitter, 39 + yJitter, { warningTrack: true });
+  if (event?.outcome === "double") return fieldPoint((pullSide > 0 ? 94 : 26) + xJitter, 46 + yJitter, { warningTrack: true });
+  if (event?.outcome === "single") return fieldPoint((pullSide > 0 ? 78 : 42) + xJitter, 58 + yJitter);
+  if (event?.outcome === "error") return fieldPoint((pullSide > 0 ? 74 : 46) + xJitter * 0.7, 75 + yJitter * 0.5);
+  return fieldPoint((pullSide > 0 ? 82 : 38) + xJitter, 48 + yJitter, { warningTrack: true });
 }
 
 function battedBallLift(event) {
@@ -8212,10 +8218,10 @@ function gamecastDefenderStartForTarget(target, event) {
   const deep = target.y < gamecastY(52);
   const infield = target.y > gamecastY(68);
   if (infield) return { x: leftSide ? gamecastX(42) : gamecastX(78), y: gamecastY(72) };
-  if (event?.outcome === "homeRun") return { x: leftSide ? gamecastX(22) : gamecastX(98), y: gamecastY(48) };
+  if (event?.outcome === "homeRun") return { x: leftSide ? gamecastX(25) : gamecastX(95), y: gamecastY(55) };
   return {
     x: leftSide ? gamecastX(deep ? 24 : 36) : gamecastX(deep ? 96 : 84),
-    y: gamecastY(deep ? 41 : 55)
+    y: gamecastY(deep ? 48 : 58)
   };
 }
 
@@ -8228,11 +8234,25 @@ function gamecastFieldingSpot(event) {
     "2B": { x: 78, y: 63 },
     "3B": { x: 26, y: 74 },
     SS: { x: 42, y: 64 },
-    LF: { x: 22, y: 42 },
-    CF: { x: 60, y: 31 },
-    RF: { x: 98, y: 42 }
+    LF: { x: 25, y: 55 },
+    CF: { x: 60, y: 36 },
+    RF: { x: 95, y: 55 }
   };
   return spots[key] ?? null;
+}
+
+function gamecastPlayableFieldPoint(event, logicalX, logicalY, options = {}) {
+  const x = Math.max(12, Math.min(108, Number(logicalX) || 60));
+  const profile = gamecastBallparkProfileForEvent(event);
+  const wallY = gamecastOutfieldWallY(profile, x);
+  const playableMinY = wallY + (options.warningTrack ? 4.6 : 7.2);
+  const y = Math.max(playableMinY, Math.min(90, Number(logicalY) || 60));
+  return { x: gamecastX(x), y: gamecastY(y) };
+}
+
+function gamecastBallparkProfileForEvent(event) {
+  const id = String(event?.ballparkId ?? "").trim();
+  return KBO_GAMECAST_BALLPARKS[id] ?? gamecastBallparkByName(event?.ballparkName) ?? KBO_GAMECAST_BALLPARKS.neutral;
 }
 
 function gamecastEventNoise(event, salt = 0) {
