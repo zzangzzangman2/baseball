@@ -101,6 +101,15 @@ V2_GRID = {
     "miss": (4, 4),
     "take": (5, 4),
     "lookUp": (6, 4),
+    "reserved_a": (7, 4),
+    "stance_open": (0, 5),
+    "load_open": (1, 5),
+    "stance_crouch": (2, 5),
+    "load_crouch": (3, 5),
+    "pitch_alt_set": (4, 5),
+    "pitch_alt_release": (5, 5),
+    "reserved_b": (6, 5),
+    "reserved_c": (7, 5),
 }
 
 V2_ALIASES = {
@@ -150,7 +159,100 @@ LEGACY_ANIMATIONS = {
     "catcher": {"frames": ["catcher"], "durations": [160]},
 }
 
-AIRBORNE_OR_LOW_POSES = {"pitch", "pitch_release", "dive", "dive_slide", "slide", "slide_in", "slide_hold", "catcher", "catcher_frame", "catcher_block"}
+AIRBORNE_OR_LOW_POSES = {
+    "pitch",
+    "pitch_stride",
+    "pitch_release",
+    "pitch_follow1",
+    "pitch_follow2",
+    "pitch_alt_release",
+    "throw_release",
+    "dive",
+    "dive_slide",
+    "slide",
+    "slide_in",
+    "slide_hold",
+    "catcher",
+    "catcher_frame",
+    "catcher_block",
+}
+
+LEGACY_TO_V2_BASE = {
+    "stance": "stance",
+    "load": "stance",
+    "stride": "stance",
+    "swing1": "swing",
+    "contact": "swing",
+    "swing2": "follow",
+    "follow1": "follow",
+    "follow2": "follow",
+    "pitch_set": "windup",
+    "pitch_kick": "windup",
+    "pitch_stride": "pitch",
+    "pitch_cock": "windup",
+    "pitch_release": "pitch",
+    "pitch_follow1": "pitch",
+    "pitch_follow2": "pitch",
+    "idle": "idle",
+    "run1": "run1",
+    "run2": "run2",
+    "run3": "run1",
+    "run4": "run2",
+    "walk1": "walk1",
+    "walk2": "idle",
+    "throw_plant": "field",
+    "throw_release": "pitch",
+    "throw_follow": "follow",
+    "field": "field",
+    "catch_track": "field",
+    "catch_reach": "catch",
+    "catch_squeeze": "catch",
+    "dive_launch": "field",
+    "dive_slide": "dive",
+    "dive_getup": "field",
+    "slide_in": "slide",
+    "slide_hold": "slide",
+    "catcher_frame": "catcher",
+    "catcher_block": "catcher",
+    "miss": "miss",
+    "take": "take",
+    "lookUp": "lookUp",
+    "stance_open": "stance",
+    "load_open": "stance",
+    "stance_crouch": "stance",
+    "load_crouch": "stance",
+    "pitch_alt_set": "windup",
+    "pitch_alt_release": "pitch",
+}
+
+LEGACY_TO_V2_SHIFT = {
+    "load": (-1, 0),
+    "stride": (1, 0),
+    "swing1": (-1, 0),
+    "swing2": (1, 0),
+    "follow2": (2, 0),
+    "pitch_kick": (0, -1),
+    "pitch_stride": (1, 0),
+    "pitch_follow1": (1, 0),
+    "pitch_follow2": (2, 1),
+    "run3": (0, -1),
+    "run4": (0, 1),
+    "walk2": (1, 0),
+    "throw_release": (2, 0),
+    "throw_follow": (1, 0),
+    "catch_track": (-1, 0),
+    "catch_reach": (1, -1),
+    "dive_launch": (2, -1),
+    "dive_getup": (-1, 1),
+    "slide_hold": (1, 0),
+    "catcher_block": (0, 1),
+    "stance_open": (1, 0),
+    "load_open": (0, -1),
+    "stance_crouch": (0, 1),
+    "load_crouch": (-1, 1),
+    "pitch_alt_set": (-1, 0),
+    "pitch_alt_release": (1, 0),
+}
 
 
 def is_key_color(pixel: Tuple[int, int, int, int]) -> bool:
@@ -290,6 +392,12 @@ def normalize_frame(source_cell: Image.Image, uniform: str) -> Image.Image:
     return output
 
 
+def shift_frame(frame: Image.Image, dx: int = 0, dy: int = 0) -> Image.Image:
+    shifted = Image.new("RGBA", (FRAME, FRAME), (0, 0, 0, 0))
+    shifted.alpha_composite(frame, (dx, dy))
+    return shifted
+
+
 def atlas_frame(x: int, y: int) -> Dict[str, object]:
     return {
         "frame": {"x": x, "y": y, "w": FRAME, "h": FRAME},
@@ -388,6 +496,48 @@ def write_player_atlas(
     write_json(output_dir / f"player-{uniform}.json", image_name, atlas.size, frames, layout_name, animations)
 
 
+def build_legacy_normalized_frames(source: Image.Image, uniform: str) -> Dict[str, Image.Image]:
+    frames: Dict[str, Image.Image] = {}
+    for pose, (col, row) in POSE_GRID.items():
+        frames[pose] = normalize_frame(crop_source_cell(source, col, row, LEGACY_COLS, LEGACY_ROWS), uniform)
+    return frames
+
+
+def write_synthesized_v2_atlas(
+    source: Image.Image,
+    output_dir: Path,
+    uniform: str,
+    strict_registration: bool,
+) -> None:
+    image_name = f"player-{uniform}.png"
+    legacy_frames = build_legacy_normalized_frames(source, uniform)
+    atlas = Image.new("RGBA", (V2_COLS * FRAME, V2_ROWS * FRAME), (0, 0, 0, 0))
+    frames: Dict[str, object] = {}
+    validation_frames: Dict[str, Image.Image] = {}
+
+    for pose, (col, row) in V2_GRID.items():
+        x = col * FRAME
+        y = row * FRAME
+        base_name = LEGACY_TO_V2_BASE.get(pose)
+        frame = Image.new("RGBA", (FRAME, FRAME), (0, 0, 0, 0))
+        if base_name and base_name in legacy_frames:
+            dx, dy = LEGACY_TO_V2_SHIFT.get(pose, (0, 0))
+            frame = shift_frame(legacy_frames[base_name], dx, dy)
+        atlas.alpha_composite(frame, (x, y))
+        frames[pose] = atlas_frame(x, y)
+        if base_name:
+            validation_frames[pose] = frame
+
+    for alias, target in V2_ALIASES.items():
+        if target in frames:
+            frames[alias] = frames[target]
+
+    validate_registration(validation_frames, strict_registration)
+
+    atlas.save(output_dir / image_name)
+    write_json(output_dir / f"player-{uniform}.json", image_name, atlas.size, frames, "v2", V2_ANIMATIONS)
+
+
 def write_props_atlas(output_dir: Path) -> None:
     image_name = "props.png"
     atlas = Image.new("RGBA", (FRAME * 3, FRAME), (0, 0, 0, 0))
@@ -454,6 +604,7 @@ def main() -> None:
     parser.add_argument("--source", default=Path("assets/gamecast/source/player-sheet-imagegen.png"), type=Path, help="Imagegen source sprite sheet")
     parser.add_argument("--out", default=Path("assets/gamecast"), type=Path, help="Output asset directory")
     parser.add_argument("--layout", choices=("auto", "legacy", "v2"), default="auto", help="Source grid layout")
+    parser.add_argument("--keep-legacy-output", action="store_true", help="When the source is legacy, emit the legacy atlas instead of synthesizing a v2 atlas")
     parser.add_argument("--strict-registration", action="store_true", help="Fail on registration warnings")
     args = parser.parse_args()
 
@@ -469,8 +620,13 @@ def main() -> None:
     if args.source.resolve() != source_copy.resolve():
         shutil.copyfile(args.source, source_copy)
 
-    write_player_atlas(source, output_dir, "home", sheet_cols, sheet_rows, pose_grid, aliases, animations, layout_name, args.strict_registration)
-    write_player_atlas(source, output_dir, "away", sheet_cols, sheet_rows, pose_grid, aliases, animations, layout_name, args.strict_registration)
+    if layout_name == "legacy" and not args.keep_legacy_output:
+        print("emitting: synthesized v2 atlas from legacy source")
+        write_synthesized_v2_atlas(source, output_dir, "home", args.strict_registration)
+        write_synthesized_v2_atlas(source, output_dir, "away", args.strict_registration)
+    else:
+        write_player_atlas(source, output_dir, "home", sheet_cols, sheet_rows, pose_grid, aliases, animations, layout_name, args.strict_registration)
+        write_player_atlas(source, output_dir, "away", sheet_cols, sheet_rows, pose_grid, aliases, animations, layout_name, args.strict_registration)
     write_props_atlas(output_dir)
 
     counts = count_colors([

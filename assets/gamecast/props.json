@@ -63,13 +63,20 @@
   },
   "meta": {
     "app": "Codex Gamecast Sprite Pipeline",
-    "version": "1.0",
+    "version": "1.1",
     "image": "props.png",
     "format": "RGBA8888",
     "size": {
       "w": 144,
       "h": 48
     },
-    "scale": "1"
+    "scale": "1",
+    "frameSize": {
+      "w": 48,
+      "h": 48
+    },
+    "layout": "legacy",
+    "baselineY": 45,
+    "centerX": 24
   }
 }

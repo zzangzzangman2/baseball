@@ -7615,6 +7615,9 @@ function buildBatterSprite(event, progress, palette) {
   } else if (progress >= pitchEnd + 0.16) {
     pose = event.outcome === "strikeout" ? "miss" : "follow";
   }
+  const swingStart = pitchEnd - 0.1;
+  const swingEnd = pitchEnd + 0.3;
+  const swingT = Math.max(0, Math.min(1, (progress - swingStart) / Math.max(0.01, swingEnd - swingStart)));
 
   return {
     position: {
@@ -7627,6 +7630,8 @@ function buildBatterSprite(event, progress, palette) {
     accentColor: event.teamAccentColor ?? event.teamColor ?? palette.runner,
     uniformNumber: event.hitterUniformNumber,
     pose,
+    animationKey: event.outcome === "walk" ? null : "swing",
+    animationT: swingT,
     runFrame: 2
   };
 }
@@ -7770,10 +7775,13 @@ function buildRunnerSprites(event, progress, palette) {
     jerseyShadow,
     accentColor,
     uniformNumber,
-    runFrame: Math.floor(moveT * 8) % 2,
+    runFrame: Math.floor(moveT * 12) % 4,
     squash: progress > 0.55,
     role: "batter",
-    pose: "run"
+    pose: "run",
+    animationKey: "run",
+    animationT: moveT * 2,
+    animationLoop: true
   });
   return runners;
 }
@@ -7782,7 +7790,7 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner"
   const position = positionAlongPath(path, eased);
   const previousPosition = positionAlongPath(path, Math.max(0, eased - 0.05));
   const facing = position.x >= previousPosition.x ? 1 : -1;
-  const stride = Math.floor(moveT * (options.pose === "walk" ? 4 : 8));
+  const stride = Math.floor(moveT * (options.pose === "walk" ? 4 : 12));
   const sliding = options.allowSlide === true && options.pose === "run" && moveT > 0.82;
   const pose = sliding ? "slide" : (options.pose ?? "run");
   const bob = pose === "walk" ? (stride % 2 ? 0 : -1) : (stride % 2 ? -1 : 0);
@@ -7807,9 +7815,12 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner"
     accentColor: options.accentColor,
     uniformNumber: options.uniformNumber,
     trailColor,
-    runFrame: pose === "slide" || moveT > 0.92 ? 2 : stride % 2,
+    runFrame: pose === "slide" || moveT > 0.92 ? 2 : stride % (pose === "run" ? 4 : 2),
     squash: pose === "walk" || pose === "slide" ? false : moveT > 0.92,
     pose,
+    animationKey: pose === "slide" ? "slide" : pose,
+    animationT: pose === "run" ? moveT * 2.4 : moveT,
+    animationLoop: pose === "run" || pose === "walk",
     facing,
     role
   };
@@ -7914,7 +7925,9 @@ function buildGamecastDefenseSprites(event, progress, palette) {
       uniformNumber: gamecastUniformNumber(event.pitcherName, "P"),
       runFrame: windT > 0.72 ? 1 : 2,
       squash: false,
-      pose: windT < 0.48 ? "windup" : "pitch"
+      pose: windT < 0.48 ? "windup" : "pitch",
+      animationKey: "pitch",
+      animationT: windT
     });
   }
   if (!isBattedBallOutcome(event?.outcome)) return sprites;
@@ -7943,6 +7956,7 @@ function buildGamecastDefenseSprites(event, progress, palette) {
             : "run";
   const catchBurst = (event.outcome === "out" && progress > catchProgress - 0.02 && progress < catchProgress + 0.12)
     || (event.outcome === "error" && progress > catchProgress - 0.02 && progress < catchProgress + 0.14);
+  const defenseAnimation = gamecastDefenseAnimationForPose(impactPose, progress, runStart, catchProgress, fieldT);
 
   sprites.push({
     position,
@@ -7955,6 +7969,9 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     runFrame: Math.floor(fieldT * 12) % 4,
     squash: throwing,
     pose: impactPose,
+    animationKey: defenseAnimation.key,
+    animationT: defenseAnimation.t,
+    animationLoop: defenseAnimation.loop,
     catchBurst,
     facing: target.x >= start.x ? 1 : -1
   });
@@ -7979,13 +7996,41 @@ function buildGamecastDefenseSprites(event, progress, palette) {
       accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
       fieldingKey: normalizeFieldingPosition(event.fieldingPosition),
       uniformNumber: gamecastUniformNumber(event.defenderName, event.fieldingPosition),
-      runFrame: 2,
-      squash: false,
-      pose: "lookUp"
+    runFrame: 2,
+    squash: false,
+    pose: "lookUp",
+    animationKey: null,
+    animationT: 0
     });
   }
 
   return sprites;
+}
+
+function gamecastDefenseAnimationForPose(pose, progress, runStart, catchProgress, fieldT) {
+  if (pose === "run") return { key: "run", t: fieldT * 1.8, loop: true };
+  if (pose === "catch") {
+    return {
+      key: "catch",
+      t: Math.max(0, Math.min(1, (progress - (catchProgress - 0.05)) / 0.18)),
+      loop: false
+    };
+  }
+  if (pose === "dive") {
+    return {
+      key: "dive",
+      t: Math.max(0, Math.min(1, (progress - (catchProgress - 0.08)) / 0.24)),
+      loop: false
+    };
+  }
+  if (pose === "throw") {
+    return {
+      key: "throw",
+      t: Math.max(0, Math.min(1, (progress - (catchProgress + 0.06)) / 0.24)),
+      loop: false
+    };
+  }
+  return { key: null, t: 0, loop: false };
 }
 
 function gamecastFielderRoutePoint(start, target, t, key, event) {
@@ -8020,6 +8065,7 @@ function gamecastDifficultFieldingPlay(event, key, target, start) {
 }
 
 function gamecastSupportFielderSprite(event, palette, key, position, pose = "field", runFrame = 0) {
+  const animationKey = pose === "throw" ? "throw" : pose === "catch" ? "catch" : pose === "run" ? "run" : null;
   return {
     position,
     color: event.defenseColor ?? palette.defender,
@@ -8030,7 +8076,10 @@ function gamecastSupportFielderSprite(event, palette, key, position, pose = "fie
     uniformNumber: gamecastUniformNumber(key, key),
     runFrame,
     squash: false,
-    pose
+    pose,
+    animationKey,
+    animationT: pose === "throw" || pose === "catch" ? 0.72 : 0,
+    animationLoop: pose === "run"
   };
 }
 

@@ -3,28 +3,87 @@ const PHASER_DESIGN_H = 360;
 const PLAYER_ATLAS_SIZE = 48;
 const PLAYER_ATLAS_FRAMES = {
   stance: [0, 0],
-  swing: [1, 0],
-  follow: [2, 0],
-  miss: [3, 0],
-  take: [4, 0],
-  idle: [0, 1],
-  run1: [1, 1],
-  run2: [2, 1],
-  walk1: [3, 1],
-  walk2: [1, 1],
-  slide: [4, 1],
-  windup: [0, 2],
-  pitch: [1, 2],
-  field: [0, 3],
-  catch: [1, 3],
-  dive: [2, 3],
-  catcher: [3, 3],
-  lookUp: [4, 3],
-  load: [0, 0],
-  walk: [3, 1],
-  run: [1, 1],
-  coach: [0, 1],
-  umpire: [0, 1]
+  load: [1, 0],
+  stride: [2, 0],
+  swing1: [3, 0],
+  contact: [4, 0],
+  swing2: [5, 0],
+  follow1: [6, 0],
+  follow2: [7, 0],
+  pitch_set: [0, 1],
+  pitch_kick: [1, 1],
+  pitch_stride: [2, 1],
+  pitch_cock: [3, 1],
+  pitch_release: [4, 1],
+  pitch_follow1: [5, 1],
+  pitch_follow2: [6, 1],
+  idle: [7, 1],
+  run1: [0, 2],
+  run2: [1, 2],
+  run3: [2, 2],
+  run4: [3, 2],
+  walk1: [4, 2],
+  walk2: [5, 2],
+  throw_plant: [6, 2],
+  throw_release: [7, 2],
+  throw_follow: [0, 3],
+  field: [1, 3],
+  catch_track: [2, 3],
+  catch_reach: [3, 3],
+  catch_squeeze: [4, 3],
+  dive_launch: [5, 3],
+  dive_slide: [6, 3],
+  dive_getup: [7, 3],
+  slide_in: [0, 4],
+  slide_hold: [1, 4],
+  catcher_frame: [2, 4],
+  catcher_block: [3, 4],
+  miss: [4, 4],
+  take: [5, 4],
+  lookUp: [6, 4],
+  reserved_a: [7, 4],
+  stance_open: [0, 5],
+  load_open: [1, 5],
+  stance_crouch: [2, 5],
+  load_crouch: [3, 5],
+  pitch_alt_set: [4, 5],
+  pitch_alt_release: [5, 5],
+  reserved_b: [6, 5],
+  reserved_c: [7, 5],
+  swing: [4, 0],
+  follow: [6, 0],
+  windup: [0, 1],
+  pitch: [4, 1],
+  catch: [4, 3],
+  dive: [6, 3],
+  slide: [1, 4],
+  catcher: [2, 4],
+  walk: [4, 2],
+  run: [0, 2],
+  coach: [7, 1],
+  umpire: [7, 1]
+};
+const PLAYER_V2_ANIMATIONS = {
+  swing: { frames: ["stance", "load", "stride", "swing1", "contact", "swing2", "follow1", "follow2"], durations: [90, 70, 70, 45, 90, 45, 70, 100] },
+  pitch: { frames: ["pitch_set", "pitch_kick", "pitch_stride", "pitch_cock", "pitch_release", "pitch_follow1", "pitch_follow2"], durations: [100, 90, 70, 60, 45, 70, 100] },
+  run: { frames: ["run1", "run2", "run3", "run4"], durations: [70, 70, 70, 70] },
+  walk: { frames: ["walk1", "walk2"], durations: [120, 120] },
+  throw: { frames: ["throw_plant", "throw_release", "throw_follow"], durations: [80, 50, 90] },
+  catch: { frames: ["catch_track", "catch_reach", "catch_squeeze"], durations: [90, 60, 100] },
+  dive: { frames: ["dive_launch", "dive_slide", "dive_getup"], durations: [70, 90, 120] },
+  slide: { frames: ["slide_in", "slide_hold"], durations: [80, 140] },
+  catcher: { frames: ["catcher_frame", "catcher_block"], durations: [120, 120] }
+};
+const PLAYER_LEGACY_ANIMATIONS = {
+  swing: { frames: ["stance", "swing", "follow"], durations: [120, 90, 140] },
+  pitch: { frames: ["windup", "pitch"], durations: [140, 120] },
+  run: { frames: ["run1", "run2"], durations: [90, 90] },
+  walk: { frames: ["walk1", "walk2"], durations: [140, 140] },
+  throw: { frames: ["field", "pitch"], durations: [100, 90] },
+  catch: { frames: ["field", "catch"], durations: [120, 140] },
+  dive: { frames: ["field", "dive"], durations: [120, 160] },
+  slide: { frames: ["run1", "slide"], durations: [90, 160] },
+  catcher: { frames: ["catcher"], durations: [160] }
 };
 const SPRITE_ASSET_ROOT = "./assets/gamecast";
 
@@ -772,7 +831,7 @@ function drawSpritePlayer(scene, graphics, runtime, sprite, role) {
   const baseKey = isAwayUniform(sprite.jerseyColor) ? "gamecast-player-away" : "gamecast-player-home";
   const accent = sprite.accentColor ?? sprite.color ?? palette.runner;
   const textureKey = ensureTeamSpriteAtlas(scene, baseKey, accent);
-  const frame = spriteFrameForPose(sprite, role);
+  const frame = spriteFrameForPose(scene, textureKey, sprite, role);
   if (!scene.textures.exists(textureKey) || !scene.textures.getFrame(textureKey, frame)) return false;
 
   rect(graphics, runtime, x - 13, y + 1, 26, 5, palette.shadow, 0.28);
@@ -816,15 +875,69 @@ function drawSpriteSkinOverlay(scene, runtime, sprite, role) {
 const CENTER_ORIGIN_X = 24 / PLAYER_ATLAS_SIZE;
 const BASELINE_ORIGIN_Y = 45 / PLAYER_ATLAS_SIZE;
 
-function spriteFrameForPose(sprite, role) {
+function spriteFrameForPose(scene, textureKey, sprite, role) {
   if (role === "umpire") return "umpire";
   if (role?.startsWith("defender") && sprite?.fieldingKey === "C") return "catcher";
   const pose = String(sprite?.pose ?? "idle");
+  const animatedFrame = spriteTimelineFrame(scene, textureKey, sprite, role);
+  if (animatedFrame) return animatedFrame;
   if (pose === "run") return Number(sprite?.runFrame ?? 0) % 2 ? "run2" : "run1";
   if (pose === "walk") return Number(sprite?.runFrame ?? 0) % 2 ? "walk2" : "walk1";
   if (pose === "load") return "stance";
   if (pose === "throw") return "pitch";
   return PLAYER_ATLAS_FRAMES[pose] ? pose : "idle";
+}
+
+function spriteTimelineFrame(scene, textureKey, sprite, role) {
+  const key = spriteAnimationKey(sprite, role);
+  if (!key) return null;
+  const spec = selectSpriteAnimationSpec(scene, textureKey, key);
+  if (!spec?.frames?.length) return null;
+  const t = normalizeAnimationTime(sprite?.animationT ?? sprite?.animationProgress ?? sprite?.runFrame ?? 0, Boolean(sprite?.animationLoop));
+  const total = spec.durations.reduce((sum, value) => sum + Math.max(1, Number(value) || 1), 0);
+  let cursor = t * Math.max(1, total);
+  for (let index = 0; index < spec.frames.length; index += 1) {
+    cursor -= Math.max(1, Number(spec.durations[index]) || 1);
+    if (cursor <= 0 || index === spec.frames.length - 1) return spec.frames[index];
+  }
+  return spec.frames[spec.frames.length - 1] ?? null;
+}
+
+function spriteAnimationKey(sprite, role) {
+  if (sprite?.animationKey) return String(sprite.animationKey);
+  const pose = String(sprite?.pose ?? "");
+  if (role === "batter" && ["stance", "load", "swing", "follow", "miss"].includes(pose)) return "swing";
+  if (pose === "windup" || pose === "pitch") return "pitch";
+  if (pose === "run" || pose === "walk" || pose === "slide" || pose === "catch" || pose === "dive" || pose === "throw") return pose;
+  if (role?.startsWith("defender") && sprite?.fieldingKey === "C") return "catcher";
+  return null;
+}
+
+function normalizeAnimationTime(value, loop = false) {
+  const raw = Number(value) || 0;
+  if (loop) return ((raw % 1) + 1) % 1;
+  return Math.max(0, Math.min(0.999, raw));
+}
+
+function selectSpriteAnimationSpec(scene, textureKey, key) {
+  const v2 = PLAYER_V2_ANIMATIONS[key];
+  if (v2 && v2.frames.every((frame) => textureHasFrame(scene, textureKey, frame))) return v2;
+  const legacy = PLAYER_LEGACY_ANIMATIONS[key];
+  if (legacy) {
+    const frames = [];
+    const durations = [];
+    for (let index = 0; index < legacy.frames.length; index += 1) {
+      if (!textureHasFrame(scene, textureKey, legacy.frames[index])) continue;
+      frames.push(legacy.frames[index]);
+      durations.push(legacy.durations[index] ?? 100);
+    }
+    if (frames.length) return { frames, durations };
+  }
+  return null;
+}
+
+function textureHasFrame(scene, textureKey, frame) {
+  return Boolean(scene?.textures?.exists?.(textureKey) && scene.textures.getFrame(textureKey, frame));
 }
 
 function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
@@ -868,7 +981,10 @@ function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
 
     const texture = scene.textures.addCanvas(cacheKey, canvas);
     for (const [name, [col, row]] of Object.entries(PLAYER_ATLAS_FRAMES)) {
-      texture.add(name, 0, col * PLAYER_ATLAS_SIZE, row * PLAYER_ATLAS_SIZE, PLAYER_ATLAS_SIZE, PLAYER_ATLAS_SIZE);
+      const x = col * PLAYER_ATLAS_SIZE;
+      const y = row * PLAYER_ATLAS_SIZE;
+      if (x + PLAYER_ATLAS_SIZE > canvas.width || y + PLAYER_ATLAS_SIZE > canvas.height) continue;
+      texture.add(name, 0, x, y, PLAYER_ATLAS_SIZE, PLAYER_ATLAS_SIZE);
     }
     texture.refresh?.();
     scene.gamecastTeamTextureCache?.set(cacheKey, cacheKey);
