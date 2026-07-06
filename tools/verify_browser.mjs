@@ -173,6 +173,7 @@ async function main() {
       await runCheck(`${viewport.label} 렌더링`, () => checkViewport(viewport));
     }
 
+    await runCheck("게임캐스트 랩", checkGamecastLab);
     await runCheck("브라우저 콘솔 에러", checkBrowserConsoleErrors);
   } finally {
     await cleanup();
@@ -921,9 +922,10 @@ async function checkViewport(viewport) {
   assert(liveProbe.feedCount <= 1 || liveProbe.nowText !== playbackProbe.nowText || liveProbe.score !== playbackProbe.scoreline, "게임캐스트 재생 중 현재 타석/스코어 동기화 변화가 감지되지 않았습니다.", "src/ui.js");
   assert(result.hasDailyReport, "정규시즌 진행 후 전력분석/퓨처스 일일 보고가 확인되지 않았습니다.", "src/engine.js");
   assert(result.gamecastCanvasPixelW >= 120 && result.gamecastCanvasPixelH >= 108, `게임캐스트 내부 해상도가 너무 작습니다: ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/ui.js");
-  assert(result.gamecastCanvasCssWidth % result.gamecastCanvasPixelW === 0 && result.gamecastCanvasCssHeight % result.gamecastCanvasPixelH === 0, `픽셀 캔버스 CSS 크기가 내부 해상도의 정수 배율이 아닙니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/ui.js");
-  assert(result.gamecastCanvasCssWidth >= result.gamecastCanvasPixelW && result.gamecastCanvasCssHeight >= result.gamecastCanvasPixelH, `게임캐스트 표시 크기가 내부 해상도보다 작습니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/styles.css");
-  assert(result.gamecastCanvasCssWidth / result.gamecastCanvasPixelW === result.gamecastCanvasCssHeight / result.gamecastCanvasPixelH, `게임캐스트 표시 비율이 내부 해상도와 다릅니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/styles.css");
+  const gamecastScaleX = result.gamecastCanvasCssWidth / Math.max(1, result.gamecastCanvasPixelW);
+  const gamecastScaleY = result.gamecastCanvasCssHeight / Math.max(1, result.gamecastCanvasPixelH);
+  assert(Math.abs(gamecastScaleX - gamecastScaleY) < 0.02, `게임캐스트 표시 비율이 내부 해상도와 다릅니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/styles.css");
+  assert(viewport.width < result.gamecastCanvasPixelW || result.gamecastCanvasCssWidth >= result.gamecastCanvasPixelW, `데스크톱 게임캐스트 표시 크기가 내부 해상도보다 작습니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/styles.css");
   assert(result.gamecastCanvasWidth >= result.gamecastCanvasCssWidth && result.gamecastCanvasHeight >= result.gamecastCanvasCssHeight, `픽셀 캔버스 버퍼가 CSS 표시 크기보다 작습니다: buffer ${result.gamecastCanvasWidth}x${result.gamecastCanvasHeight}, css ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
   assert(/pixelated|crisp-edges/i.test(result.gamecastCanvasImageRendering), `픽셀 캔버스 image-rendering=${result.gamecastCanvasImageRendering}`, "src/styles.css");
   assert(result.gamecastCanvasPixelUnique >= 6 && result.gamecastCanvasAlphaSamples > 0, `픽셀 캔버스가 비었거나 팔레트가 너무 단조롭습니다: unique=${result.gamecastCanvasPixelUnique}, alpha=${result.gamecastCanvasAlphaSamples}`, "src/ui.js");
@@ -966,6 +968,145 @@ async function checkViewport(viewport) {
     `body/client ${result.bodyClientWidth}/${result.clientWidth}`,
     `overflow ${result.overflowPx}px`
   ].join(", ");
+}
+
+async function checkGamecastLab() {
+  assert(cdp, "브라우저 CDP 연결이 없습니다.", "tools/verify_browser.mjs");
+  const labUrl = appUrl.replace(/index\.html(?:.*)?$/, "gamecast-lab.html");
+
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false
+  });
+  let loadEvent = cdp.once("Page.loadEventFired");
+  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&qa=lab-desktop-${Date.now()}` });
+  await loadEvent;
+  await waitForGamecastLabModal();
+  await delay(300);
+
+  const desktopProbe = await evaluateInBrowser(`
+    (() => {
+      const modal = document.querySelector("[data-gamecast-modal]");
+      const screen = modal?.querySelector("[data-gamecast-screen]");
+      const canvas = modal?.querySelector("[data-gamecast-canvas].gamecast-pixel-canvas");
+      const rect = canvas?.getBoundingClientRect();
+      const totalEvents = window.__labState?.lastGames?.[0]?.plateAppearanceEvents?.length ?? 0;
+      const feedCount = modal?.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")?.length ?? 0;
+      return {
+        modalOpen: Boolean(modal),
+        screenCount: document.querySelectorAll("[data-gamecast-screen]").length,
+        activeCanvasCount: document.querySelectorAll("[data-gamecast-canvas].gamecast-pixel-canvas").length,
+        cssWidth: rect?.width ?? 0,
+        cssHeight: rect?.height ?? 0,
+        totalEvents,
+        feedCount,
+        feedText: modal?.querySelector(".gamecast-feed")?.textContent?.trim() ?? "",
+        activeSpeed: modal?.querySelector("[data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? ""
+      };
+    })()
+  `);
+
+  assert(desktopProbe.modalOpen, "게임캐스트 랩 모달이 열리지 않았습니다.", "gamecast-lab.html");
+  assert(desktopProbe.screenCount === 1, `랩 중계 스크린이 ${desktopProbe.screenCount}개입니다.`, "src/ui.js");
+  assert(desktopProbe.activeCanvasCount === 1, `랩 활성 캔버스가 ${desktopProbe.activeCanvasCount}개입니다.`, "src/ui.js");
+  assert(desktopProbe.cssWidth >= 800 && desktopProbe.cssHeight >= 720, `큰 화면 캔버스가 작습니다: ${desktopProbe.cssWidth}x${desktopProbe.cssHeight}`, "src/styles.css");
+  assert(desktopProbe.totalEvents > 20, `랩 PA 이벤트가 부족합니다: ${desktopProbe.totalEvents}`, "src/gamecastLab.js");
+  assert(desktopProbe.feedCount > 0 && desktopProbe.feedCount < desktopProbe.totalEvents, `랩 시작 피드가 전체 경기를 스포일러합니다: feed=${desktopProbe.feedCount}, total=${desktopProbe.totalEvents}`, "src/ui.js");
+  assert(desktopProbe.activeSpeed === "1", `랩 초기 배속이 x1이 아닙니다: x${desktopProbe.activeSpeed}`, "src/ui.js");
+
+  await evaluateInBrowser(`document.querySelector("[data-gamecast-modal] [data-gamecast-speed='2']")?.click(); true`);
+  await delay(1900);
+  const beforeToggle = await evaluateInBrowser(`
+    (() => ({
+      feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
+      activeSpeed: document.querySelector("[data-gamecast-modal] [data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? ""
+    }))()
+  `);
+  await evaluateInBrowser(`document.querySelector("[data-gamecast-engine='canvas']")?.click(); true`);
+  await delay(700);
+  const afterToggle = await evaluateInBrowser(`
+    (() => ({
+      feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
+      screenCount: document.querySelectorAll("[data-gamecast-screen]").length,
+      activeSpeed: document.querySelector("[data-gamecast-modal] [data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? "",
+      engine: document.querySelector("[data-gamecast-modal] [data-gamecast-screen]")?.dataset?.gamecastEngineCurrent ?? ""
+    }))()
+  `);
+  assert(beforeToggle.activeSpeed === "2", `x2 배속 전환이 반영되지 않았습니다: ${JSON.stringify(beforeToggle)}`, "src/ui.js");
+  assert(afterToggle.activeSpeed === "2", `엔진 토글 후 배속이 보존되지 않았습니다: ${JSON.stringify(afterToggle)}`, "src/ui.js");
+  assert(afterToggle.feedCount >= beforeToggle.feedCount, `엔진 토글 후 피드가 되감겼습니다: before=${beforeToggle.feedCount}, after=${afterToggle.feedCount}`, "src/ui.js");
+  assert(afterToggle.screenCount === 1, `엔진 토글 후 스크린이 ${afterToggle.screenCount}개입니다.`, "src/ui.js");
+  assert(afterToggle.engine === "canvas", `엔진 토글 후 Canvas가 아닙니다: ${afterToggle.engine}`, "src/ui.js");
+
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: 375,
+    height: 812,
+    deviceScaleFactor: 3,
+    mobile: true
+  });
+  loadEvent = cdp.once("Page.loadEventFired");
+  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lotte&days=3&qa=lab-mobile-${Date.now()}` });
+  await loadEvent;
+  await waitForGamecastLabModal();
+  await delay(300);
+  const mobileProbe = await evaluateInBrowser(`
+    (() => {
+      const modal = document.querySelector("[data-gamecast-modal]");
+      const screen = modal?.querySelector("[data-gamecast-screen]");
+      const canvas = modal?.querySelector("[data-gamecast-canvas].gamecast-pixel-canvas");
+      const screenRect = screen?.getBoundingClientRect();
+      const canvasRect = canvas?.getBoundingClientRect();
+      const doc = document.documentElement;
+      const body = document.body;
+      return {
+        screenWidth: screenRect?.width ?? 0,
+        canvasWidth: canvasRect?.width ?? 0,
+        canvasLeft: canvasRect?.left ?? 0,
+        canvasRight: canvasRect?.right ?? 0,
+        innerWidth: window.innerWidth,
+        overflowPx: Math.max(doc.scrollWidth, body.scrollWidth) - doc.clientWidth
+      };
+    })()
+  `);
+  assert(mobileProbe.canvasWidth > 0 && mobileProbe.canvasWidth <= mobileProbe.innerWidth, `모바일 캔버스가 뷰포트를 넘습니다: ${JSON.stringify(mobileProbe)}`, "src/styles.css");
+  assert(mobileProbe.canvasLeft >= -1 && mobileProbe.canvasRight <= mobileProbe.innerWidth + 1, `모바일 캔버스 좌우가 잘립니다: ${JSON.stringify(mobileProbe)}`, "src/styles.css");
+  assert(mobileProbe.overflowPx <= 1, `랩 모바일 수평 overflow ${mobileProbe.overflowPx}px`, "src/styles.css");
+
+  return [
+    `desktop ${Math.round(desktopProbe.cssWidth)}x${Math.round(desktopProbe.cssHeight)}`,
+    `feed ${desktopProbe.feedCount}/${desktopProbe.totalEvents}`,
+    "single-instance OK",
+    "speed-persist OK",
+    `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`
+  ].join(", ");
+}
+
+async function waitForGamecastLabModal() {
+  const deadline = Date.now() + 12000;
+  let lastError = "";
+
+  while (Date.now() < deadline) {
+    try {
+      const ready = await evaluateInBrowser(`
+        Boolean(
+          window.__labState?.lastGames?.[0]?.plateAppearanceEvents?.length &&
+          document.querySelector("[data-gamecast-modal] [data-gamecast-screen]") &&
+          document.querySelector("[data-gamecast-modal] [data-gamecast-canvas]")
+        )
+      `);
+      if (ready) {
+        await delay(120);
+        return;
+      }
+    } catch (error) {
+      lastError = error?.message ?? String(error);
+    }
+    await delay(80);
+  }
+
+  throw new VerificationError(`게임캐스트 랩 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "gamecast-lab.html");
 }
 
 function checkBrowserConsoleErrors() {

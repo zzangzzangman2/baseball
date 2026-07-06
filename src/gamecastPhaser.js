@@ -41,7 +41,7 @@ export function mountGamecastPhaser(options) {
     Phaser,
     width: Number(options.width ?? PHASER_DESIGN_W),
     height: Number(options.height ?? PHASER_DESIGN_H),
-    elapsedMs: 0,
+    elapsedMs: Math.max(0, Number(options.elapsedMs ?? 0)),
     playbackRate: Number(options.playbackRate ?? 1),
     done: false,
     paused: false,
@@ -109,7 +109,7 @@ export function mountGamecastPhaser(options) {
       if (frame) {
         runtime.currentFrame = frame;
         paintStaticHoldFrame(runtime, frame);
-        runtime.onFrame?.({ ...frame, done: true });
+        runtime.onFrame?.({ ...frame, paused: true });
       }
     },
     resume() {
@@ -149,8 +149,10 @@ function calculatePhaserMetrics(runtime) {
       + Number.parseFloat(style.borderLeftWidth || "0")
       + Number.parseFloat(style.borderRightWidth || "0")
     : 0;
-  const available = Math.max(runtime.width, Math.floor((rect.width || runtime.width) - horizontalInset));
-  const cssScale = Math.max(1, Math.floor(available / runtime.width));
+  const available = Math.max(1, Math.floor((rect.width || runtime.width) - horizontalInset));
+  const cssScale = available >= runtime.width
+    ? Math.max(1, Math.floor(available / runtime.width))
+    : Math.max(0.5, available / runtime.width);
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   const cssW = runtime.width * cssScale;
   const cssH = runtime.height * cssScale;
@@ -279,10 +281,18 @@ function updateRuntime(runtime, delta) {
 function finishRuntime(runtime, frame = null) {
   if (!runtime.scene || runtime.done) return;
   runtime.done = true;
+  runtime.elapsedMs = Math.max(runtime.elapsedMs, getRuntimeTotalMs(runtime));
   const finalFrame = frame ?? renderRuntimeFrame(runtime, true);
   runtime.onDone?.(finalFrame);
   stopRuntimeLoop(runtime);
   paintStaticHoldFrame(runtime, finalFrame);
+}
+
+function getRuntimeTotalMs(runtime) {
+  const events = runtime.sequence?.events?.length ?? 0;
+  const paMs = Math.max(80, Number(runtime.sequence?.paMs ?? 850));
+  const gapMs = Math.max(0, Number(runtime.sequence?.gapMs ?? 120));
+  return events * (paMs + gapMs);
 }
 
 function renderRuntimeFrame(runtime, forceFinal = false) {

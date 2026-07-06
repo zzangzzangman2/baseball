@@ -3320,7 +3320,7 @@ img {
   position: relative;
   display: grid;
   place-items: center;
-  width: min(420px, 100%);
+  width: min(444px, 100%);
   min-width: 0;
   aspect-ratio: 120 / 108;
   justify-self: center;
@@ -3366,6 +3366,30 @@ img {
 
 .gamecast-screen.is-shaking {
   animation: gamecast-pixel-shake 180ms steps(4, end) 1;
+}
+
+.gamecast-screen-placeholder {
+  min-height: 220px;
+  color: #2f2b34;
+  text-align: center;
+}
+
+.gamecast-screen-placeholder > div {
+  display: grid;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px dashed rgba(49, 82, 136, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 254, 251, 0.68);
+}
+
+.gamecast-screen-placeholder strong {
+  font-weight: 950;
+}
+
+.gamecast-screen-placeholder small {
+  color: var(--muted);
+  font-weight: 850;
 }
 
 .gamecast-engine-toggle {
