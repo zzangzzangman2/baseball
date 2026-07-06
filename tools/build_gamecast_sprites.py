@@ -7,7 +7,7 @@ import argparse
 import json
 import shutil
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, List, Mapping, Tuple
 
 from PIL import Image, ImageDraw
 
@@ -15,8 +15,10 @@ from PIL import Image, ImageDraw
 FRAME = 48
 BASELINE_Y = 45
 CENTER_X = 24
-SHEET_COLS = 5
-SHEET_ROWS = 4
+LEGACY_COLS = 5
+LEGACY_ROWS = 4
+V2_COLS = 8
+V2_ROWS = 6
 
 OUTLINE = (32, 32, 42, 255)
 OUTLINE_SOFT = (65, 61, 72, 255)
@@ -58,6 +60,97 @@ POSE_GRID = {
 
 SOURCE_GRID = dict(POSE_GRID)
 SOURCE_GRID["walk2"] = SOURCE_GRID["walk1"]
+
+V2_GRID = {
+    "stance": (0, 0),
+    "load": (1, 0),
+    "stride": (2, 0),
+    "swing1": (3, 0),
+    "contact": (4, 0),
+    "swing2": (5, 0),
+    "follow1": (6, 0),
+    "follow2": (7, 0),
+    "pitch_set": (0, 1),
+    "pitch_kick": (1, 1),
+    "pitch_stride": (2, 1),
+    "pitch_cock": (3, 1),
+    "pitch_release": (4, 1),
+    "pitch_follow1": (5, 1),
+    "pitch_follow2": (6, 1),
+    "idle": (7, 1),
+    "run1": (0, 2),
+    "run2": (1, 2),
+    "run3": (2, 2),
+    "run4": (3, 2),
+    "walk1": (4, 2),
+    "walk2": (5, 2),
+    "throw_plant": (6, 2),
+    "throw_release": (7, 2),
+    "throw_follow": (0, 3),
+    "field": (1, 3),
+    "catch_track": (2, 3),
+    "catch_reach": (3, 3),
+    "catch_squeeze": (4, 3),
+    "dive_launch": (5, 3),
+    "dive_slide": (6, 3),
+    "dive_getup": (7, 3),
+    "slide_in": (0, 4),
+    "slide_hold": (1, 4),
+    "catcher_frame": (2, 4),
+    "catcher_block": (3, 4),
+    "miss": (4, 4),
+    "take": (5, 4),
+    "lookUp": (6, 4),
+}
+
+V2_ALIASES = {
+    "swing": "contact",
+    "follow": "follow1",
+    "windup": "pitch_set",
+    "pitch": "pitch_release",
+    "run": "run1",
+    "walk": "walk1",
+    "catch": "catch_squeeze",
+    "dive": "dive_slide",
+    "slide": "slide_hold",
+    "catcher": "catcher_frame",
+    "coach": "idle",
+    "umpire": "idle",
+}
+
+LEGACY_ALIASES = {
+    "load": "stance",
+    "walk": "walk1",
+    "walk2": "run1",
+    "run": "run1",
+    "coach": "idle",
+    "umpire": "idle",
+}
+
+V2_ANIMATIONS = {
+    "swing": {"frames": ["stance", "load", "stride", "swing1", "contact", "swing2", "follow1", "follow2"], "durations": [90, 70, 70, 45, 90, 45, 70, 100]},
+    "pitch": {"frames": ["pitch_set", "pitch_kick", "pitch_stride", "pitch_cock", "pitch_release", "pitch_follow1", "pitch_follow2"], "durations": [100, 90, 70, 60, 45, 70, 100]},
+    "run": {"frames": ["run1", "run2", "run3", "run4"], "durations": [70, 70, 70, 70]},
+    "walk": {"frames": ["walk1", "walk2"], "durations": [120, 120]},
+    "throw": {"frames": ["throw_plant", "throw_release", "throw_follow"], "durations": [80, 50, 90]},
+    "catch": {"frames": ["catch_track", "catch_reach", "catch_squeeze"], "durations": [90, 60, 100]},
+    "dive": {"frames": ["dive_launch", "dive_slide", "dive_getup"], "durations": [70, 90, 120]},
+    "slide": {"frames": ["slide_in", "slide_hold"], "durations": [80, 140]},
+    "catcher": {"frames": ["catcher_frame", "catcher_block"], "durations": [120, 120]},
+}
+
+LEGACY_ANIMATIONS = {
+    "swing": {"frames": ["stance", "swing", "follow"], "durations": [120, 90, 140]},
+    "pitch": {"frames": ["windup", "pitch"], "durations": [140, 120]},
+    "run": {"frames": ["run1", "run2"], "durations": [90, 90]},
+    "walk": {"frames": ["walk1", "walk2"], "durations": [140, 140]},
+    "catch": {"frames": ["field", "catch"], "durations": [120, 140]},
+    "dive": {"frames": ["field", "dive"], "durations": [120, 160]},
+    "slide": {"frames": ["run1", "slide"], "durations": [90, 160]},
+    "catcher": {"frames": ["catcher"], "durations": [160]},
+}
+
+AIRBORNE_OR_LOW_POSES = {"pitch", "pitch_release", "dive", "dive_slide", "slide", "slide_in", "slide_hold", "catcher", "catcher_frame", "catcher_block"}
 
 
 def is_key_color(pixel: Tuple[int, int, int, int]) -> bool:
@@ -124,10 +217,10 @@ def classify_pixel(pixel: Tuple[int, int, int, int], uniform: str) -> Tuple[int,
     return OUTLINE_SOFT
 
 
-def crop_source_cell(source: Image.Image, col: int, row: int) -> Image.Image:
+def crop_source_cell(source: Image.Image, col: int, row: int, sheet_cols: int, sheet_rows: int) -> Image.Image:
     width, height = source.size
-    cell_w = width / SHEET_COLS
-    cell_h = height / SHEET_ROWS
+    cell_w = width / sheet_cols
+    cell_h = height / sheet_rows
     left = round(col * cell_w)
     top = round(row * cell_h)
     right = round((col + 1) * cell_w)
@@ -143,6 +236,20 @@ def transparent_bbox(image: Image.Image) -> Tuple[int, int, int, int] | None:
     for y in range(height):
         for x in range(width):
             if not is_key_color(pixels[x, y]):
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
+
+
+def opaque_bbox(image: Image.Image) -> Tuple[int, int, int, int] | None:
+    pixels = image.load()
+    xs: List[int] = []
+    ys: List[int] = []
+    for y in range(image.height):
+        for x in range(image.width):
+            if pixels[x, y][3] > 0:
                 xs.append(x)
                 ys.append(y)
     if not xs:
@@ -193,27 +300,92 @@ def atlas_frame(x: int, y: int) -> Dict[str, object]:
     }
 
 
-def write_player_atlas(source: Image.Image, output_dir: Path, uniform: str) -> None:
-    image_name = f"player-{uniform}.png"
-    atlas = Image.new("RGBA", (SHEET_COLS * FRAME, SHEET_ROWS * FRAME), (0, 0, 0, 0))
-    frames: Dict[str, object] = {}
+def detect_layout(source: Image.Image, requested: str) -> Tuple[str, int, int, Mapping[str, Tuple[int, int]], Mapping[str, str], Mapping[str, object]]:
+    if requested == "legacy":
+        return ("legacy", LEGACY_COLS, LEGACY_ROWS, POSE_GRID, LEGACY_ALIASES, LEGACY_ANIMATIONS)
+    if requested == "v2":
+        return ("v2", V2_COLS, V2_ROWS, V2_GRID, V2_ALIASES, V2_ANIMATIONS)
 
-    for pose, (col, row) in POSE_GRID.items():
-        frame = normalize_frame(crop_source_cell(source, col, row), uniform)
+    width, height = source.size
+    v2_cell_w = width / V2_COLS
+    v2_cell_h = height / V2_ROWS
+    if abs(v2_cell_w - v2_cell_h) / max(v2_cell_w, v2_cell_h) <= 0.06:
+        return ("v2", V2_COLS, V2_ROWS, V2_GRID, V2_ALIASES, V2_ANIMATIONS)
+    return ("legacy", LEGACY_COLS, LEGACY_ROWS, POSE_GRID, LEGACY_ALIASES, LEGACY_ANIMATIONS)
+
+
+def validate_registration(frames: Mapping[str, Image.Image], strict: bool = False) -> List[str]:
+    issues: List[str] = []
+    for pose, frame in frames.items():
+        bbox = opaque_bbox(frame)
+        if bbox is None:
+            issues.append(f"{pose}: empty frame")
+            continue
+
+        left, top, right, bottom = bbox
+        width = right - left
+        height = bottom - top
+        center = (left + right) / 2
+        baseline_delta = bottom - BASELINE_Y
+        center_delta = center - CENTER_X
+
+        if pose not in AIRBORNE_OR_LOW_POSES and abs(baseline_delta) > 1:
+            issues.append(f"{pose}: bbox bottom {bottom} is {baseline_delta:+.1f}px from baseline {BASELINE_Y}")
+        elif abs(baseline_delta) > 5:
+            issues.append(f"{pose}: bbox bottom {bottom} is far from baseline {BASELINE_Y}")
+
+        if abs(center_delta) > 3.5:
+            issues.append(f"{pose}: bbox center {center:.1f} is {center_delta:+.1f}px from center {CENTER_X}")
+        if left <= 0 or right >= FRAME or top <= 0 or bottom >= FRAME:
+            issues.append(f"{pose}: opaque bbox {bbox} touches frame edge")
+        if width > 43 or height > 42:
+            issues.append(f"{pose}: opaque bbox {width}x{height} exceeds recommended 43x42 safe area")
+
+    if issues:
+        print("registration validation:")
+        for issue in issues:
+            print(f"  {'ERROR' if strict else 'WARN'} {issue}")
+    else:
+        print("registration validation: ok")
+
+    if strict and issues:
+        raise SystemExit("registration validation failed")
+    return issues
+
+
+def write_player_atlas(
+    source: Image.Image,
+    output_dir: Path,
+    uniform: str,
+    sheet_cols: int,
+    sheet_rows: int,
+    pose_grid: Mapping[str, Tuple[int, int]],
+    aliases: Mapping[str, str],
+    animations: Mapping[str, object],
+    layout_name: str,
+    strict_registration: bool,
+) -> None:
+    image_name = f"player-{uniform}.png"
+    atlas = Image.new("RGBA", (sheet_cols * FRAME, sheet_rows * FRAME), (0, 0, 0, 0))
+    frames: Dict[str, object] = {}
+    validation_frames: Dict[str, Image.Image] = {}
+
+    for pose, (col, row) in pose_grid.items():
+        frame = normalize_frame(crop_source_cell(source, col, row, sheet_cols, sheet_rows), uniform)
         x = col * FRAME
         y = row * FRAME
         atlas.alpha_composite(frame, (x, y))
         frames[pose] = atlas_frame(x, y)
+        validation_frames[pose] = frame
 
-    frames["load"] = frames["stance"]
-    frames["walk"] = frames["walk1"]
-    frames["walk2"] = frames["run1"]
-    frames["run"] = frames["run1"]
-    frames["coach"] = frames["idle"]
-    frames["umpire"] = frames["idle"]
+    for alias, target in aliases.items():
+        if target in frames:
+            frames[alias] = frames[target]
+
+    validate_registration(validation_frames, strict_registration)
 
     atlas.save(output_dir / image_name)
-    write_json(output_dir / f"player-{uniform}.json", image_name, atlas.size, frames)
+    write_json(output_dir / f"player-{uniform}.json", image_name, atlas.size, frames, layout_name, animations)
 
 
 def write_props_atlas(output_dir: Path) -> None:
@@ -240,18 +412,31 @@ def write_props_atlas(output_dir: Path) -> None:
     write_json(output_dir / "props.json", image_name, atlas.size, frames)
 
 
-def write_json(path: Path, image_name: str, size: Tuple[int, int], frames: Dict[str, object]) -> None:
+def write_json(
+    path: Path,
+    image_name: str,
+    size: Tuple[int, int],
+    frames: Dict[str, object],
+    layout_name: str = "legacy",
+    animations: Mapping[str, object] | None = None,
+) -> None:
     payload = {
         "frames": frames,
         "meta": {
             "app": "Codex Gamecast Sprite Pipeline",
-            "version": "1.0",
+            "version": "2.0" if layout_name == "v2" else "1.1",
             "image": image_name,
             "format": "RGBA8888",
             "size": {"w": size[0], "h": size[1]},
             "scale": "1",
+            "frameSize": {"w": FRAME, "h": FRAME},
+            "layout": layout_name,
+            "baselineY": BASELINE_Y,
+            "centerX": CENTER_X,
         },
     }
+    if animations:
+        payload["animations"] = animations
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
 
@@ -266,8 +451,10 @@ def count_colors(paths: Iterable[Path]) -> Dict[str, int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", required=True, type=Path, help="Imagegen source sprite sheet")
+    parser.add_argument("--source", default=Path("assets/gamecast/source/player-sheet-imagegen.png"), type=Path, help="Imagegen source sprite sheet")
     parser.add_argument("--out", default=Path("assets/gamecast"), type=Path, help="Output asset directory")
+    parser.add_argument("--layout", choices=("auto", "legacy", "v2"), default="auto", help="Source grid layout")
+    parser.add_argument("--strict-registration", action="store_true", help="Fail on registration warnings")
     args = parser.parse_args()
 
     output_dir = args.out
@@ -276,12 +463,14 @@ def main() -> None:
     source_dir.mkdir(parents=True, exist_ok=True)
 
     source = Image.open(args.source).convert("RGBA")
+    layout_name, sheet_cols, sheet_rows, pose_grid, aliases, animations = detect_layout(source, args.layout)
+    print(f"layout: {layout_name} ({sheet_cols}x{sheet_rows})")
     source_copy = source_dir / "player-sheet-imagegen.png"
     if args.source.resolve() != source_copy.resolve():
         shutil.copyfile(args.source, source_copy)
 
-    write_player_atlas(source, output_dir, "home")
-    write_player_atlas(source, output_dir, "away")
+    write_player_atlas(source, output_dir, "home", sheet_cols, sheet_rows, pose_grid, aliases, animations, layout_name, args.strict_registration)
+    write_player_atlas(source, output_dir, "away", sheet_cols, sheet_rows, pose_grid, aliases, animations, layout_name, args.strict_registration)
     write_props_atlas(output_dir)
 
     counts = count_colors([

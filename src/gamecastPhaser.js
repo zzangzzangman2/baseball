@@ -241,6 +241,7 @@ function createGamecastScene(scene, runtime) {
   scene.fieldLayer = scene.add.container(0, 0).setDepth(0);
   scene.playerGraphics = scene.add.graphics().setDepth(10);
   scene.spriteLayer = scene.add.container(0, 0).setDepth(12);
+  scene.skinHighlightGraphics = scene.add.graphics().setDepth(16);
   scene.ballGraphics = scene.add.graphics().setDepth(30);
   scene.ballSpriteLayer = scene.add.container(0, 0).setDepth(32);
   scene.fxGraphics = scene.add.graphics().setDepth(40);
@@ -266,7 +267,7 @@ function rebuildField(scene, runtime) {
   const canvas = texture.getSourceImage();
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
-  drawFieldCanvas(ctx, runtime.palette, runtime.width, runtime.height);
+  drawFieldCanvas(ctx, runtime.palette, runtime.width, runtime.height, runtime.fieldProfile);
   texture.refresh();
 
   scene.fieldLayer.removeAll(true);
@@ -319,10 +320,12 @@ function renderScene(scene, runtime, frame) {
   if (!scene || !frame) return;
   const palette = runtime.palette;
   const player = scene.playerGraphics;
+  const skin = scene.skinHighlightGraphics;
   const ball = scene.ballGraphics;
   const fx = scene.fxGraphics;
   const useSprites = hasPlayerSprites(scene);
   player.clear();
+  skin?.clear();
   ball.clear();
   fx.clear();
   beginGamecastPoolFrame(scene);
@@ -391,7 +394,7 @@ function paintStaticHoldFrame(runtime, frame) {
   ctx.save();
   ctx.setTransform(runtime.metrics.drawScaleX, 0, 0, runtime.metrics.drawScaleY, 0, 0);
   ctx.imageSmoothingEnabled = false;
-  drawFieldCanvas(ctx, runtime.palette, runtime.width, runtime.height);
+  drawFieldCanvas(ctx, runtime.palette, runtime.width, runtime.height, runtime.fieldProfile);
   drawHoldBaseRunners(ctx, runtime, frame);
   ctx.restore();
 }
@@ -415,7 +418,8 @@ function drawHoldBaseRunners(ctx, runtime, frame) {
   }
 }
 
-function drawFieldCanvas(ctx, palette, width, height) {
+function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
+  const profile = normalizePhaserFieldProfile(fieldProfile);
   const sx = (value) => Math.round((Number(value) / 120) * width);
   const sy = (value) => Math.round((Number(value) / 108) * height);
   const scale = Math.max(1, sx(1));
@@ -426,18 +430,24 @@ function drawFieldCanvas(ctx, palette, width, height) {
     ctx.fillRect(0, y, width, Math.max(1, sy(1)));
   }
 
-  const fx = sx(60);
-  const fy = sy(104);
-  const wallRadius = sx(90);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const distance = Math.hypot(x - fx, y - fy);
-      if (distance <= wallRadius) {
-        if (distance > wallRadius - sx(2)) ctx.fillStyle = y < sy(30) ? palette.wallCap : palette.wall;
-        else if (distance > wallRadius - sx(5)) ctx.fillStyle = Math.floor((x + y) / Math.max(1, sx(5))) % 2 ? "#d1ad68" : palette.track;
-        else {
-          const ring = Math.floor(distance / Math.max(1, sx(13)));
-          const stripe = Math.floor((x + y * 0.45) / Math.max(1, sx(7)));
+      const lx = (x / width) * 120;
+      const ly = (y / height) * 108;
+      const wallY = phaserOutfieldWallY(profile, lx);
+      const distanceToWall = ly - wallY;
+      if (distanceToWall >= 0) {
+        if (distanceToWall < 2.2 + Math.min(3.2, Number(profile.wallHeight ?? 3) * 0.28)) {
+          ctx.fillStyle = profile.monsterSide === "right" && lx > 92 ? "#38252d" : (y < sy(30) ? palette.wallCap : palette.wall);
+        } else if (distanceToWall < 5.8) {
+          ctx.fillStyle = Math.floor((x + y) / Math.max(1, sx(5))) % 2 ? "#d1ad68" : palette.track;
+        } else {
+          const ring = Math.floor((ly - wallY + Math.abs(lx - 60) * 0.16) / 8);
+          const stripe = profile.mow === "checker"
+            ? Math.floor(lx / 7) + Math.floor(ly / 6)
+            : profile.mow === "stripes"
+              ? Math.floor((lx + ly * 0.25) / 7)
+              : Math.floor(Math.hypot(lx - 60, ly - 101) / 8);
           ctx.fillStyle = (ring + stripe) % 2 ? palette.grassLo : palette.grassHi;
         }
         ctx.fillRect(x, y, 1, 1);
@@ -445,8 +455,8 @@ function drawFieldCanvas(ctx, palette, width, height) {
     }
   }
 
-  drawCanvasCrowd(ctx, palette, sx, sy, width, fx, fy, wallRadius, scale);
-  drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale);
+  drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale);
+  drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile);
 
   fillCircleCanvas(ctx, sx(60), sy(79), sx(26), palette.grassLo);
   fillCircleCanvas(ctx, sx(60), sy(79), sx(22), palette.grassHi);
@@ -482,16 +492,64 @@ function drawFieldCanvas(ctx, palette, width, height) {
   ctx.fillRect(sx(66), sy(91), sx(5), scale);
 }
 
-function drawCanvasCrowd(ctx, palette, sx, sy, width, fx, fy, wallRadius, scale) {
-  const shirts = [palette.crowdA, palette.crowdB, palette.crowdC, palette.defenderL, palette.runnerL, palette.base, palette.spark, "#ff8f83"];
+function normalizePhaserFieldProfile(profile) {
+  const safe = profile && typeof profile === "object" ? profile : {};
+  return {
+    id: String(safe.id ?? "neutral"),
+    label: String(safe.label ?? "KBO"),
+    lf: Number(safe.lf ?? 99),
+    lcf: Number(safe.lcf ?? 116),
+    cf: Number(safe.cf ?? 121),
+    rcf: Number(safe.rcf ?? 116),
+    rf: Number(safe.rf ?? 99),
+    wallHeight: Number(safe.wallHeight ?? 3),
+    roofed: Boolean(safe.roofed),
+    mow: String(safe.mow ?? "rings"),
+    monsterSide: String(safe.monsterSide ?? ""),
+    attendanceRatio: Math.max(0.16, Math.min(1, Number(safe.attendanceRatio ?? 0.62) || 0.62)),
+    homeColor: paletteSafeColor(safe.homeColor, "#315288")
+  };
+}
+
+function paletteSafeColor(value, fallback) {
+  return /^#[0-9a-f]{6}$/i.test(String(value ?? "")) ? String(value) : fallback;
+}
+
+function phaserOutfieldWallY(profile, logicalX) {
+  const x = Math.max(4, Math.min(116, Number(logicalX) || 60));
+  const left = x < 60;
+  const edgeT = Math.min(1, Math.abs(x - 60) / 48);
+  const midT = Math.min(1, Math.abs(x - 60) / 28);
+  const center = Number(profile?.cf ?? 121);
+  const mid = left ? Number(profile?.lcf ?? 116) : Number(profile?.rcf ?? 116);
+  const corner = left ? Number(profile?.lf ?? 99) : Number(profile?.rf ?? 99);
+  const depth = edgeT < 0.58
+    ? lerp(center, mid, midT)
+    : lerp(mid, corner, Math.max(0, (edgeT - 0.58) / 0.42));
+  const radius = 84 + (depth - 115) * 0.72;
+  const dx = x - 60;
+  const y = 104 - Math.sqrt(Math.max(0, radius * radius - dx * dx));
+  return Math.max(5, Math.min(51, y));
+}
+
+function lerp(from, to, amount) {
+  return Number(from) + (Number(to) - Number(from)) * Number(amount);
+}
+
+function drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale) {
+  const shirts = [palette.crowdA, palette.crowdB, palette.crowdC, palette.defenderL, palette.runnerL, palette.base, palette.spark, "#ff8f83", profile.homeColor];
+  const dense = Math.max(0.16, Math.min(1, Number(profile.attendanceRatio ?? 0.62)));
   const startY = sy(3);
   const endY = sy(42);
-  const stepX = Math.max(scale * 5, sx(4));
-  const stepY = Math.max(scale * 5, sy(5));
+  const stepX = Math.max(scale * (dense > 0.82 ? 4 : dense > 0.52 ? 5 : 7), sx(dense > 0.82 ? 3 : dense > 0.52 ? 4 : 6));
+  const stepY = Math.max(scale * (dense > 0.82 ? 5 : 6), sy(dense > 0.82 ? 4 : 5));
   for (let y = startY; y < endY; y += stepY) {
     const row = Math.floor((y - startY) / Math.max(1, stepY));
     for (let x = sx(2) + (row % 2 ? Math.floor(stepX / 2) : 0); x < width - sx(3); x += stepX) {
-      if (Math.hypot(x - fx, y - fy) <= wallRadius + sx(2)) continue;
+      const lx = (x / width) * 120;
+      const ly = (y / height) * 108;
+      if (ly >= phaserOutfieldWallY(profile, lx) - 1) continue;
+      if (((row * 19 + x) % 100) > dense * 100) continue;
       if ((row * 17 + x) % 41 === 0) {
         ctx.fillStyle = palette.outline;
         ctx.fillRect(x - scale, y + scale, scale * 7, scale * 4);
@@ -516,13 +574,23 @@ function drawCanvasCrowd(ctx, palette, sx, sy, width, fx, fy, wallRadius, scale)
   }
 }
 
-function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale) {
+function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile) {
+  if (profile.roofed) {
+    ctx.fillStyle = "#263343";
+    for (let y = sy(1); y < sy(18); y += Math.max(scale, sy(4))) {
+      ctx.fillRect(sx(5), y, sx(110), scale);
+    }
+    ctx.fillStyle = "rgba(221, 236, 255, 0.28)";
+    ctx.fillRect(sx(12), sy(19), sx(96), scale);
+  }
   ctx.fillStyle = palette.outline;
   ctx.fillRect(sx(40), sy(3), sx(40), sy(13));
   ctx.fillStyle = "#0d1915";
   ctx.fillRect(sx(42), sy(5), sx(36), sy(9));
   ctx.fillStyle = palette.wallCap;
   ctx.fillRect(sx(42), sy(5), sx(36), scale);
+  drawTinyCanvasText(ctx, String(profile.label ?? "KBO").slice(0, 4), sx(46), sy(8), palette.base, scale);
+  drawTinyCanvasText(ctx, profile.roofed ? "DOME" : "LIVE", sx(62), sy(8), palette.sparkL, scale);
   ctx.fillStyle = palette.sparkL;
   for (let x = sx(46); x < sx(74); x += Math.max(2, sx(4))) ctx.fillRect(x, sy(9), scale, scale);
   ctx.fillStyle = palette.base;
@@ -543,6 +611,56 @@ function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale) {
   ctx.fillRect(sx(105), sy(30), scale, sy(25));
   ctx.fillStyle = "rgba(255, 246, 199, 0.45)";
   ctx.fillRect(0, sy(26), width, scale);
+}
+
+function drawTinyCanvasText(ctx, text, x, y, color, scale) {
+  const glyphs = {
+    A: ["111", "101", "111", "101", "101"],
+    B: ["110", "101", "110", "101", "110"],
+    D: ["110", "101", "101", "101", "110"],
+    E: ["111", "100", "110", "100", "111"],
+    G: ["111", "100", "101", "101", "111"],
+    I: ["111", "010", "010", "010", "111"],
+    K: ["101", "101", "110", "101", "101"],
+    L: ["100", "100", "100", "100", "111"],
+    M: ["101", "111", "111", "101", "101"],
+    O: ["111", "101", "101", "101", "111"],
+    V: ["101", "101", "101", "101", "010"],
+    잠: ["111", "101", "111", "010", "111"],
+    실: ["111", "001", "111", "100", "111"],
+    사: ["101", "101", "111", "001", "001"],
+    직: ["111", "101", "111", "100", "111"],
+    고: ["111", "001", "001", "001", "111"],
+    척: ["111", "101", "111", "010", "111"],
+    돔: ["111", "101", "111", "101", "111"],
+    광: ["111", "101", "111", "111", "101"],
+    주: ["101", "101", "111", "010", "010"],
+    대: ["101", "111", "101", "111", "101"],
+    구: ["111", "001", "001", "001", "111"],
+    문: ["111", "101", "111", "101", "101"],
+    학: ["111", "101", "111", "010", "111"],
+    수: ["101", "101", "111", "010", "010"],
+    원: ["111", "101", "101", "111", "001"],
+    창: ["111", "101", "111", "010", "111"],
+    전: ["111", "010", "111", "010", "111"],
+    중: ["111", "101", "111", "101", "111"],
+    립: ["111", "100", "111", "101", "111"]
+  };
+  let cursor = x;
+  ctx.fillStyle = color;
+  for (const ch of String(text ?? "").toUpperCase()) {
+    const rows = glyphs[ch];
+    if (!rows) {
+      cursor += scale * 2;
+      continue;
+    }
+    rows.forEach((row, rowIndex) => {
+      [...row].forEach((dot, colIndex) => {
+        if (dot === "1") ctx.fillRect(cursor + colIndex * scale, y + rowIndex * scale, scale, scale);
+      });
+    });
+    cursor += scale * 4;
+  }
 }
 
 function fillCircleCanvas(ctx, cx, cy, radius, color) {
@@ -585,6 +703,7 @@ function drawLineCanvas(ctx, x1, y1, x2, y2, color, width = 1) {
 
 function drawStaticDefense(scene, graphics, runtime, frame, useSprites) {
   if (!frame.event) return;
+  const movingFielders = new Set(frame.activeFielders ?? []);
   const color = frame.defenseColor ?? runtime.palette.defender;
   const jerseyColor = frame.defenseJerseyColor ?? runtime.palette.defenderL;
   const jerseyShadow = frame.defenseJerseyShadow ?? runtime.palette.uniformSh;
@@ -600,6 +719,7 @@ function drawStaticDefense(scene, graphics, runtime, frame, useSprites) {
     { key: "RF", x: fieldX(runtime, 98), y: fieldY(runtime, 43) }
   ];
   for (const item of positions) {
+    if (movingFielders.has(item.key)) continue;
     drawGamecastPlayer(scene, graphics, runtime, {
       position: { x: item.x, y: item.y },
       color,
@@ -668,7 +788,29 @@ function drawSpritePlayer(scene, graphics, runtime, sprite, role) {
     .setOrigin(CENTER_ORIGIN_X, BASELINE_ORIGIN_Y)
     .setScale(metrics.drawScaleX * (facing < 0 ? -squashX : squashX), metrics.drawScaleY * squashY)
     .setRotation(0);
+  drawSpriteSkinOverlay(scene, runtime, sprite, role);
   return true;
+}
+
+function drawSpriteSkinOverlay(scene, runtime, sprite, role) {
+  const graphics = scene?.skinHighlightGraphics;
+  if (!graphics || role === "umpire" || sprite?.fieldingKey === "C") return;
+  const palette = runtime.palette;
+  const x = Number(sprite.position?.x ?? 0);
+  const y = Number(sprite.position?.y ?? 0);
+  const pose = String(sprite.pose ?? "");
+  if (pose === "slide") {
+    rect(graphics, runtime, x + 2, y - 12, 8, 5, palette.skin, 0.96);
+    rect(graphics, runtime, x + 5, y - 10, 1, 1, palette.outline, 0.9);
+    return;
+  }
+  const faceY = pose === "catch" || pose === "dive" ? y - 29 : y - 30;
+  rect(graphics, runtime, x - 8, faceY, 16, 11, palette.skin, 0.98);
+  rect(graphics, runtime, x - 6, faceY + 9, 12, 2, palette.skin, 0.88);
+  rect(graphics, runtime, x - 4, faceY + 4, 1, 2, palette.outline, 0.88);
+  rect(graphics, runtime, x + 3, faceY + 4, 1, 2, palette.outline, 0.88);
+  rect(graphics, runtime, x - 8, y - 20, 3, 4, palette.skin, 0.9);
+  rect(graphics, runtime, x + 5, y - 20, 3, 4, palette.skin, 0.9);
 }
 
 const CENTER_ORIGIN_X = 24 / PLAYER_ATLAS_SIZE;
@@ -681,6 +823,7 @@ function spriteFrameForPose(sprite, role) {
   if (pose === "run") return Number(sprite?.runFrame ?? 0) % 2 ? "run2" : "run1";
   if (pose === "walk") return Number(sprite?.runFrame ?? 0) % 2 ? "walk2" : "walk1";
   if (pose === "load") return "stance";
+  if (pose === "throw") return "pitch";
   return PLAYER_ATLAS_FRAMES[pose] ? pose : "idle";
 }
 
@@ -703,6 +846,7 @@ function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(source, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const originalData = new Uint8ClampedArray(imageData.data);
     const primary = hexToRgb(normalized, [210, 59, 59]);
     const secondary = mixRgb(primary, [35, 32, 42], 0.28);
     for (let offset = 0; offset < imageData.data.length; offset += 4) {
@@ -719,6 +863,7 @@ function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
         imageData.data[offset + 2] = secondary[2];
       }
     }
+    liftSpriteSkinPixels(imageData, originalData, canvas.width, canvas.height);
     ctx.putImageData(imageData, 0, 0);
 
     const texture = scene.textures.addCanvas(cacheKey, canvas);
@@ -731,6 +876,64 @@ function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
   } catch (_error) {
     return baseKey;
   }
+}
+
+function liftSpriteSkinPixels(imageData, originalData, width, height) {
+  const skin = [242, 199, 154];
+  const skinShadow = [207, 154, 106];
+  const writes = [];
+  const isSkinPixel = (pixel) => isNearRgb(pixel, skin, 30) || isNearRgb(pixel, skinShadow, 28);
+  const canLift = (pixel) => (
+    isNearRgb(pixel, [178, 58, 72], 34)
+    || isNearRgb(pixel, [210, 59, 59], 34)
+    || isNearRgb(pixel, [65, 61, 72], 18)
+  );
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (originalData[offset + 3] < 8) continue;
+      const sourcePixel = [originalData[offset], originalData[offset + 1], originalData[offset + 2]];
+      if (!isSkinPixel(sourcePixel)) continue;
+      const baseColor = isNearRgb(sourcePixel, skinShadow, 28) ? skinShadow : skin;
+      writes.push([offset, baseColor]);
+
+      const localX = x % PLAYER_ATLAS_SIZE;
+      const localY = y % PLAYER_ATLAS_SIZE;
+      const headArea = localX >= 8 && localX <= 38 && localY >= 9 && localY <= 25;
+      const neighbors = headArea
+        ? buildSpriteSkinLiftOffsets()
+        : [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1]];
+
+      for (const [dx, dy] of neighbors) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        const targetOffset = (ny * width + nx) * 4;
+        if (originalData[targetOffset + 3] < 8) continue;
+        const targetPixel = [originalData[targetOffset], originalData[targetOffset + 1], originalData[targetOffset + 2]];
+        if (canLift(targetPixel)) writes.push([targetOffset, dy < 0 ? skinShadow : skin]);
+      }
+    }
+  }
+
+  for (const [offset, color] of writes) {
+    imageData.data[offset] = color[0];
+    imageData.data[offset + 1] = color[1];
+    imageData.data[offset + 2] = color[2];
+  }
+}
+
+function buildSpriteSkinLiftOffsets() {
+  const offsets = [];
+  for (let dy = -1; dy <= 2; dy += 1) {
+    for (let dx = -3; dx <= 3; dx += 1) {
+      if (dx === 0 && dy === 0) continue;
+      if (Math.abs(dx) + Math.abs(dy) > 4) continue;
+      offsets.push([dx, dy]);
+    }
+  }
+  return offsets;
 }
 
 function isAwayUniform(color) {
@@ -766,7 +969,9 @@ function drawPlayer(graphics, runtime, sprite, role) {
   rect(graphics, runtime, x - 4, y - 18, 8, 3, palette.outline);
   rect(graphics, runtime, x - 3, y - 19, 6, 3, accent);
   rect(graphics, runtime, x + facing * 2, y - 17, 4 * facing, 1, accent);
-  rect(graphics, runtime, x - 3, y - 15, 6, 5, skin);
+  rect(graphics, runtime, x - 4, y - 16, 8, 7, skin);
+  rect(graphics, runtime, x - 2, y - 13, 1, 1, palette.outline, 0.85);
+  rect(graphics, runtime, x + 2, y - 13, 1, 1, palette.outline, 0.85);
   rect(graphics, runtime, x - 4, y - 10, 8, 8, palette.outline);
   rect(graphics, runtime, x - 3, y - 10, 6, 6, jersey);
   rect(graphics, runtime, x - 3, y - 4, 6, 2, jerseyShadow);

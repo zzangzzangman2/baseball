@@ -30,6 +30,9 @@
 - **아웃라인**: 1px 진한 외곽선(순수 검정 대신 `#20202a`). 안티에일리어싱/블러 **금지**(픽셀 crisp).
 - **팔레트: 총 16~22색 이내, 플랫**(그라데이션 금지, 음영은 2~3단 hue-shift). 후처리에서 반드시 양자화.
 - **투명 배경**(알파). 그림자는 프레임에 넣지 말 것(엔진이 별도 타원 그림자).
+- **v2 시트 크기: 8열 × 6행, 48셀(각 48×48).** 이미지젠 소스 권장은 2048×1536(셀당 256px) → `tools/build_gamecast_sprites.py`가 48px로 축소/정규화한다.
+- **레거시 호환: 5열 × 4행 18포즈 시트는 계속 유효.** 빌드 스크립트 `--layout auto`가 8×6 정방 셀 소스면 v2로, 아니면 기존 5×4로 처리한다.
+- **자동 검사:** 빌드 후 불투명 bbox의 하단 baseline, 중심, 안전영역을 검사한다. 기본은 기존 에셋 호환을 위해 경고이며, 신규 v2 소스 승인 시 `--strict-registration`으로 실패 처리한다.
 
 ### 예약 색 (팔레트 스왑용 — 중요)
 팀색을 코드에서 갈아끼우려면 특정 부위를 **고정 플랫색**으로 생성해 인덱스 스왑한다:
@@ -42,9 +45,60 @@
 
 ## 3. 포즈/프레임 목록 (gamecast 애니에 매핑)
 
-현재 코드의 pose 키와 1:1 대응(재사용): `idle, run(2프레임), walk(2), stance, swing, follow, miss, take, windup, pitch, field, catch, dive, slide, catcher, lookUp`.
+v2는 포즈 1장 교체가 아니라 액션별 시퀀스를 기본 단위로 삼는다. 현재 코드의 레거시 pose 키(`idle, run, walk, stance, swing, follow, miss, take, windup, pitch, field, catch, dive, slide, catcher, lookUp`)는 계속 JSON `frames`에 남기며, v2 프레임의 별칭으로 제공한다.
 
-시트 레이아웃(가로 스트립, 왼→오, 각 48×48):
+### v2 시트 레이아웃(8×6)
+
+각 셀은 48×48이며, 소스 시트는 같은 비율의 고해상도 그리드(권장 2048×1536)를 사용한다.
+
+```
+row0 타격: stance | load | stride | swing1 | contact | swing2 | follow1 | follow2
+row1 투구: pitch_set | pitch_kick | pitch_stride | pitch_cock | pitch_release | pitch_follow1 | pitch_follow2 | idle
+row2 주루/송구: run1 | run2 | run3 | run4 | walk1 | walk2 | throw_plant | throw_release
+row3 수비: throw_follow | field | catch_track | catch_reach | catch_squeeze | dive_launch | dive_slide | dive_getup
+row4 기타: slide_in | slide_hold | catcher_frame | catcher_block | miss | take | lookUp | reserved
+row5 예약: stance_open | load_open | stance_crouch | load_crouch | pitch_alt_set | pitch_alt_release | reserved | reserved
+```
+
+row5는 아직 엔진이 필수로 사용하지 않는 확장 슬롯이다. v2 소스 제작 시 비워도 되지만, 배경 투명/마젠타 키아웃 규칙은 동일하게 지킨다.
+
+### v2 애니메이션 메타
+
+빌드 스크립트는 atlas JSON 최상위에 `animations`를 쓴다. 기본 duration 단위는 ms이며, `contact`와 `pitch_release`처럼 타격감/릴리스감이 중요한 프레임은 짧거나 홀드가 길게 잡혀 있다.
+
+| 액션 | 프레임 | 기본 duration |
+| --- | --- | --- |
+| `swing` | `stance, load, stride, swing1, contact, swing2, follow1, follow2` | `90,70,70,45,90,45,70,100` |
+| `pitch` | `pitch_set, pitch_kick, pitch_stride, pitch_cock, pitch_release, pitch_follow1, pitch_follow2` | `100,90,70,60,45,70,100` |
+| `run` | `run1, run2, run3, run4` | `70,70,70,70` |
+| `walk` | `walk1, walk2` | `120,120` |
+| `throw` | `throw_plant, throw_release, throw_follow` | `80,50,90` |
+| `catch` | `catch_track, catch_reach, catch_squeeze` | `90,60,100` |
+| `dive` | `dive_launch, dive_slide, dive_getup` | `70,90,120` |
+| `slide` | `slide_in, slide_hold` | `80,140` |
+| `catcher` | `catcher_frame, catcher_block` | `120,120` |
+
+### 레거시 별칭
+
+기존 renderer/Canvas fallback이 끊기지 않도록 v2 JSON은 다음 pose 키도 함께 제공한다.
+
+| 레거시 키 | v2 대상 |
+| --- | --- |
+| `swing` | `contact` |
+| `follow` | `follow1` |
+| `windup` | `pitch_set` |
+| `pitch` | `pitch_release` |
+| `run` | `run1` |
+| `walk` | `walk1` |
+| `catch` | `catch_squeeze` |
+| `dive` | `dive_slide` |
+| `slide` | `slide_hold` |
+| `catcher` | `catcher_frame` |
+| `coach`, `umpire` | `idle` |
+
+### 레거시 5×4 시트(현재 에셋 호환)
+
+기존 시트 레이아웃도 계속 입력으로 허용한다.
 
 ```
 row0 (타자):  stance | swing | follow | miss | take
@@ -52,10 +106,6 @@ row1 (주자):  idle | run1 | run2 | walk1 | slide
 row2 (투수):  windup | pitch
 row3 (수비):  field | catch | dive | catcher | lookUp
 ```
-- `swing`: 배트가 앞으로 나가는 임팩트 포즈(수평 확장), `follow`: 팔로스루.
-- `run1/run2`: 다리 교차 2프레임(달리기 루프).
-- `catcher`: 앉은 자세(홈플레이트).
-- 프레임 순서/이름을 아틀라스 JSON `frames` 키로 그대로(예: `"stance"`, `"run1"`...).
 
 `props.png`: `ball1|ball2|ball3`(흰 공 + 빨간 실밥, 검은 사각테두리 금지, 살짝 모션블러 프레임).
 
@@ -70,7 +120,8 @@ row3 (수비):  field | catch | dive | catcher | lookUp
 3. **배경 제거**: 단색 배경(마젠타 `#ff00ff`)으로 생성 지시 후 키아웃 → 투명 알파.
 4. **레지스트레이션 정렬**: 모든 프레임을 발 baseline y=45, center x=24로 스냅(스크립트로 바운딩박스 기준 정렬).
 5. **홈/원정 2벌**: 유니폼 상의색만 흰/회색으로 바꿔 2세트. (모자는 예약 빨강 유지 → 인게임 tint.)
-6. **아틀라스로 슬라이스**: 48×48 그리드를 컷 → PNG+JSON 생성(TexturePacker 포맷/Phaser hash).
+6. **아틀라스로 슬라이스**: 48×48 그리드를 컷 → PNG+JSON 생성(TexturePacker 포맷/Phaser hash). v2 JSON에는 `meta.layout="v2"`, `meta.frameSize`, `meta.baselineY`, `meta.centerX`, `animations`가 포함된다.
+7. **모션 프리뷰 생성**: `python tools/preview_gamecast_anims.py`로 `reports/motion-samples/*.gif`와 `contact-sheet.png`를 확인한다.
 
 ### 생성 프롬프트 템플릿 (Codex가 이미지젠에 투입)
 Positive (base idle 예):
@@ -80,7 +131,7 @@ white baseball jersey, navy pants, red cap, friendly simple face, front-facing i
 limited flat color palette, clean 1px dark outline, NES/SNES sprite style, crisp pixels,
 centered, full body with feet visible, solid magenta (#ff00ff) background, no text, no logo
 ```
-포즈별로 `front-facing idle stance`만 교체: `mid-swing baseball bat horizontal`, `pitching wind-up`, `fielding ready crouch`, `running side view legs apart`, `catcher squat`, 등.
+v2 프레임별로 `front-facing idle stance`만 교체한다. 예: `batting load with hands back`, `stride foot lifted`, `contact frame bat horizontal`, `one hand finish follow-through`, `pitching leg kick`, `pitching release`, `fielder glove reach`, `horizontal diving catch`, `feet-first slide`.
 Negative:
 ```
 anti-aliasing, blur, gradient, 3d render, realistic, photo, drop shadow, background scenery,
@@ -129,6 +180,8 @@ text, watermark, extra limbs, inconsistent proportions, cropped feet
 ## 9. 자가 검증
 
 - `.claude/launch.json`의 `kbo` 또는 유저 서버(5177)로 실행 → 새 게임 → `경기 보기` → 선수가 스프라이트로 뜨고 팀 구분·타격 모션 확인.
+- `python tools/build_gamecast_sprites.py` → 현재 소스 기준 홈/원정/props atlas 재생성. v2 소스 승인 때는 `--strict-registration`을 추가해 bbox 레지스트레이션 실패를 빌드 실패로 본다.
+- `python tools/preview_gamecast_anims.py` → `reports/motion-samples/`에서 action GIF와 `contact-sheet.png` 검수.
 - 확대 스크린샷으로 crisp·정렬 확인.
 - 프레임 그리드가 어긋나면(캐릭터 튐) 레지스트레이션(4-4단계) 재정렬.
 

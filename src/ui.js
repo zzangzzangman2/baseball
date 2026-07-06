@@ -150,6 +150,23 @@ const GAMECAST_RESUME_COUNTDOWN_MS = 400;
 const GAMECAST_HOLD_LEVERAGE_THRESHOLD = 0.55;
 const GAMECAST_SCORE_SLOW_RATE = 0.35;
 const GAMECAST_DEFAULT_ENGINE = "phaser";
+// Ballpark dimensions are visual rendering data only. Sources:
+// Jamsil: venue listings commonly publish LF/RF 100m, CF 125m.
+// Sajik: Korean venue records publish LF/RF 95.8m, L/R-center 113m, CF 121m.
+// Gocheok: Kiwoom Heroes stadium guide publishes LF/RF 99m, CF 122m, fence 4m.
+// Daejeon Hanwha Life Ballpark: 2025 press coverage published LF 99, LCF 115, CF 122, RCF 112, RF 95, RF wall 8m.
+const KBO_GAMECAST_BALLPARKS = {
+  jamsil: { id: "jamsil", label: "잠실", lf: 100, lcf: 120, cf: 125, rcf: 120, rf: 100, wallHeight: 2.6, roofed: false, wallColor: "#1f5b42", wallCap: "#183a2e", seatColors: ["#5e6572", "#394250", "#7a737b"], grass: ["#4f8a73", "#8fd0b4"], mow: "rings", lightTone: "open" },
+  sajik: { id: "sajik", label: "사직", lf: 95.8, lcf: 113, cf: 121, rcf: 113, rf: 95.8, wallHeight: 6, roofed: false, wallColor: "#245a48", wallCap: "#173629", seatColors: ["#41566f", "#d45b62", "#6c7785"], grass: ["#4a836d", "#92cfb1"], mow: "checker", lightTone: "coastal" },
+  gocheok: { id: "gocheok", label: "고척돔", lf: 99, lcf: 116, cf: 122, rcf: 116, rf: 99, wallHeight: 4, roofed: true, wallColor: "#28384c", wallCap: "#202836", seatColors: ["#2f4057", "#6a7384", "#1f2938"], grass: ["#4d9279", "#85cdb0"], mow: "dome", lightTone: "dome" },
+  gwangju: { id: "gwangju", label: "광주", lf: 99, lcf: 116, cf: 121, rcf: 116, rf: 99, wallHeight: 2.6, roofed: false, wallColor: "#315a3f", wallCap: "#203829", seatColors: ["#c73a43", "#4c4d59", "#f2d37a"], grass: ["#53916f", "#91d1ad"], mow: "checker", lightTone: "open" },
+  daegu: { id: "daegu", label: "대구", lf: 99.5, lcf: 123.5, cf: 122.5, rcf: 123.5, rf: 99.5, wallHeight: 3.2, roofed: false, wallColor: "#244b7e", wallCap: "#1b3359", seatColors: ["#315288", "#66758f", "#d9d3ca"], grass: ["#4a8a72", "#90cfb0"], mow: "stripes", lightTone: "open" },
+  incheon: { id: "incheon", label: "문학", lf: 95, lcf: 115, cf: 120, rcf: 115, rf: 95, wallHeight: 2.8, roofed: false, wallColor: "#7d2f3c", wallCap: "#512532", seatColors: ["#c13b48", "#252c36", "#f3c6ce"], grass: ["#4d8974", "#8ed0b6"], mow: "checker", lightTone: "open" },
+  suwon: { id: "suwon", label: "수원", lf: 98, lcf: 115, cf: 120, rcf: 115, rf: 98, wallHeight: 4, roofed: false, wallColor: "#283c60", wallCap: "#1c2a44", seatColors: ["#202b43", "#d9d3ca", "#b82c44"], grass: ["#4f8c72", "#8bcaaa"], mow: "stripes", lightTone: "open" },
+  changwon: { id: "changwon", label: "창원", lf: 101, lcf: 116, cf: 122, rcf: 116, rf: 101, wallHeight: 3.3, roofed: false, wallColor: "#244c43", wallCap: "#193832", seatColors: ["#315288", "#b9d9f7", "#4b5d71"], grass: ["#528f72", "#93d3b3"], mow: "rings", lightTone: "open" },
+  "daejeon-hanwha-life": { id: "daejeon-hanwha-life", label: "대전", lf: 99, lcf: 115, cf: 122, rcf: 112, rf: 95, wallHeight: 8, roofed: false, wallColor: "#5e2d35", wallCap: "#321c22", seatColors: ["#f37321", "#24222b", "#ffe39a"], grass: ["#4c886c", "#8dd0ad"], mow: "asymmetric", lightTone: "open", monsterSide: "right" },
+  neutral: { id: "neutral", label: "중립", lf: 99, lcf: 116, cf: 121, rcf: 116, rf: 99, wallHeight: 3, roofed: false, wallColor: "#24483a", wallCap: "#1b3a2e", seatColors: ["#6f6874", "#575160", "#b9d9f7"], grass: ["#4f8a73", "#8fd0b4"], mow: "rings", lightTone: "open" }
+};
 const SIMULATION_STEP_DELAY_MS = 95;
 const SIMULATION_STEPS = [
   "날씨·구장 변수 계산",
@@ -4785,6 +4802,7 @@ function buildGamecastSequence(game, state) {
     : "summary";
   const tail = mode === "watch" ? chrono : chrono.slice(-GAMECAST_PLAYBACK_COUNT);
   const tailSet = new Set(tail);
+  const homeTeam = normalizeGameTeam(game?.homeTeamId, state);
   let startAway = 0;
   let startHome = 0;
 
@@ -4803,6 +4821,9 @@ function buildGamecastSequence(game, state) {
     startAway,
     startHome,
     mode,
+    ballparkProfile: normalizeGamecastBallparkProfile(game, homeTeam),
+    attendance: Number(game?.attendance ?? 0),
+    weatherLabel: String(game?.weather ?? state.weather?.label ?? ""),
     paMs: mode === "watch" ? GAMECAST_WATCH_PA_MS : GAMECAST_PA_MS,
     gapMs: mode === "watch" ? GAMECAST_WATCH_GAP_MS : GAMECAST_PA_GAP_MS,
     defaultPlaybackRate: sanitizeGamecastSpeed(state.ui?.gamecastPlaybackRate ?? gamecastPlaybackStore.playbackRate),
@@ -4979,6 +5000,7 @@ function normalizeGamecastEvent(event, state) {
     doublePlay: Boolean(event?.doublePlay),
     reachedOnError: Boolean(event?.reachedOnError),
     ballparkName: String(event?.ballparkName ?? ""),
+    ballparkId: String(event?.ballparkId ?? ""),
     runs,
     rbi: Number(event?.rbi ?? 0),
     outsBefore,
@@ -5027,6 +5049,58 @@ function toBaseTriple(value) {
   return Array.isArray(value)
     ? [Boolean(value[0]), Boolean(value[1]), Boolean(value[2])]
     : [false, false, false];
+}
+
+function normalizeGamecastBallparkProfile(game, homeTeam) {
+  const rawPark = game?.ballpark && typeof game.ballpark === "object" ? game.ballpark : {};
+  const rawId = String(rawPark.parkId ?? game?.ballparkId ?? "").trim();
+  const rawName = String(rawPark.name ?? game?.ballparkName ?? game?.ballpark ?? homeTeam?.home ?? "").trim();
+  const byId = rawId ? KBO_GAMECAST_BALLPARKS[rawId] : null;
+  const byName = byId ?? gamecastBallparkByName(rawName);
+  const profile = byName ?? KBO_GAMECAST_BALLPARKS.neutral;
+  const attendance = Number(game?.attendance ?? 0);
+  const capacity = gamecastBallparkCapacity(profile.id);
+  const ratio = capacity > 0 ? Math.max(0.16, Math.min(1, attendance / capacity)) : 0.62;
+  const homeColor = normalizeHexColor(getTeamColor(homeTeam), "#315288");
+  return {
+    ...profile,
+    name: rawName || profile.label,
+    teamId: homeTeam?.id ?? "",
+    homeColor,
+    attendance,
+    capacity,
+    attendanceRatio: ratio,
+    weatherLabel: String(game?.weather ?? "")
+  };
+}
+
+function gamecastBallparkByName(name) {
+  const text = String(name ?? "").toLowerCase();
+  if (!text) return null;
+  if (text.includes("잠실")) return KBO_GAMECAST_BALLPARKS.jamsil;
+  if (text.includes("사직")) return KBO_GAMECAST_BALLPARKS.sajik;
+  if (text.includes("고척")) return KBO_GAMECAST_BALLPARKS.gocheok;
+  if (text.includes("광주")) return KBO_GAMECAST_BALLPARKS.gwangju;
+  if (text.includes("대구")) return KBO_GAMECAST_BALLPARKS.daegu;
+  if (text.includes("인천") || text.includes("문학")) return KBO_GAMECAST_BALLPARKS.incheon;
+  if (text.includes("수원")) return KBO_GAMECAST_BALLPARKS.suwon;
+  if (text.includes("창원") || text.includes("마산")) return KBO_GAMECAST_BALLPARKS.changwon;
+  if (text.includes("대전") || text.includes("한화")) return KBO_GAMECAST_BALLPARKS["daejeon-hanwha-life"];
+  return null;
+}
+
+function gamecastBallparkCapacity(id) {
+  return {
+    jamsil: 23750,
+    sajik: 22990,
+    gocheok: 16744,
+    gwangju: 20500,
+    daegu: 24000,
+    incheon: 23000,
+    suwon: 18700,
+    changwon: 22011,
+    "daejeon-hanwha-life": 20007
+  }[id] ?? 22000;
 }
 
 function gamecastNowTitle(event) {
@@ -5224,15 +5298,19 @@ function collectGamecastHud(screen) {
   };
 }
 
-function createGamecastPalette() {
+function createGamecastPalette(ballparkProfile = null) {
+  const park = normalizeGamecastSequenceBallpark(ballparkProfile);
+  const grass = park.grass ?? ["#4f8a73", "#8fd0b4"];
+  const seats = park.seatColors ?? ["#6f6874", "#575160", "#b9d9f7"];
+  const homeColor = normalizeHexColor(park.homeColor, "#315288");
   return {
     outline: "#23202a",
-    grassLo: "#4f8a73",
-    grassHi: "#8fd0b4",
-    grassEdge: "#3f7361",
-    grassD: "#4f8a73",
-    grassM: "#8fd0b4",
-    grassL: "#8fd0b4",
+    grassLo: normalizeHexColor(grass[0], "#4f8a73"),
+    grassHi: normalizeHexColor(grass[1], "#8fd0b4"),
+    grassEdge: mixHexColors(normalizeHexColor(grass[0], "#4f8a73"), "#23202a", 0.2),
+    grassD: normalizeHexColor(grass[0], "#4f8a73"),
+    grassM: normalizeHexColor(grass[1], "#8fd0b4"),
+    grassL: mixHexColors(normalizeHexColor(grass[1], "#8fd0b4"), "#fffefb", 0.08),
     dirtD: "#c78a3e",
     dirtM: "#e8b866",
     dirtL: "#ffe39a",
@@ -5266,13 +5344,13 @@ function createGamecastPalette() {
     walk: "#b9d9f7",
     legs: "#3a3550",
     skin: "#f2c79a",
-    wall: "#24483a",
-    wallCap: "#1b3a2e",
+    wall: normalizeHexColor(park.wallColor, "#24483a"),
+    wallCap: normalizeHexColor(park.wallCap, "#1b3a2e"),
     track: "#caa25f",
-    stand: "#6f6874",
-    standD: "#575160",
-    crowdA: "#c64b74",
-    crowdB: "#b9d9f7",
+    stand: normalizeHexColor(seats[0], "#6f6874"),
+    standD: normalizeHexColor(seats[1], "#575160"),
+    crowdA: homeColor,
+    crowdB: normalizeHexColor(seats[2], "#b9d9f7"),
     crowdC: "#ffe39a",
     crowdSkin: "#f2c79a",
     crowdHair: "#2d2630",
@@ -5282,9 +5360,9 @@ function createGamecastPalette() {
 }
 
 function createGamecastPhaserController({ screen, stage, canvas, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [] }) {
-  const palette = createGamecastPalette();
-  const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const normalizedSequence = normalizeGamecastSequenceForPlayback(sequence);
+  const palette = createGamecastPalette(normalizedSequence.ballparkProfile);
+  const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const state = {
     playbackRate: sanitizeGamecastSpeed(normalizedSequence.playbackRate),
     paused: Boolean(normalizedSequence.paused || normalizedSequence.hold),
@@ -5325,6 +5403,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     stage,
     canvas,
     sequence: state.sequence,
+    fieldProfile: state.sequence.ballparkProfile,
     width: GAMECAST_PIXEL_W,
     height: GAMECAST_PIXEL_H,
     palette,
@@ -5572,9 +5651,9 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
 }
 
 function createGamecastPixelController({ screen, stage, canvas, ctx, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [] }) {
-  const palette = createGamecastPalette();
-  const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const normalizedSequence = normalizeGamecastSequenceForPlayback(sequence);
+  const palette = createGamecastPalette(normalizedSequence.ballparkProfile);
+  const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const state = {
     animationFrame: 0,
     visible: true,
@@ -5610,7 +5689,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     feedList,
     feedItems,
     palette,
-    fieldCache: buildGamecastFieldCache(palette),
+    fieldCache: buildGamecastFieldCache(palette, normalizedSequence.ballparkProfile),
     prefersReducedMotion,
     shakenEventId: ""
   };
@@ -5924,6 +6003,9 @@ function normalizeGamecastSequenceForPlayback(sequence) {
     startHome: Number(sequence?.startHome ?? sequence?.finalHome ?? 0),
     finalAway: Number(sequence?.finalAway ?? sequence?.startAway ?? 0),
     finalHome: Number(sequence?.finalHome ?? sequence?.startHome ?? 0),
+    ballparkProfile: normalizeGamecastSequenceBallpark(sequence?.ballparkProfile),
+    attendance: Number(sequence?.attendance ?? sequence?.ballparkProfile?.attendance ?? 0),
+    weatherLabel: String(sequence?.weatherLabel ?? sequence?.ballparkProfile?.weatherLabel ?? ""),
     mode: String(sequence?.mode ?? "summary"),
     paMs: Math.max(80, Number(sequence?.paMs ?? GAMECAST_PA_MS)),
     gapMs: Math.max(0, Number(sequence?.gapMs ?? GAMECAST_PA_GAP_MS)),
@@ -5946,6 +6028,24 @@ function normalizeGamecastSequenceForPlayback(sequence) {
   }
   return {
     ...normalized
+  };
+}
+
+function normalizeGamecastSequenceBallpark(profile) {
+  if (!profile || typeof profile !== "object") return KBO_GAMECAST_BALLPARKS.neutral;
+  const base = KBO_GAMECAST_BALLPARKS[String(profile.id ?? "")] ?? KBO_GAMECAST_BALLPARKS.neutral;
+  const attendance = Number(profile.attendance ?? 0);
+  const capacity = Number(profile.capacity ?? gamecastBallparkCapacity(base.id));
+  return {
+    ...base,
+    ...profile,
+    id: String(profile.id ?? base.id),
+    attendance,
+    capacity,
+    attendanceRatio: Math.max(0.16, Math.min(1, Number(profile.attendanceRatio ?? (capacity ? attendance / capacity : 0.62)) || 0.62)),
+    homeColor: normalizeHexColor(profile.homeColor, "#315288"),
+    grass: Array.isArray(profile.grass) ? profile.grass : base.grass,
+    seatColors: Array.isArray(profile.seatColors) ? profile.seatColors : base.seatColors
   };
 }
 
@@ -6051,7 +6151,7 @@ function resizeGamecastCanvas(screen, stage, canvas, ctx, state) {
 function drawGamecastFrame(ctx, state, frame) {
   const palette = state.palette;
   if (state.fieldCache) ctx.drawImage(state.fieldCache, 0, 0);
-  else drawGamecastFieldTo(ctx, palette);
+  else drawGamecastFieldTo(ctx, palette, state.sequence?.ballparkProfile);
   drawPixelCenterScoreboard(ctx, palette, frame);
   drawPixelAtmosphere(ctx, palette, frame);
   drawPixelFielders(ctx, palette, frame);
@@ -6067,7 +6167,7 @@ function drawGamecastFrame(ctx, state, frame) {
   drawPixelBroadcastBug(ctx, palette, frame);
 }
 
-function buildGamecastFieldCache(palette) {
+function buildGamecastFieldCache(palette, ballparkProfile = null) {
   if (typeof document === "undefined") return null;
   const field = document.createElement("canvas");
   field.width = GAMECAST_PIXEL_W;
@@ -6075,12 +6175,12 @@ function buildGamecastFieldCache(palette) {
   const fieldCtx = field.getContext("2d");
   if (!fieldCtx) return null;
   fieldCtx.imageSmoothingEnabled = false;
-  drawGamecastFieldTo(fieldCtx, palette);
+  drawGamecastFieldTo(fieldCtx, palette, ballparkProfile);
   return field;
 }
 
-function drawGamecastFieldTo(ctx, palette) {
-  drawBallparkOutfield(ctx, palette);
+function drawGamecastFieldTo(ctx, palette, ballparkProfile = null) {
+  drawBallparkOutfield(ctx, palette, normalizeGamecastSequenceBallpark(ballparkProfile));
   drawBallparkInfield(ctx, palette);
   drawBallparkBases(ctx, palette);
   drawBallparkDugouts(ctx, palette);
@@ -6098,37 +6198,60 @@ function gamecastSize(value) {
   return Math.max(1, Math.round((Number(value) / 120) * GAMECAST_PIXEL_W));
 }
 
-function drawBallparkOutfield(ctx, palette) {
-  const fx = gamecastX(60);
-  const fy = gamecastY(104);
-  const wallRadius = gamecastSize(90);
+function gamecastOutfieldWallY(profile, logicalX) {
+  const x = Math.max(4, Math.min(116, Number(logicalX) || 60));
+  const left = x < 60;
+  const edgeT = Math.min(1, Math.abs(x - 60) / 48);
+  const midT = Math.min(1, Math.abs(x - 60) / 28);
+  const center = Number(profile?.cf ?? 121);
+  const mid = left ? Number(profile?.lcf ?? 116) : Number(profile?.rcf ?? 116);
+  const corner = left ? Number(profile?.lf ?? 99) : Number(profile?.rf ?? 99);
+  const depth = edgeT < 0.58
+    ? lerp(center, mid, midT)
+    : lerp(mid, corner, Math.max(0, (edgeT - 0.58) / 0.42));
+  const radius = 84 + (depth - 115) * 0.72;
+  const dx = x - 60;
+  const y = 104 - Math.sqrt(Math.max(0, radius * radius - dx * dx));
+  return Math.max(5, Math.min(51, y));
+}
+
+function drawBallparkOutfield(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
   for (let y = 0; y < GAMECAST_PIXEL_H; y += 1) {
     for (let x = 0; x < GAMECAST_PIXEL_W; x += 1) {
-      const distance = Math.hypot(x - fx, y - fy);
-      if (distance > wallRadius) {
+      const lx = (x / GAMECAST_PIXEL_W) * 120;
+      const ly = (y / GAMECAST_PIXEL_H) * 108;
+      const wallY = gamecastOutfieldWallY(profile, lx);
+      const inside = ly >= wallY;
+      const distanceToWall = ly - wallY;
+      if (!inside) {
         const aisle = y % gamecastSize(7) === 0;
-        const seatBand = Math.floor(y / gamecastSize(4)) % 2;
+        const seatBand = Math.floor((y + x * 0.08) / gamecastSize(4)) % 2;
         const color = aisle ? "#3a3444" : (seatBand ? palette.stand : palette.standD);
         drawPixel(ctx, x, y, color);
-      } else if (distance > wallRadius - gamecastSize(2)) {
-        drawPixel(ctx, x, y, y < gamecastY(30) ? palette.wallCap : palette.wall);
-      } else if (distance > wallRadius - gamecastSize(5)) {
+      } else if (distanceToWall < 2.2 + Math.min(3.2, Number(profile.wallHeight ?? 3) * 0.28)) {
+        const monster = profile.monsterSide === "right" && lx > 92;
+        drawPixel(ctx, x, y, monster ? "#38252d" : (y < gamecastY(30) ? palette.wallCap : palette.wall));
+      } else if (distanceToWall < 5.8) {
         drawPixel(ctx, x, y, Math.floor((x + y) / gamecastSize(5)) % 2 ? "#d1ad68" : palette.track);
       } else {
-        const ring = Math.floor(distance / gamecastSize(13));
-        const stripe = Math.floor((x + y * 0.45) / gamecastSize(7));
+        const ring = Math.floor((ly - wallY + Math.abs(lx - 60) * 0.16) / 8);
+        const stripe = profile.mow === "checker"
+          ? Math.floor(lx / 7) + Math.floor(ly / 6)
+          : profile.mow === "stripes"
+            ? Math.floor((lx + ly * 0.25) / 7)
+            : Math.floor((Math.hypot(lx - 60, ly - 101)) / 8);
         drawPixel(ctx, x, y, (ring + stripe) % 2 ? palette.grassLo : palette.grassHi);
       }
     }
   }
 
-  drawPixelCrowd(ctx, palette, fx, fy, wallRadius);
-  drawBallparkArchitecture(ctx, palette);
+  drawPixelCrowd(ctx, palette, profile);
+  drawBallparkArchitecture(ctx, palette, profile);
 
-  drawPixelStadiumScoreboard(ctx, palette);
+  drawPixelStadiumScoreboard(ctx, palette, profile);
 
-  for (let y = gamecastY(30); y < gamecastY(48); y += 1) {
-    drawPixel(ctx, gamecastX(15), y, palette.pole);
+  for (let y = gamecastY(30); y < gamecastY(50); y += 1) {
+    drawPixel(ctx, gamecastX(15), y, profile.monsterSide === "right" ? palette.spark : palette.pole);
     drawPixel(ctx, gamecastX(105), y, palette.pole);
   }
 
@@ -6137,7 +6260,7 @@ function drawBallparkOutfield(ctx, palette) {
   drawPixelLine(ctx, bases.home.x, bases.home.y, gamecastX(104), gamecastY(46), palette.base, gamecastSize(1));
 }
 
-function drawPixelStadiumScoreboard(ctx, palette) {
+function drawPixelStadiumScoreboard(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
   const x = gamecastX(40);
   const y = gamecastY(3);
   const w = gamecastSize(40);
@@ -6148,18 +6271,25 @@ function drawPixelStadiumScoreboard(ctx, palette) {
   ctx.fillRect(x + gamecastSize(1), y + gamecastSize(2), w - gamecastSize(2), h - gamecastSize(3));
   ctx.fillStyle = palette.wallCap;
   ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), w - gamecastSize(2), gamecastSize(1));
-  ctx.fillStyle = palette.sparkL;
-  for (let px = x + gamecastSize(6); px < x + w - gamecastSize(6); px += gamecastSize(4)) {
-    ctx.fillRect(px, y + gamecastSize(6), gamecastSize(1), gamecastSize(1));
-  }
-  ctx.fillStyle = palette.base;
-  ctx.fillRect(x + gamecastSize(9), y + gamecastSize(9), gamecastSize(8), gamecastSize(1));
-  ctx.fillRect(x + gamecastSize(23), y + gamecastSize(9), gamecastSize(8), gamecastSize(1));
+  drawMiniPixelText(ctx, palette, String(profile.label ?? "KBO").slice(0, 4), x + gamecastSize(5), y + gamecastSize(4), palette.base, 4);
+  drawMiniPixelText(ctx, palette, profile.roofed ? "DOME" : "LIVE", x + gamecastSize(23), y + gamecastSize(4), palette.sparkL, 4);
+  ctx.fillStyle = palette.baseSh;
+  ctx.fillRect(x + gamecastSize(8), y + gamecastSize(10), gamecastSize(9), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(23), y + gamecastSize(10), gamecastSize(9), gamecastSize(1));
 }
 
-function drawBallparkArchitecture(ctx, palette) {
-  drawPixelLightTower(ctx, palette, gamecastX(9), gamecastY(4), -1);
-  drawPixelLightTower(ctx, palette, gamecastX(111), gamecastY(4), 1);
+function drawBallparkArchitecture(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
+  if (profile.roofed) {
+    ctx.fillStyle = "#263343";
+    for (let y = gamecastY(1); y < gamecastY(18); y += gamecastSize(4)) {
+      ctx.fillRect(gamecastX(5), y, gamecastX(110), gamecastSize(1));
+    }
+    ctx.fillStyle = "rgba(221, 236, 255, 0.28)";
+    ctx.fillRect(gamecastX(12), gamecastY(19), gamecastX(96), gamecastSize(1));
+  } else {
+    drawPixelLightTower(ctx, palette, gamecastX(9), gamecastY(4), -1);
+    drawPixelLightTower(ctx, palette, gamecastX(111), gamecastY(4), 1);
+  }
 
   ctx.fillStyle = palette.outline;
   ctx.fillRect(gamecastX(17), gamecastY(17), gamecastSize(24), gamecastSize(4));
@@ -6201,18 +6331,21 @@ function drawPixelLightTower(ctx, palette, x, y, direction) {
   }
 }
 
-function drawPixelCrowd(ctx, palette, fx, fy, wallRadius) {
-  const stepX = gamecastSize(5);
-  const stepY = gamecastSize(6);
+function drawPixelCrowd(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
+  const dense = Math.max(0.16, Math.min(1, Number(profile.attendanceRatio ?? 0.62)));
+  const stepX = gamecastSize(dense > 0.82 ? 4 : dense > 0.52 ? 5 : 7);
+  const stepY = gamecastSize(dense > 0.82 ? 5 : 6);
   const startY = gamecastY(2);
   const endY = gamecastY(43);
-  const shirts = [palette.crowdA, palette.crowdB, palette.crowdC, "#8fd0b4", "#ffd23f", "#f2b6c6", "#fbfbf7", "#f37321", palette.standD];
+  const shirts = [palette.crowdA, palette.crowdB, palette.crowdC, "#8fd0b4", "#ffd23f", "#f2b6c6", "#fbfbf7", profile.homeColor ?? "#f37321", palette.standD];
 
   for (let y = startY; y < endY; y += stepY) {
     const row = Math.floor((y - startY) / stepY);
     for (let x = gamecastX(2) + (row % 2 ? gamecastSize(2) : 0); x < GAMECAST_PIXEL_W - gamecastX(3); x += stepX) {
-      const distance = Math.hypot(x - fx, y - fy);
-      if (distance <= wallRadius + gamecastSize(1)) continue;
+      const lx = (x / GAMECAST_PIXEL_W) * 120;
+      const ly = (y / GAMECAST_PIXEL_H) * 108;
+      if (ly >= gamecastOutfieldWallY(profile, lx) - 1) continue;
+      if (((row * 19 + x) % 100) > dense * 100) continue;
       if ((row * 11 + x) % 37 === 0) {
         drawPixelFanSign(ctx, palette, x - 1, y + 1, shirts[(row + x + 1) % shirts.length]);
         continue;
@@ -7044,12 +7177,14 @@ function blockLettersWidth(text, scale) {
 function drawPixelFielders(ctx, palette, frame) {
   const positions = gamecastDefensiveAlignment();
   const activePosition = normalizeFieldingPosition(frame.event?.fieldingPosition);
+  const movingFielders = new Set(frame.activeFielders ?? []);
   const defenderColor = frame.defenseColor ?? (frame.side === "home" ? palette.defender : "#575160");
   const jerseyColor = frame.defenseJerseyColor ?? palette.defenderL;
   const activeProgress = Number(frame.progress ?? 0);
   const pitchingNow = frame.event && activeProgress < gamecastPitchEnd(frame.event) + 0.04;
 
   for (const fielder of positions) {
+    if (movingFielders.has(fielder.key)) continue;
     const isActive = activePosition && fielder.key === activePosition && activeProgress >= 0.28 && activeProgress <= 0.82;
     if (isActive || (pitchingNow && fielder.key === "P")) continue;
     const pose = fielder.key === "C" ? "catcher" : activePosition === fielder.key && activeProgress > 0.82 ? "catch" : "field";
@@ -7132,7 +7267,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
       contactBurst: null,
       actionBurst: null,
       baseCallout: null,
-      inningSlate: null
+      inningSlate: null,
+      ballparkProfile: seq.ballparkProfile
     };
   }
 
@@ -7165,6 +7301,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
       actionBurst: null,
       baseCallout: null,
       inningSlate: null,
+      ballparkProfile: seq.ballparkProfile,
       progress: 1
     };
   }
@@ -7187,6 +7324,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
     : baseOccupancyDuringMove(event, progress);
   const score = scoreForGamecastFrame(seq, events, index, progress >= 0.68);
   const runners = buildRunnerSprites(event, progress, state.palette);
+  const defenseSprites = buildGamecastDefenseSprites(event, progress, state.palette);
+  const activeFielders = [...new Set(defenseSprites.map((sprite) => sprite.fieldingKey).filter(Boolean))];
 
   return {
     done: false,
@@ -7201,7 +7340,8 @@ function buildGamecastFrameState(state, forceFinal = false) {
     ball: buildBallSprite(event, progress),
     ballTrail: buildBallTrail(event, progress),
     ballShadow: buildGamecastBallShadow(event, progress),
-    defenseSprites: buildGamecastDefenseSprites(event, progress, state.palette),
+    defenseSprites,
+    activeFielders,
     throwLines: buildGamecastThrowLines(event, progress),
     contactBurst: buildGamecastContactBurst(event, progress),
     ballTrailColor: event.outcome === "homeRun" ? state.palette.homerL : state.palette.baseSh,
@@ -7210,6 +7350,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
     actionBurst: buildGamecastActionBurst(event, progress),
     baseCallout: buildGamecastBaseCallout(event, progress),
     inningSlate: buildGamecastBridgeSlate(event, nextEvent, gapProgress) ?? buildGamecastInningSlate(event, progress),
+    ballparkProfile: seq.ballparkProfile,
     scoreFlash: event.runs > 0 && progress >= 0.62 && progress <= 0.84,
     flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
     offenseColor: event.teamColor ?? state.palette.runner,
@@ -7777,23 +7918,31 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     });
   }
   if (!isBattedBallOutcome(event?.outcome)) return sprites;
-  if (progress < pitchEnd + 0.12 || progress > 0.88) return sprites;
+  if (progress < pitchEnd + 0.06 || progress > 0.9) return sprites;
 
-  const t = Math.max(0, Math.min(1, (progress - pitchEnd - 0.12) / 0.46));
+  const fieldingKey = normalizeFieldingPosition(event.fieldingPosition) || "SS";
+  const battedType = String(event.battedBallType ?? "");
   const target = battedBallGroundPoint(event, 1);
   const start = gamecastDefenderStartForTarget(target, event);
-  const eased = easeOutCubic(t);
-  const position = {
-    x: Math.round(lerp(start.x, target.x, eased)),
-    y: Math.round(lerp(start.y, target.y, eased))
-  };
-  const impactPose = event.outcome === "error" && progress > 0.5
-    ? "dive"
-    : event.outcome === "out" && progress > 0.52
-      ? "catch"
-      : "field";
-  const catchBurst = (event.outcome === "out" && progress > 0.52 && progress < 0.72)
-    || (event.outcome === "error" && progress > 0.5 && progress < 0.68);
+  const catchProgress = battedType === "groundBall" ? 0.5 : battedType === "lineDrive" ? 0.54 : 0.6;
+  const runStart = Math.max(0.24, pitchEnd + 0.04);
+  const fieldT = Math.max(0, Math.min(1, (progress - runStart) / Math.max(0.01, catchProgress - runStart)));
+  const position = gamecastFielderRoutePoint(start, target, fieldT, fieldingKey, event);
+  const hardPlay = gamecastDifficultFieldingPlay(event, fieldingKey, target, start);
+  const throwing = progress >= catchProgress + 0.08 && progress <= 0.8 && event.outcome !== "homeRun";
+  const impactPose = event.outcome === "homeRun" && progress > 0.62
+    ? "lookUp"
+    : event.outcome === "error" && progress > catchProgress - 0.02
+      ? "dive"
+      : hardPlay && progress > catchProgress - 0.06 && progress < catchProgress + 0.06
+        ? "dive"
+        : progress > catchProgress + 0.08
+          ? "throw"
+          : progress > catchProgress - 0.04
+            ? "catch"
+            : "run";
+  const catchBurst = (event.outcome === "out" && progress > catchProgress - 0.02 && progress < catchProgress + 0.12)
+    || (event.outcome === "error" && progress > catchProgress - 0.02 && progress < catchProgress + 0.14);
 
   sprites.push({
     position,
@@ -7801,13 +7950,25 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
     jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
     accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
-    fieldingKey: normalizeFieldingPosition(event.fieldingPosition),
+    fieldingKey,
     uniformNumber: gamecastUniformNumber(event.defenderName, event.fieldingPosition),
-    runFrame: Math.floor(t * 8) % 2,
-    squash: t > 0.88,
+    runFrame: Math.floor(fieldT * 12) % 4,
+    squash: throwing,
     pose: impactPose,
-    catchBurst
+    catchBurst,
+    facing: target.x >= start.x ? 1 : -1
   });
+
+  if (event.doublePlay) {
+    sprites.push(...buildGamecastDoublePlaySprites(event, progress, palette, catchProgress));
+  } else if (["out", "single", "double", "error"].includes(event.outcome) && progress >= catchProgress + 0.04 && progress <= 0.84) {
+    const firstBase = gamecastBasePositions().first;
+    const stretchT = Math.max(0, Math.min(1, (progress - catchProgress - 0.04) / 0.22));
+    sprites.push(gamecastSupportFielderSprite(event, palette, "1B", {
+      x: Math.round(lerp(gamecastX(94), firstBase.x + gamecastSize(2), easeOutCubic(stretchT))),
+      y: Math.round(lerp(gamecastY(77), firstBase.y + gamecastSize(1), easeOutCubic(stretchT)))
+    }, progress > catchProgress + 0.18 ? "catch" : "field", 1));
+  }
 
   if (event.outcome === "homeRun" && progress > 0.64) {
     sprites.push({
@@ -7825,6 +7986,72 @@ function buildGamecastDefenseSprites(event, progress, palette) {
   }
 
   return sprites;
+}
+
+function gamecastFielderRoutePoint(start, target, t, key, event) {
+  const eased = easeInOutCubic(Math.max(0, Math.min(1, t)));
+  const outfield = ["LF", "CF", "RF"].includes(key);
+  const control = outfield
+    ? {
+        x: (start.x + target.x) / 2 + gamecastSize(gamecastEventNoise(event, 71) * 8),
+        y: Math.min(start.y, target.y) - gamecastSize(5 + Math.abs(gamecastEventNoise(event, 72)) * 6)
+      }
+    : {
+        x: (start.x + target.x) / 2,
+        y: (start.y + target.y) / 2 + gamecastSize(String(event?.battedBallType ?? "") === "groundBall" ? 3 : -3)
+      };
+  return {
+    x: Math.round(quadBezier(start.x, control.x, target.x, eased)),
+    y: Math.round(quadBezier(start.y, control.y, target.y, eased))
+  };
+}
+
+function quadBezier(a, b, c, t) {
+  const inv = 1 - t;
+  return inv * inv * a + 2 * inv * t * b + t * t * c;
+}
+
+function gamecastDifficultFieldingPlay(event, key, target, start) {
+  const distance = Math.hypot(target.x - start.x, target.y - start.y) / Math.max(1, gamecastSize(1));
+  if (event?.outcome === "error") return true;
+  if (String(event?.battedBallType ?? "") === "lineDrive" && distance > 15) return true;
+  if (["SS", "2B", "3B"].includes(key) && distance > 18) return true;
+  return ["LF", "CF", "RF"].includes(key) && distance > 24 && gamecastEventNoise(event, 73) > 0.12;
+}
+
+function gamecastSupportFielderSprite(event, palette, key, position, pose = "field", runFrame = 0) {
+  return {
+    position,
+    color: event.defenseColor ?? palette.defender,
+    jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
+    jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
+    accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
+    fieldingKey: key,
+    uniformNumber: gamecastUniformNumber(key, key),
+    runFrame,
+    squash: false,
+    pose
+  };
+}
+
+function buildGamecastDoublePlaySprites(event, progress, palette, catchProgress) {
+  const bases = gamecastBasePositions();
+  const leadKey = normalizeFieldingPosition(event.fieldingPosition);
+  const pivotKey = leadKey === "SS" ? "2B" : "SS";
+  const pivotStart = gamecastDefensiveAlignment().find((fielder) => fielder.key === pivotKey)?.position ?? bases.second;
+  const pivotT = Math.max(0, Math.min(1, (progress - catchProgress) / 0.2));
+  const pivotPosition = {
+    x: Math.round(lerp(pivotStart.x, bases.second.x, easeOutCubic(pivotT))),
+    y: Math.round(lerp(pivotStart.y, bases.second.y + gamecastSize(1), easeOutCubic(pivotT)))
+  };
+  const firstT = Math.max(0, Math.min(1, (progress - catchProgress - 0.15) / 0.22));
+  return [
+    gamecastSupportFielderSprite(event, palette, pivotKey, pivotPosition, progress > catchProgress + 0.12 ? "throw" : "catch", Math.floor(pivotT * 4) % 4),
+    gamecastSupportFielderSprite(event, palette, "1B", {
+      x: Math.round(lerp(gamecastX(94), bases.first.x + gamecastSize(2), easeOutCubic(firstT))),
+      y: Math.round(lerp(gamecastY(77), bases.first.y + gamecastSize(1), easeOutCubic(firstT)))
+    }, progress > catchProgress + 0.28 ? "catch" : "field", 1)
+  ];
 }
 
 function buildGamecastThrowLines(event, progress) {
@@ -8503,6 +8730,8 @@ function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, op
     cells.push([0, 2, palette.glove], [1, 2, palette.glove], [6, 1, S], [7, 0, S], [7, 1, palette.ballGlow], [1, 5, S], [6, 5, S], [2, 10, L], [5, 9, L], [2, 11, L], [6, 10, L], [1, 12, L], [6, 11, L]);
   } else if (pose === "pitch") {
     cells.push([0, 5, palette.glove], [1, 5, S], [7, 3, S], [8, 3, palette.ballGlow], [9, 3, palette.ballGlow], [2, 10, L], [5, 10, L], [1, 11, L], [6, 11, L], [0, 12, L], [7, 12, L]);
+  } else if (pose === "throw") {
+    cells.push([0, 4, palette.glove], [1, 5, S], [6, 4, S], [7, 3, S], [8, 3, palette.ballGlow], [2, 10, L], [5, 10, L], [1, 11, L], [6, 11, L], [0, 12, L], [7, 12, L]);
   } else if (pose === "walk") {
     cells.push([1, 5, S], [7, 6, S], [2, 10, L], [5, 10, L], [runFrame === 1 ? 1 : 2, 11, L], [runFrame === 1 ? 6 : 5, 11, L], [runFrame === 1 ? 1 : 2, 12, L], [runFrame === 1 ? 7 : 6, 12, L]);
   } else if (pose === "bat") {
