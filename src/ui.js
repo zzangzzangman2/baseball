@@ -128,8 +128,8 @@ const KOREAN_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const UI_OPENING_DAY_MONTH_DAY = "03-28";
 const UI_MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-const GAMECAST_PIXEL_W = 320;
-const GAMECAST_PIXEL_H = 288;
+const GAMECAST_PIXEL_W = 400;
+const GAMECAST_PIXEL_H = 360;
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
 const GAMECAST_PLAYBACK_COUNT = 8;
 const GAMECAST_WATCH_PA_MS = 2600;
@@ -5654,13 +5654,13 @@ function drawPixelFielders(ctx, palette, frame) {
 function gamecastDefensiveAlignment() {
   const bases = gamecastBasePositions();
   return [
-    { key: "LF", position: { x: gamecastX(30), y: gamecastY(44) }, frame: 1 },
-    { key: "CF", position: { x: gamecastX(60), y: gamecastY(34) }, frame: 2 },
-    { key: "RF", position: { x: gamecastX(90), y: gamecastY(44) }, frame: 0 },
-    { key: "SS", position: { x: gamecastX(46), y: gamecastY(64) }, frame: 1 },
-    { key: "2B", position: { x: gamecastX(74), y: gamecastY(64) }, frame: 0 },
-    { key: "3B", position: { x: gamecastX(29), y: gamecastY(76) }, frame: 2 },
-    { key: "1B", position: { x: gamecastX(91), y: gamecastY(76) }, frame: 2 },
+    { key: "LF", position: { x: gamecastX(22), y: gamecastY(43) }, frame: 1 },
+    { key: "CF", position: { x: gamecastX(60), y: gamecastY(31) }, frame: 2 },
+    { key: "RF", position: { x: gamecastX(98), y: gamecastY(43) }, frame: 0 },
+    { key: "SS", position: { x: gamecastX(42), y: gamecastY(66) }, frame: 1 },
+    { key: "2B", position: { x: gamecastX(78), y: gamecastY(65) }, frame: 0 },
+    { key: "3B", position: { x: gamecastX(26), y: gamecastY(77) }, frame: 2 },
+    { key: "1B", position: { x: gamecastX(94), y: gamecastY(77) }, frame: 2 },
     { key: "P", position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(2) }, frame: 2 },
     { key: "C", position: { x: bases.home.x - gamecastSize(8), y: bases.home.y + gamecastSize(4) }, frame: 2 }
   ];
@@ -6391,11 +6391,11 @@ function gamecastDefenderStartForTarget(target, event) {
   const leftSide = target.x < gamecastX(60);
   const deep = target.y < gamecastY(52);
   const infield = target.y > gamecastY(68);
-  if (infield) return { x: leftSide ? gamecastX(45) : gamecastX(74), y: gamecastY(72) };
-  if (event?.outcome === "homeRun") return { x: leftSide ? gamecastX(30) : gamecastX(90), y: gamecastY(48) };
+  if (infield) return { x: leftSide ? gamecastX(42) : gamecastX(78), y: gamecastY(72) };
+  if (event?.outcome === "homeRun") return { x: leftSide ? gamecastX(22) : gamecastX(98), y: gamecastY(48) };
   return {
-    x: leftSide ? gamecastX(deep ? 31 : 40) : gamecastX(deep ? 89 : 80),
-    y: gamecastY(deep ? 42 : 55)
+    x: leftSide ? gamecastX(deep ? 24 : 36) : gamecastX(deep ? 96 : 84),
+    y: gamecastY(deep ? 41 : 55)
   };
 }
 
@@ -6404,13 +6404,13 @@ function gamecastFieldingSpot(event) {
   const spots = {
     P: { x: 60, y: 74 },
     C: { x: 58, y: 92 },
-    "1B": { x: 87, y: 73 },
-    "2B": { x: 73, y: 62 },
-    "3B": { x: 31, y: 74 },
-    SS: { x: 46, y: 62 },
-    LF: { x: 30, y: 42 },
-    CF: { x: 60, y: 34 },
-    RF: { x: 91, y: 42 }
+    "1B": { x: 94, y: 74 },
+    "2B": { x: 78, y: 63 },
+    "3B": { x: 26, y: 74 },
+    SS: { x: 42, y: 64 },
+    LF: { x: 22, y: 42 },
+    CF: { x: 60, y: 31 },
+    RF: { x: 98, y: 42 }
   };
   return spots[key] ?? null;
 }

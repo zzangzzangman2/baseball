@@ -1,5 +1,5 @@
-const PHASER_DESIGN_W = 320;
-const PHASER_DESIGN_H = 288;
+const PHASER_DESIGN_W = 400;
+const PHASER_DESIGN_H = 360;
 const PLAYER_ATLAS_SIZE = 48;
 const PLAYER_ATLAS_FRAMES = {
   stance: [0, 0],
@@ -414,6 +414,18 @@ function drawFieldCanvas(ctx, palette, width, height) {
   ctx.fillRect(sx(58), sy(75), sx(4), sy(2));
 }
 
+function fieldX(runtime, value) {
+  return Math.round((Number(value) / 120) * runtime.width);
+}
+
+function fieldY(runtime, value) {
+  return Math.round((Number(value) / 108) * runtime.height);
+}
+
+function fieldSize(runtime, value) {
+  return Math.max(1, Math.round((Number(value) / 120) * runtime.width));
+}
+
 function fillDiamond(ctx, color, points) {
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -434,20 +446,19 @@ function drawLineCanvas(ctx, x1, y1, x2, y2, color, width = 1) {
 
 function drawStaticDefense(scene, graphics, runtime, frame, useSprites) {
   if (!frame.event) return;
-  const bases = runtime.basePositions;
   const color = frame.defenseColor ?? runtime.palette.defender;
   const jerseyColor = frame.defenseJerseyColor ?? runtime.palette.defenderL;
   const jerseyShadow = frame.defenseJerseyShadow ?? runtime.palette.uniformSh;
   const accentColor = frame.defenseAccentColor ?? color;
   const positions = [
-    { key: "C", x: bases.home.x - 6, y: bases.home.y - 1 },
-    { key: "1B", x: bases.first.x + 7, y: bases.first.y + 3 },
-    { key: "2B", x: bases.second.x + 13, y: bases.second.y + 8 },
-    { key: "3B", x: bases.third.x - 8, y: bases.third.y + 3 },
-    { key: "SS", x: bases.second.x - 16, y: bases.second.y + 11 },
-    { key: "LF", x: bases.third.x - 14, y: bases.third.y - 30 },
-    { key: "CF", x: bases.second.x, y: bases.second.y - 33 },
-    { key: "RF", x: bases.first.x + 16, y: bases.first.y - 30 }
+    { key: "C", x: fieldX(runtime, 52), y: fieldY(runtime, 100) },
+    { key: "1B", x: fieldX(runtime, 94), y: fieldY(runtime, 77) },
+    { key: "2B", x: fieldX(runtime, 78), y: fieldY(runtime, 65) },
+    { key: "3B", x: fieldX(runtime, 26), y: fieldY(runtime, 77) },
+    { key: "SS", x: fieldX(runtime, 42), y: fieldY(runtime, 66) },
+    { key: "LF", x: fieldX(runtime, 22), y: fieldY(runtime, 43) },
+    { key: "CF", x: fieldX(runtime, 60), y: fieldY(runtime, 31) },
+    { key: "RF", x: fieldX(runtime, 98), y: fieldY(runtime, 43) }
   ];
   for (const item of positions) {
     drawGamecastPlayer(scene, graphics, runtime, {
@@ -468,9 +479,9 @@ function drawPhaserAtmosphere(graphics, runtime, frame) {
   const progress = Number(frame.progress ?? 0);
   if (frame.scoreFlash || frame.event?.outcome === "homeRun") {
     const color = frame.event?.outcome === "homeRun" ? palette.homerL : palette.spark;
-    for (const y of [18, 24]) {
-      for (let x = 14; x < 146; x += 9) {
-        if ((x + Math.floor(progress * 30)) % 3 === 0) rect(graphics, runtime, x, y, 4, 1, color, 0.85);
+    for (const y of [fieldY(runtime, 18), fieldY(runtime, 24)]) {
+      for (let x = fieldX(runtime, 14); x < fieldX(runtime, 106); x += fieldSize(runtime, 9)) {
+        if ((x + Math.floor(progress * 30)) % 3 === 0) rect(graphics, runtime, x, y, fieldSize(runtime, 4), 1, color, 0.85);
       }
     }
   }
@@ -643,7 +654,7 @@ function drawUmpire(scene, graphics, runtime, frame, useSprites) {
   if (!frame.event) return;
   const bases = runtime.basePositions;
   drawGamecastPlayer(scene, graphics, runtime, {
-    position: { x: bases.home.x - 10, y: bases.home.y + 2 },
+    position: { x: bases.home.x - fieldSize(runtime, 8), y: bases.home.y + fieldSize(runtime, 2) },
     jerseyColor: "#25232c",
     jerseyShadow: "#15131a",
     accentColor: "#5f5b67",
