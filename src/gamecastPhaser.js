@@ -11,6 +11,7 @@ const PLAYER_ATLAS_FRAMES = {
   run1: [1, 1],
   run2: [2, 1],
   walk1: [3, 1],
+  walk2: [1, 1],
   slide: [4, 1],
   windup: [0, 2],
   pitch: [1, 2],
@@ -530,7 +531,7 @@ function spriteFrameForPose(sprite, role) {
   if (role?.startsWith("defender") && sprite?.fieldingKey === "C") return "catcher";
   const pose = String(sprite?.pose ?? "idle");
   if (pose === "run") return Number(sprite?.runFrame ?? 0) % 2 ? "run2" : "run1";
-  if (pose === "walk") return Number(sprite?.runFrame ?? 0) % 2 ? "walk1" : "idle";
+  if (pose === "walk") return Number(sprite?.runFrame ?? 0) % 2 ? "walk2" : "walk1";
   if (pose === "load") return "stance";
   return PLAYER_ATLAS_FRAMES[pose] ? pose : "idle";
 }

@@ -77,17 +77,28 @@ def classify_pixel(pixel: Tuple[int, int, int, int], uniform: str) -> Tuple[int,
     lum = luminance(r, g, b)
     chroma = max(r, g, b) - min(r, g, b)
 
+    skin_like = (
+        r > 115
+        and g > 72
+        and b > 54
+        and r >= g + 18
+        and g >= b - 18
+        and lum > 0.28
+    )
+    if skin_like:
+        return SKIN_SHADOW if lum < 0.58 else SKIN
+
+    red_score = r - max(g, b)
+    if r > 125 and red_score > 24 and g < 92 and b < 120:
+        return SOCK if lum < 0.42 else CAP
+
+    if r > 135 and g > 82 and b < 138 and r > b + 28:
+        return SKIN_SHADOW if lum < 0.62 else SKIN
+
     if lum < 0.16:
         return OUTLINE
     if lum < 0.26 and chroma < 70:
         return OUTLINE_SOFT
-
-    red_score = r - max(g, b)
-    if r > 115 and red_score > 22:
-        return SOCK if lum < 0.42 else CAP
-
-    if r > 142 and g > 88 and b < 125 and r > b + 42:
-        return SKIN_SHADOW if lum < 0.62 else SKIN
 
     if b >= r + 8 and b >= g + 4 and lum < 0.48:
         return PANTS_SHADOW if lum < 0.24 else PANTS
@@ -196,6 +207,7 @@ def write_player_atlas(source: Image.Image, output_dir: Path, uniform: str) -> N
 
     frames["load"] = frames["stance"]
     frames["walk"] = frames["walk1"]
+    frames["walk2"] = frames["run1"]
     frames["run"] = frames["run1"]
     frames["coach"] = frames["idle"]
     frames["umpire"] = frames["idle"]
@@ -265,7 +277,8 @@ def main() -> None:
 
     source = Image.open(args.source).convert("RGBA")
     source_copy = source_dir / "player-sheet-imagegen.png"
-    shutil.copyfile(args.source, source_copy)
+    if args.source.resolve() != source_copy.resolve():
+        shutil.copyfile(args.source, source_copy)
 
     write_player_atlas(source, output_dir, "home")
     write_player_atlas(source, output_dir, "away")
