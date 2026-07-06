@@ -3791,12 +3791,12 @@ function renderGamecastPanel(state) {
       <div class="gamecast-layout">
         <div class="gamecast-board" data-gamecast-board>
           <div class="gamecast-scoreline">
-            <span>
+            <span style="--score-team-color: ${escapeAttribute(getTeamColor(away))}">
               ${renderTeamLogo(away, "team-logo mini-logo")}
               <b>${escapeHtml(getTeamShortName(away) ?? "Away")}</b>
               <strong>${formatNumber(sequence.startAway)}</strong>
             </span>
-            <span>
+            <span style="--score-team-color: ${escapeAttribute(getTeamColor(home))}">
               ${renderTeamLogo(home, "team-logo mini-logo")}
               <b>${escapeHtml(getTeamShortName(home) ?? "Home")}</b>
               <strong>${formatNumber(sequence.startHome)}</strong>
@@ -3838,12 +3838,12 @@ function renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, f
         <div class="gamecast-broadcast-grid">
           <div class="gamecast-board gamecast-broadcast-board" data-gamecast-board>
             <div class="gamecast-scoreline gamecast-broadcast-scoreline">
-              <span>
+              <span style="--score-team-color: ${escapeAttribute(getTeamColor(away))}">
                 ${renderTeamLogo(away, "team-logo mini-logo")}
                 <b>${escapeHtml(getTeamShortName(away) ?? "Away")}</b>
                 <strong>${formatNumber(sequence.startAway)}</strong>
               </span>
-              <span>
+              <span style="--score-team-color: ${escapeAttribute(getTeamColor(home))}">
                 ${renderTeamLogo(home, "team-logo mini-logo")}
                 <b>${escapeHtml(getTeamShortName(home) ?? "Home")}</b>
                 <strong>${formatNumber(sequence.startHome)}</strong>
@@ -3940,6 +3940,7 @@ function renderGamecastPixelStage(instanceId, engine = GAMECAST_DEFAULT_ENGINE) 
           <small><b data-gamecast-jumbo-away>0</b> - <b data-gamecast-jumbo-home>0</b></small>
         </div>
         <div class="gamecast-dom-bug" data-gamecast-bug>
+          <span class="gamecast-dom-network">KBO LIVE</span>
           <div class="gamecast-dom-count" aria-label="B S O">
             <span>B</span><i data-gamecast-ball-pip></i><i data-gamecast-ball-pip></i><i data-gamecast-ball-pip></i>
             <span>S</span><i data-gamecast-strike-pip></i><i data-gamecast-strike-pip></i>
@@ -4719,15 +4720,18 @@ function drawBallparkOutfield(ctx, palette) {
     for (let x = 0; x < GAMECAST_PIXEL_W; x += 1) {
       const distance = Math.hypot(x - fx, y - fy);
       if (distance > wallRadius) {
-        const aisle = y % gamecastSize(6) === 0;
-        const color = aisle ? "#3a3444" : ((x + y) % 2 ? palette.stand : palette.standD);
+        const aisle = y % gamecastSize(7) === 0;
+        const seatBand = Math.floor(y / gamecastSize(4)) % 2;
+        const color = aisle ? "#3a3444" : (seatBand ? palette.stand : palette.standD);
         drawPixel(ctx, x, y, color);
       } else if (distance > wallRadius - gamecastSize(2)) {
         drawPixel(ctx, x, y, y < gamecastY(30) ? palette.wallCap : palette.wall);
       } else if (distance > wallRadius - gamecastSize(5)) {
-        drawPixel(ctx, x, y, palette.track);
+        drawPixel(ctx, x, y, Math.floor((x + y) / gamecastSize(5)) % 2 ? "#d1ad68" : palette.track);
       } else {
-        drawPixel(ctx, x, y, Math.floor(distance / gamecastSize(6)) % 2 ? palette.grassLo : palette.grassHi);
+        const ring = Math.floor(distance / gamecastSize(13));
+        const stripe = Math.floor((x + y * 0.45) / gamecastSize(7));
+        drawPixel(ctx, x, y, (ring + stripe) % 2 ? palette.grassLo : palette.grassHi);
       }
     }
   }
@@ -4735,14 +4739,7 @@ function drawBallparkOutfield(ctx, palette) {
   drawPixelCrowd(ctx, palette, fx, fy, wallRadius);
   drawBallparkArchitecture(ctx, palette);
 
-  ctx.fillStyle = palette.outline;
-  ctx.fillRect(gamecastX(48), gamecastY(4), gamecastSize(24), gamecastSize(8));
-  ctx.fillStyle = "#12211b";
-  ctx.fillRect(gamecastX(49), gamecastY(5), gamecastSize(22), gamecastSize(6));
-  for (let index = 0; index < 6; index += 1) {
-    ctx.fillStyle = index % 2 ? palette.crowdC : palette.grassHi;
-    ctx.fillRect(gamecastX(51 + index * 3), gamecastY(8), gamecastSize(1), gamecastSize(1));
-  }
+  drawPixelStadiumScoreboard(ctx, palette);
 
   for (let y = gamecastY(30); y < gamecastY(48); y += 1) {
     drawPixel(ctx, gamecastX(15), y, palette.pole);
@@ -4752,6 +4749,26 @@ function drawBallparkOutfield(ctx, palette) {
   const bases = gamecastBasePositions();
   drawPixelLine(ctx, bases.home.x, bases.home.y, gamecastX(16), gamecastY(46), palette.base, gamecastSize(1));
   drawPixelLine(ctx, bases.home.x, bases.home.y, gamecastX(104), gamecastY(46), palette.base, gamecastSize(1));
+}
+
+function drawPixelStadiumScoreboard(ctx, palette) {
+  const x = gamecastX(40);
+  const y = gamecastY(3);
+  const w = gamecastSize(40);
+  const h = gamecastSize(13);
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = "#0d1915";
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(2), w - gamecastSize(2), h - gamecastSize(3));
+  ctx.fillStyle = palette.wallCap;
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), w - gamecastSize(2), gamecastSize(1));
+  ctx.fillStyle = palette.sparkL;
+  for (let px = x + gamecastSize(6); px < x + w - gamecastSize(6); px += gamecastSize(4)) {
+    ctx.fillRect(px, y + gamecastSize(6), gamecastSize(1), gamecastSize(1));
+  }
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(x + gamecastSize(9), y + gamecastSize(9), gamecastSize(8), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(23), y + gamecastSize(9), gamecastSize(8), gamecastSize(1));
 }
 
 function drawBallparkArchitecture(ctx, palette) {
@@ -4774,6 +4791,15 @@ function drawBallparkArchitecture(ctx, palette) {
     ctx.fillRect(gamecastX(5), y, gamecastSize(11), gamecastSize(1));
     ctx.fillRect(gamecastX(104), y, gamecastSize(11), gamecastSize(1));
   }
+
+  const adColors = [palette.ribbon, palette.defender, palette.spark, palette.runner, palette.wallCap];
+  for (let index = 0; index < 10; index += 1) {
+    const x = gamecastX(7 + index * 11);
+    ctx.fillStyle = palette.outline;
+    ctx.fillRect(x, gamecastY(22), gamecastSize(8), gamecastSize(3));
+    ctx.fillStyle = adColors[index % adColors.length];
+    ctx.fillRect(x + gamecastSize(1), gamecastY(23), gamecastSize(6), gamecastSize(1));
+  }
 }
 
 function drawPixelLightTower(ctx, palette, x, y, direction) {
@@ -4790,8 +4816,8 @@ function drawPixelLightTower(ctx, palette, x, y, direction) {
 }
 
 function drawPixelCrowd(ctx, palette, fx, fy, wallRadius) {
-  const stepX = gamecastSize(4);
-  const stepY = gamecastSize(5);
+  const stepX = gamecastSize(5);
+  const stepY = gamecastSize(6);
   const startY = gamecastY(2);
   const endY = gamecastY(43);
   const shirts = [palette.crowdA, palette.crowdB, palette.crowdC, "#8fd0b4", "#ffd23f", "#f2b6c6", "#fbfbf7", "#f37321", palette.standD];
@@ -4812,35 +4838,33 @@ function drawPixelCrowd(ctx, palette, fx, fy, wallRadius) {
 
 function drawPixelFan(ctx, palette, x, y, shirt) {
   ctx.fillStyle = palette.crowdHair;
-  ctx.fillRect(x, y, 4, 1);
-  ctx.fillStyle = shirt;
-  ctx.fillRect(x + 1, y, 2, 1);
+  ctx.fillRect(x, y, gamecastSize(4), gamecastSize(1));
   ctx.fillStyle = palette.crowdSkin;
-  ctx.fillRect(x + 1, y + 1, 2, 1);
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), gamecastSize(2), gamecastSize(2));
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(x + 1, y + 1, 1, 1);
-  ctx.fillRect(x + 2, y + 1, 1, 1);
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(2), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
   ctx.fillStyle = shirt;
-  ctx.fillRect(x, y + 2, 4, 3);
+  ctx.fillRect(x, y + gamecastSize(3), gamecastSize(4), gamecastSize(2));
   ctx.fillStyle = palette.crowdSkin;
-  ctx.fillRect(x - 1, y + 3, 1, 1);
-  ctx.fillRect(x + 4, y + 2, 1, 1);
+  ctx.fillRect(x - gamecastSize(1), y + gamecastSize(3), gamecastSize(1), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(4), y + gamecastSize(3), gamecastSize(1), gamecastSize(1));
   ctx.fillStyle = palette.stand;
-  ctx.fillRect(x, y + 5, 4, 1);
+  ctx.fillRect(x, y + gamecastSize(5), gamecastSize(4), gamecastSize(1));
 }
 
 function drawPixelFanSign(ctx, palette, x, y, color) {
   ctx.fillStyle = palette.outline;
-  ctx.fillRect(x, y, 6, 4);
+  ctx.fillRect(x, y, gamecastSize(7), gamecastSize(4));
   ctx.fillStyle = palette.base;
-  ctx.fillRect(x + 1, y + 1, 4, 2);
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), gamecastSize(5), gamecastSize(2));
   ctx.fillStyle = color;
-  ctx.fillRect(x + 2, y + 1, 2, 1);
-  ctx.fillRect(x + 1, y + 2, 1, 1);
-  ctx.fillRect(x + 4, y + 2, 1, 1);
+  ctx.fillRect(x + gamecastSize(2), y + gamecastSize(1), gamecastSize(3), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(5), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
   ctx.fillStyle = palette.crowdSkin;
-  ctx.fillRect(x, y + 4, 1, 1);
-  ctx.fillRect(x + 5, y + 4, 1, 1);
+  ctx.fillRect(x, y + gamecastSize(4), gamecastSize(1), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(6), y + gamecastSize(4), gamecastSize(1), gamecastSize(1));
 }
 
 function drawBallparkInfield(ctx, palette) {
@@ -4978,37 +5002,39 @@ function drawPixelSideIcon(ctx, palette, frame) {
 
 function drawPixelBroadcastBug(ctx, palette, frame) {
   const x = gamecastX(3);
-  const y = gamecastY(86);
-  const w = gamecastSize(35);
-  const h = gamecastSize(20);
-  // bezel + panel
+  const y = gamecastY(3);
+  const w = gamecastSize(46);
+  const h = gamecastSize(22);
   ctx.fillStyle = palette.outline;
   ctx.fillRect(x, y, w, h);
-  ctx.fillStyle = "#0f1d18";
+  ctx.fillStyle = "#111b27";
   ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), w - gamecastSize(2), h - gamecastSize(2));
   ctx.fillStyle = frame.offenseColor ?? palette.grassHi;
-  ctx.fillRect(x + gamecastSize(2), y + gamecastSize(1), w - gamecastSize(4), gamecastSize(1));
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), w - gamecastSize(2), gamecastSize(1));
+  ctx.fillStyle = "#1f2d3d";
+  ctx.fillRect(x + gamecastSize(2), y + gamecastSize(4), gamecastSize(18), gamecastSize(15));
+  ctx.fillStyle = "#0b121b";
+  ctx.fillRect(x + gamecastSize(21), y + gamecastSize(4), gamecastSize(22), gamecastSize(15));
 
-  // scores: away over home, with batting-side marker
-  drawPixelScoreDigits(ctx, palette, x + gamecastSize(4), y + gamecastSize(3), Number(frame.score?.away ?? 0), palette.base);
-  drawPixelScoreDigits(ctx, palette, x + gamecastSize(4), y + gamecastSize(11), Number(frame.score?.home ?? 0), palette.base);
+  drawMiniPixelText(ctx, palette, "KBO", x + gamecastSize(4), y + gamecastSize(2), palette.sparkL, 3);
+  drawMiniPixelText(ctx, palette, frame.side === "home" ? "BOT" : "TOP", x + gamecastSize(29), y + gamecastSize(2), palette.defenderL, 3);
+
+  drawPixelScoreDigits(ctx, palette, x + gamecastSize(5), y + gamecastSize(6), Number(frame.score?.away ?? 0), palette.base);
+  drawPixelScoreDigits(ctx, palette, x + gamecastSize(5), y + gamecastSize(13), Number(frame.score?.home ?? 0), palette.base);
   ctx.fillStyle = frame.side === "home" ? palette.homerL : palette.defenderL;
-  ctx.fillRect(x + gamecastSize(2), (frame.side === "home" ? y + gamecastSize(11) : y + gamecastSize(3)), gamecastSize(1), gamecastSize(5));
+  ctx.fillRect(x + gamecastSize(3), (frame.side === "home" ? y + gamecastSize(13) : y + gamecastSize(6)), gamecastSize(1), gamecastSize(5));
 
-  // divider
-  ctx.fillStyle = palette.standD;
-  ctx.fillRect(x + gamecastSize(14), y + gamecastSize(3), gamecastSize(1), h - gamecastSize(5));
-
-  // B / S / O count board (B·S are broadcast-flavor; O is real)
   const count = gamecastPitchCount(frame);
-  drawPixelCountRow(ctx, palette, x + gamecastSize(16), y + gamecastSize(3), count.balls, 3, "#7fd8a8");
-  drawPixelCountRow(ctx, palette, x + gamecastSize(16), y + gamecastSize(8), count.strikes, 2, "#ffd23f");
-  drawPixelCountRow(ctx, palette, x + gamecastSize(16), y + gamecastSize(13), Math.min(2, Number(frame.outs ?? 0)), 2, "#ff8f83");
+  drawMiniPixelText(ctx, palette, "B", x + gamecastSize(23), y + gamecastSize(6), "#7fd8a8", 1);
+  drawMiniPixelText(ctx, palette, "S", x + gamecastSize(23), y + gamecastSize(11), "#ffd23f", 1);
+  drawMiniPixelText(ctx, palette, "O", x + gamecastSize(23), y + gamecastSize(16), "#ff8f83", 1);
+  drawPixelCountRow(ctx, palette, x + gamecastSize(28), y + gamecastSize(6), count.balls, 3, "#7fd8a8");
+  drawPixelCountRow(ctx, palette, x + gamecastSize(28), y + gamecastSize(11), count.strikes, 2, "#ffd23f");
+  drawPixelCountRow(ctx, palette, x + gamecastSize(28), y + gamecastSize(16), Math.min(2, Number(frame.outs ?? 0)), 2, "#ff8f83");
 
-  // mini base diamond
   const bases = [frame.bases?.[0], frame.bases?.[1], frame.bases?.[2]];
-  const bx = x + gamecastSize(30);
-  const by = y + gamecastSize(9);
+  const bx = x + gamecastSize(40);
+  const by = y + gamecastSize(12);
   [[gamecastSize(2), 0], [0, -gamecastSize(2)], [-gamecastSize(2), 0]].forEach(([dx, dy], index) => {
     ctx.fillStyle = palette.outline;
     ctx.fillRect(bx + dx - 1, by + dy - 1, gamecastSize(2) + 2, gamecastSize(2) + 2);

@@ -356,13 +356,12 @@ function drawHoldBaseRunners(ctx, runtime, frame) {
 function drawFieldCanvas(ctx, palette, width, height) {
   const sx = (value) => Math.round((Number(value) / 120) * width);
   const sy = (value) => Math.round((Number(value) / 108) * height);
-  ctx.fillStyle = palette.standD;
+  const scale = Math.max(1, sx(1));
+  ctx.fillStyle = "#34303d";
   ctx.fillRect(0, 0, width, height);
-  for (let y = 0; y < height; y += 2) {
-    for (let x = (y % 4 === 0 ? 0 : 2); x < width; x += 4) {
-      ctx.fillStyle = ((x + y) % 12 === 0) ? palette.crowdC : ((x + y) % 8 === 0 ? palette.crowdA : palette.stand);
-      ctx.fillRect(x, y, 1, 1);
-    }
+  for (let y = 0; y < sy(43); y += Math.max(2, sy(3))) {
+    ctx.fillStyle = y % Math.max(4, sy(8)) === 0 ? "#4a4654" : palette.standD;
+    ctx.fillRect(0, y, width, Math.max(1, sy(1)));
   }
 
   const fx = sx(60);
@@ -373,20 +372,22 @@ function drawFieldCanvas(ctx, palette, width, height) {
       const distance = Math.hypot(x - fx, y - fy);
       if (distance <= wallRadius) {
         if (distance > wallRadius - sx(2)) ctx.fillStyle = y < sy(30) ? palette.wallCap : palette.wall;
-        else if (distance > wallRadius - sx(5)) ctx.fillStyle = palette.track;
-        else ctx.fillStyle = Math.floor(distance / Math.max(1, sx(9))) % 2 ? palette.grassLo : palette.grassHi;
+        else if (distance > wallRadius - sx(5)) ctx.fillStyle = Math.floor((x + y) / Math.max(1, sx(5))) % 2 ? "#d1ad68" : palette.track;
+        else {
+          const ring = Math.floor(distance / Math.max(1, sx(13)));
+          const stripe = Math.floor((x + y * 0.45) / Math.max(1, sx(7)));
+          ctx.fillStyle = (ring + stripe) % 2 ? palette.grassLo : palette.grassHi;
+        }
         ctx.fillRect(x, y, 1, 1);
       }
     }
   }
 
-  ctx.fillStyle = palette.wallCap;
-  ctx.fillRect(sx(46), sy(5), sx(28), sy(7));
-  ctx.fillStyle = "#101d19";
-  ctx.fillRect(sx(48), sy(6), sx(24), sy(5));
-  ctx.fillStyle = palette.sparkL;
-  for (let x = sx(52); x < sx(68); x += Math.max(1, sx(4))) ctx.fillRect(x, sy(9), Math.max(1, sx(1)), 1);
+  drawCanvasCrowd(ctx, palette, sx, sy, width, fx, fy, wallRadius, scale);
+  drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale);
 
+  fillCircleCanvas(ctx, sx(60), sy(79), sx(26), palette.grassLo);
+  fillCircleCanvas(ctx, sx(60), sy(79), sx(22), palette.grassHi);
   fillDiamond(ctx, palette.dirtM, [
     [sx(60), sy(55)],
     [sx(88), sy(77)],
@@ -399,8 +400,10 @@ function drawFieldCanvas(ctx, palette, width, height) {
     [sx(60), sy(93)],
     [sx(44), sy(80)]
   ]);
-  drawLineCanvas(ctx, sx(60), sy(96), sx(20), sy(36), palette.chalkSh, 1);
-  drawLineCanvas(ctx, sx(60), sy(96), sx(100), sy(36), palette.chalkSh, 1);
+  drawLineCanvas(ctx, sx(60), sy(96), sx(16), sy(42), palette.chalkSh, scale);
+  drawLineCanvas(ctx, sx(60), sy(96), sx(104), sy(42), palette.chalkSh, scale);
+  drawLineCanvas(ctx, sx(60), sy(96), sx(33), sy(76), palette.chalkSh, 1);
+  drawLineCanvas(ctx, sx(60), sy(96), sx(87), sy(76), palette.chalkSh, 1);
 
   for (const [x, y] of [[60, 96], [86, 76], [60, 56], [34, 76]]) {
     ctx.fillStyle = palette.outline;
@@ -412,6 +415,80 @@ function drawFieldCanvas(ctx, palette, width, height) {
   ctx.fillRect(sx(55), sy(73), sx(10), sy(5));
   ctx.fillStyle = palette.outline;
   ctx.fillRect(sx(58), sy(75), sx(4), sy(2));
+  ctx.fillStyle = palette.chalkSh;
+  ctx.fillRect(sx(50), sy(91), sx(5), scale);
+  ctx.fillRect(sx(66), sy(91), sx(5), scale);
+}
+
+function drawCanvasCrowd(ctx, palette, sx, sy, width, fx, fy, wallRadius, scale) {
+  const shirts = [palette.crowdA, palette.crowdB, palette.crowdC, palette.defenderL, palette.runnerL, palette.base, palette.spark, "#ff8f83"];
+  const startY = sy(3);
+  const endY = sy(42);
+  const stepX = Math.max(scale * 5, sx(4));
+  const stepY = Math.max(scale * 5, sy(5));
+  for (let y = startY; y < endY; y += stepY) {
+    const row = Math.floor((y - startY) / Math.max(1, stepY));
+    for (let x = sx(2) + (row % 2 ? Math.floor(stepX / 2) : 0); x < width - sx(3); x += stepX) {
+      if (Math.hypot(x - fx, y - fy) <= wallRadius + sx(2)) continue;
+      if ((row * 17 + x) % 41 === 0) {
+        ctx.fillStyle = palette.outline;
+        ctx.fillRect(x - scale, y + scale, scale * 7, scale * 4);
+        ctx.fillStyle = palette.base;
+        ctx.fillRect(x, y + scale * 2, scale * 5, scale);
+        ctx.fillStyle = shirts[(row + x) % shirts.length];
+        ctx.fillRect(x + scale, y + scale, scale * 3, scale);
+        continue;
+      }
+      ctx.fillStyle = palette.crowdHair;
+      ctx.fillRect(x, y, scale * 4, scale);
+      ctx.fillStyle = palette.crowdSkin;
+      ctx.fillRect(x + scale, y + scale, scale * 2, scale * 2);
+      ctx.fillStyle = palette.outline;
+      ctx.fillRect(x + scale, y + scale * 2, scale, scale);
+      ctx.fillRect(x + scale * 2, y + scale * 2, scale, scale);
+      ctx.fillStyle = shirts[(row + x) % shirts.length];
+      ctx.fillRect(x, y + scale * 3, scale * 4, scale * 2);
+      ctx.fillStyle = row % 3 === 0 ? palette.sparkL : palette.stand;
+      ctx.fillRect(x, y + scale * 5, scale * 4, scale);
+    }
+  }
+}
+
+function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale) {
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(sx(40), sy(3), sx(40), sy(13));
+  ctx.fillStyle = "#0d1915";
+  ctx.fillRect(sx(42), sy(5), sx(36), sy(9));
+  ctx.fillStyle = palette.wallCap;
+  ctx.fillRect(sx(42), sy(5), sx(36), scale);
+  ctx.fillStyle = palette.sparkL;
+  for (let x = sx(46); x < sx(74); x += Math.max(2, sx(4))) ctx.fillRect(x, sy(9), scale, scale);
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(sx(49), sy(11), sx(8), scale);
+  ctx.fillRect(sx(63), sy(11), sx(8), scale);
+
+  const adColors = [palette.ribbon, palette.defender, palette.spark, palette.runner, palette.wallCap];
+  for (let index = 0; index < 10; index += 1) {
+    const x = sx(7 + index * 11);
+    ctx.fillStyle = palette.outline;
+    ctx.fillRect(x, sy(18), sx(8), sy(3));
+    ctx.fillStyle = adColors[index % adColors.length];
+    ctx.fillRect(x + scale, sy(19), Math.max(scale, sx(6)), scale);
+  }
+
+  ctx.fillStyle = palette.pole;
+  ctx.fillRect(sx(15), sy(30), scale, sy(25));
+  ctx.fillRect(sx(105), sy(30), scale, sy(25));
+  ctx.fillStyle = "rgba(255, 246, 199, 0.45)";
+  ctx.fillRect(0, sy(26), width, scale);
+}
+
+function fillCircleCanvas(ctx, cx, cy, radius, color) {
+  ctx.fillStyle = color;
+  for (let y = -radius; y <= radius; y += 1) {
+    const span = Math.floor(Math.sqrt(Math.max(0, radius * radius - y * y)));
+    ctx.fillRect(cx - span, cy + y, span * 2 + 1, 1);
+  }
 }
 
 function fieldX(runtime, value) {
