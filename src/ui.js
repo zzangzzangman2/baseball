@@ -2,6 +2,9 @@ import {
   advanceSeason,
   buildLineup,
   buildPitchingSnapshot,
+  commitGameInterventionPlan,
+  commitPitchingPlan,
+  commitScoutAssignment,
   commitForeignPlayerSigning,
   commitFreeAgentSigning,
   commitTradeProposal,
@@ -346,14 +349,14 @@ function renderActiveTabContent(activeTab, context) {
 
   if (activeTab === "front-office") {
     return renderTabSurface("front-office", "프런트", `
-      ${renderCommandCenterPanels(gmDesk)}
+      ${renderCommandCenterPanels(gmDesk, state)}
       ${renderFrontOfficePanels(frontOffice)}
     `);
   }
 
   if (activeTab === "market") {
     return renderTabSurface("market", "시장", `
-      ${renderCommandCenterPanels(gmDesk)}
+      ${renderCommandCenterPanels(gmDesk, state)}
       ${renderTradeLedgerPanel(state)}
       ${renderFreeAgencyPanel(state, selectedTeam)}
     `);
@@ -660,13 +663,16 @@ function renderOperationsBar(state) {
 
 function renderLineupManagerPanel(state, selectedTeam, roster, lineup, pitchingSnapshot) {
   const eligibleHitters = getLineupEligibleHitters(roster);
+  const pitcherOptions = getPitchingEligiblePitchers(roster);
   const selectedIds = buildLineupSelectionIds(selectedTeam, lineup, eligibleHitters);
+  const pitchingSelection = buildPitchingPlanSelection(selectedTeam, pitchingSnapshot, pitcherOptions);
   const selectedLineup = selectedIds
     .map((id) => eligibleHitters.find((player) => String(player.id) === String(id)))
     .filter(Boolean);
   const bench = eligibleHitters.filter((player) => !selectedIds.includes(String(player.id))).slice(0, 6);
   const summary = summarizeLineup(selectedLineup);
   const manual = isManualLineupActive(selectedTeam, lineup);
+  const pitchingManual = selectedTeam?.pitchingPlan?.mode === "manual";
   const teamName = getTeamShortName(selectedTeam) ?? "Team";
 
   return `
@@ -718,16 +724,29 @@ function renderLineupManagerPanel(state, selectedTeam, roster, lineup, pitchingS
             <section class="lineup-pitching-board" aria-label="투수 운용">
               <div class="lineup-section-head">
                 <h3>투수 운용</h3>
-                <small>오늘 기준</small>
+                <small>${escapeHtml(pitchingManual ? `${selectedTeam?.pitchingPlan?.updatedAt ?? state.currentDate} 저장` : "자동 추천 기준")}</small>
               </div>
-              <h4>선발 로테이션</h4>
-              <ol class="player-list compact pitching-role-list">
-                ${pitchingSnapshot.rotation.length ? pitchingSnapshot.rotation.map(renderPitchingRole).join("") : renderEmptyListItem("로테이션 준비 중입니다.")}
-              </ol>
-              <h4>불펜 역할</h4>
-              <ol class="player-list compact pitching-role-list">
-                ${pitchingSnapshot.bullpen.length ? pitchingSnapshot.bullpen.slice(0, 5).map(renderPitchingRole).join("") : renderEmptyListItem("불펜 준비 중입니다.")}
-              </ol>
+              <div class="pitching-plan-form">
+                <div>
+                  <h4>선발 로테이션</h4>
+                  <ol class="pitching-slot-list">
+                    ${Array.from({ length: 5 }, (_, index) => renderPitchingRotationSlot(index, pitchingSelection.rotationIds[index], pitcherOptions)).join("")}
+                  </ol>
+                </div>
+                <div>
+                  <h4>불펜 역할</h4>
+                  <div class="pitching-role-grid">
+                    ${renderPitchingRolePicker("closer", "마무리", pitchingSelection.closerId, pitcherOptions)}
+                    ${renderPitchingRolePicker("setup", "셋업 1", pitchingSelection.setupIds[0], pitcherOptions)}
+                    ${renderPitchingRolePicker("setup", "셋업 2", pitchingSelection.setupIds[1], pitcherOptions)}
+                    ${renderPitchingRolePicker("longRelief", "롱릴리프", pitchingSelection.longReliefIds[0], pitcherOptions)}
+                  </div>
+                </div>
+              </div>
+              <div class="lineup-pitching-actions">
+                <button class="button button-primary" data-action="save-pitching-plan" type="button">투수 운용 저장</button>
+                <button class="button button-soft" data-action="auto-pitching-plan" type="button">투수 자동 추천</button>
+              </div>
             </section>
           </aside>
         </div>
@@ -768,6 +787,45 @@ function renderLineupSlot(index, selectedId, eligibleHitters) {
         ${renderMiniLineupBar("수비", player?.defense)}
       </div>
     </li>
+  `;
+}
+
+function renderPitchingRotationSlot(index, selectedId, pitcherOptions) {
+  const player = pitcherOptions.find((entry) => String(entry.id) === String(selectedId));
+  const order = index + 1;
+  const label = order === 1 ? "1선발" : `${formatNumber(order)}선발`;
+  return `
+    <li class="pitching-slot">
+      <span class="lineup-order">${formatNumber(order)}</span>
+      <label class="pitching-player-picker">
+        <span>${escapeHtml(label)}</span>
+        <select data-pitching-rotation-slot name="pitching-rotation-${order}" aria-label="${escapeAttribute(label)}">
+          ${pitcherOptions.map((candidate) => renderPitchingOption(candidate, selectedId)).join("")}
+        </select>
+      </label>
+      <small>${escapeHtml(player ? `STA ${formatNumber(player.stamina)} · ARM ${formatNumber(player.armFreshness)} · 피로 ${formatNumber(player.fatigue)}` : "가용 투수를 선택하세요.")}</small>
+    </li>
+  `;
+}
+
+function renderPitchingRolePicker(role, label, selectedId, pitcherOptions) {
+  const player = pitcherOptions.find((entry) => String(entry.id) === String(selectedId));
+  return `
+    <label class="pitching-role-picker">
+      <span>${escapeHtml(label)}</span>
+      <select data-pitching-role="${escapeAttribute(role)}" name="pitching-${escapeAttribute(role)}-${escapeAttribute(label)}" aria-label="${escapeAttribute(label)}">
+        ${pitcherOptions.map((candidate) => renderPitchingOption(candidate, selectedId)).join("")}
+      </select>
+      <small>${escapeHtml(player ? `${player.name} · OVR ${formatNumber(player.ovr)} · 피로 ${formatNumber(player.fatigue)}` : "선택 대기")}</small>
+    </label>
+  `;
+}
+
+function renderPitchingOption(candidate, selectedId) {
+  return `
+    <option value="${escapeAttribute(candidate.id)}" ${String(candidate.id) === String(selectedId) ? "selected" : ""}>
+      ${escapeHtml(candidate.name)} · OVR ${formatNumber(candidate.ovr)} · STA ${formatNumber(candidate.stamina)}
+    </option>
   `;
 }
 
@@ -816,6 +874,17 @@ function getLineupEligibleHitters(roster) {
   return [...pool].sort((a, b) => lineupUiScore(b) - lineupUiScore(a) || sortByOvr(a, b));
 }
 
+function getPitchingEligiblePitchers(roster) {
+  const pitchers = (roster ?? []).filter((player) =>
+    isPitcher(player) &&
+    Number(player.injuredDays ?? 0) <= 0 &&
+    player.militaryStatus?.availability !== "unavailable"
+  );
+  const active = pitchers.filter((player) => player.status === "active");
+  const pool = active.length >= 12 ? active : pitchers;
+  return [...pool].sort((a, b) => pitchingUiScore(b) - pitchingUiScore(a) || sortByOvr(a, b));
+}
+
 function buildLineupSelectionIds(team, lineup, eligibleHitters) {
   const eligibleIds = new Set(eligibleHitters.map((player) => String(player.id)));
   const manualIds = Array.isArray(team?.lineupCard?.playerIds) ? team.lineupCard.playerIds.map(String) : [];
@@ -831,6 +900,83 @@ function buildLineupSelectionIds(team, lineup, eligibleHitters) {
     if (result.length === 9) break;
   }
   return result.slice(0, 9);
+}
+
+function buildPitchingPlanSelection(team, pitchingSnapshot, pitcherOptions) {
+  const eligibleIds = new Set((pitcherOptions ?? []).map((player) => String(player.id)));
+  const manualPlan = team?.pitchingPlan?.mode === "manual" ? team.pitchingPlan : null;
+  const rotationIds = [];
+  const addRotationId = (id) => {
+    const value = String(id ?? "");
+    if (!value || !eligibleIds.has(value) || rotationIds.includes(value)) return;
+    rotationIds.push(value);
+  };
+
+  for (const id of uniqueSelectionIds(manualPlan?.rotationOrder ?? manualPlan?.rotationIds ?? [])) addRotationId(id);
+  for (const entry of pitchingSnapshot?.rotation ?? []) addRotationId(entry.id);
+  for (const player of pitcherOptions ?? []) addRotationId(player.id);
+
+  const assigned = new Set(rotationIds.slice(0, 5));
+  const addRoleId = (target, id, limit) => {
+    const value = String(id ?? "");
+    if (!value || !eligibleIds.has(value) || assigned.has(value) || target.includes(value)) return;
+    target.push(value);
+    assigned.add(value);
+    return target.length >= limit;
+  };
+  const fallbackIds = (pitcherOptions ?? []).map((player) => String(player.id));
+  let closerId = "";
+  const closerSources = [
+    manualPlan?.closerId,
+    (pitchingSnapshot?.bullpen ?? []).find((entry) => entry.role === "CL")?.id,
+    ...fallbackIds
+  ];
+
+  for (const id of closerSources) {
+    const value = String(id ?? "");
+    if (!value || !eligibleIds.has(value) || assigned.has(value)) continue;
+    closerId = value;
+    assigned.add(value);
+    break;
+  }
+
+  const setupIds = [];
+  for (const id of [
+    ...uniqueSelectionIds(manualPlan?.setupIds ?? []),
+    ...(pitchingSnapshot?.bullpen ?? []).filter((entry) => entry.role === "SU").map((entry) => entry.id),
+    ...fallbackIds
+  ]) {
+    if (addRoleId(setupIds, id, 2)) break;
+  }
+
+  const longReliefIds = [];
+  for (const id of [
+    ...uniqueSelectionIds(manualPlan?.longReliefIds ?? manualPlan?.longReliefId ?? []),
+    ...(pitchingSnapshot?.bullpen ?? []).filter((entry) => entry.role === "LR").map((entry) => entry.id),
+    ...fallbackIds
+  ]) {
+    if (addRoleId(longReliefIds, id, 1)) break;
+  }
+
+  return {
+    rotationIds: rotationIds.slice(0, 5),
+    closerId,
+    setupIds,
+    longReliefIds
+  };
+}
+
+function uniqueSelectionIds(values) {
+  const source = Array.isArray(values) ? values : [values];
+  const seen = new Set();
+  const ids = [];
+  for (const value of source) {
+    const id = String(value ?? "");
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
 }
 
 function summarizeLineup(players) {
@@ -864,6 +1010,17 @@ function lineupUiScore(player) {
     Number(player.speed ?? 0) * 0.7 +
     Number(player.defense ?? 0) * 0.36 -
     Number(player.fatigue ?? 0) * 0.12
+  );
+}
+
+function pitchingUiScore(player) {
+  return Math.round(
+    Number(player.ovr ?? 0) * 1.05 +
+    Number(player.stuff ?? 0) * 0.55 +
+    Number(player.control ?? 0) * 0.48 +
+    Number(player.stamina ?? 0) * 0.38 +
+    Number(player.armFreshness ?? 80) * 0.16 -
+    Number(player.fatigue ?? 0) * 0.14
   );
 }
 
@@ -1206,17 +1363,17 @@ function renderOnboarding(root, state, screen) {
 }
 
 function onboardingTitle(screen) {
-  if (screen === "team-select") return "함께할 구단을 고르세요";
-  if (screen === "manager-setup") return "감독 프로필 작성";
-  if (screen === "appointment") return "취임식과 첫 기자회견";
-  return "프리시즌을 시작합니다";
+  if (screen === "team-select") return "클럽을 선택하세요";
+  if (screen === "manager-setup") return "감독 등록";
+  if (screen === "appointment") return "취임 기자회견";
+  return "KBO 2026";
 }
 
 function onboardingLead(screen, selectedTeam) {
-  if (screen === "team-select") return "프런트 첫날, 맡을 구단을 선택하세요.";
-  if (screen === "manager-setup") return `${getTeamName(selectedTeam) ?? "선택한 구단"}의 새 감독으로 등록됩니다.`;
-  if (screen === "appointment") return "구단 공식 취임식 뒤 첫 인터뷰 답변이 감독실 브리핑과 뉴스함에 남습니다.";
-  return "구단을 고르고 감독 이름과 나이를 정한 뒤 취임식으로 시즌을 엽니다.";
+  if (screen === "team-select") return "프런트 룸에 입장할 구단을 정하세요.";
+  if (screen === "manager-setup") return `${getTeamName(selectedTeam) ?? "선택한 구단"} 감독실 프로필을 완성하세요.`;
+  if (screen === "appointment") return "첫 메시지는 시즌 내내 클럽하우스와 뉴스룸에 남습니다.";
+  return "프리시즌 캠프, 로스터, 시장, 경기 운영이 오늘부터 움직입니다.";
 }
 
 function renderOnboardingTeamPlate(team) {
@@ -1382,15 +1539,20 @@ function renderStartLogoStrip(teams) {
 function renderStartPreview() {
   return `
     <aside class="start-preview" aria-label="프리시즌 보드">
-      <div class="start-ticket">
-        <span>Spring Camp</span>
-        <strong>Preseason Day 1</strong>
-        <small>Front Office Open</small>
+      <div class="start-ticket skin-ticket">
+        <span>SEASON HUB</span>
+        <strong>Opening Room</strong>
+        <small>2026 KBO Front Office</small>
       </div>
       <div class="start-preview-grid">
-        <span><strong>10</strong><small>구단</small></span>
-        <span><strong>720</strong><small>경기</small></span>
-        <span><strong>1</strong><small>일차</small></span>
+        <span><strong>10</strong><small>Clubs</small></span>
+        <span><strong>720</strong><small>Games</small></span>
+        <span><strong>531</strong><small>Players</small></span>
+      </div>
+      <div class="skin-match-panel">
+        <span>LIVE DESK</span>
+        <strong>캠프 첫날 브리핑</strong>
+        <small>스프링캠프 1일차 · 프런트 회의 시작</small>
       </div>
       <div class="start-diamond" aria-hidden="true">
         <i></i><i></i><i></i><i></i>
@@ -1520,10 +1682,11 @@ function bindOnboardingActions(root, state) {
   });
 }
 
-function renderCommandCenterPanels(gmDesk) {
+function renderCommandCenterPanels(gmDesk, state) {
   const { tradeMarket, scoutAssignments, inbox } = gmDesk;
   const executableProposal = findExecutableTradeProposal(tradeMarket.proposals);
   const topProposal = executableProposal ?? tradeMarket.proposals?.[0];
+  const recentReports = getRecentScoutingReports(state, tradeMarket.team?.id ?? state?.selectedTeamId);
 
   return `
     <section class="content-grid command-center-grid" id="gm-desk" aria-label="GM 데스크">
@@ -1551,6 +1714,7 @@ function renderCommandCenterPanels(gmDesk) {
         <ol class="player-list compact front-office-list command-list">
           ${renderScoutAssignments(scoutAssignments.assignments)}
         </ol>
+        ${renderRecentScoutingReports(recentReports)}
       </article>
 
       <article class="panel command-panel trade-proposal-panel">
@@ -1596,9 +1760,32 @@ function renderScoutAssignments(assignments = []) {
         <strong>${escapeHtml(assignment.title)}</strong>
         <small>${escapeHtml(assignment.dueDate)} · ${formatNumber(assignment.workloadHours)}시간 · ${escapeHtml(assignment.focus)}</small>
       </span>
-      <b>${formatNumber(assignment.queueRank)}</b>
+      <button class="mini-action" data-action="commit-scout-assignment" data-scout-assignment-id="${escapeAttribute(assignment.id)}" type="button">지시</button>
     </li>
   `).join("");
+}
+
+function getRecentScoutingReports(state, teamId) {
+  const key = String(teamId ?? "");
+  return Object.values(state?.scoutingReportsById ?? {})
+    .filter((report) => !key || String(report.orderedByTeamId ?? report.teamId ?? "") === key)
+    .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")) || Number(b.confidence ?? 0) - Number(a.confidence ?? 0))
+    .slice(0, 3);
+}
+
+function renderRecentScoutingReports(reports) {
+  if (!reports.length) return "";
+  return `
+    <div class="scout-report-strip">
+      ${reports.map((report) => `
+        <article>
+          <span>${escapeHtml(report.leverageLabel ?? "관찰")}</span>
+          <strong>${escapeHtml(report.playerName ?? "후보")}</strong>
+          <small>OVR ${formatNumber(report.currentGrade)} · POT ${formatNumber(report.futureGrade)} · 신뢰 ${formatNumber(report.confidence)}%</small>
+        </article>
+      `).join("")}
+    </div>
+  `;
 }
 
 function renderTradeProposalSpotlight(proposal, tradeMarket) {
@@ -2089,6 +2276,71 @@ function bindActions(root, state) {
     });
     render(root, state);
     setStatus(root, "자동 추천 라인업으로 되돌렸습니다.");
+  });
+
+  root.querySelector("[data-action='save-pitching-plan']")?.addEventListener("click", (event) => {
+    const selectedTeam = getSelectedTeam(state);
+    if (!selectedTeam) return;
+    const form = event.currentTarget.closest("[data-lineup-form]") ?? root.querySelector("[data-lineup-form]");
+    const rotationOrder = [...(form?.querySelectorAll("[data-pitching-rotation-slot]") ?? [])]
+      .map((select) => String(select.value ?? ""))
+      .filter(Boolean);
+    const closerId = String(form?.querySelector("[data-pitching-role='closer']")?.value ?? "");
+    const setupIds = [...(form?.querySelectorAll("[data-pitching-role='setup']") ?? [])]
+      .map((select) => String(select.value ?? ""))
+      .filter(Boolean);
+    const longReliefIds = [...(form?.querySelectorAll("[data-pitching-role='longRelief']") ?? [])]
+      .map((select) => String(select.value ?? ""))
+      .filter(Boolean);
+    const result = commitPitchingPlan(state, {
+      teamId: selectedTeam.id,
+      rotationOrder,
+      closerId,
+      setupIds,
+      longReliefIds
+    });
+
+    if (!result.ok) {
+      setStatus(root, result.message ?? "투수 운용 저장에 실패했습니다.");
+      return;
+    }
+
+    render(root, state);
+    setStatus(root, result.message ?? "투수 운용을 저장했습니다.");
+  });
+
+  root.querySelector("[data-action='auto-pitching-plan']")?.addEventListener("click", () => {
+    const selectedTeam = getSelectedTeam(state);
+    if (!selectedTeam) return;
+    const result = commitPitchingPlan(state, { teamId: selectedTeam.id, mode: "auto" });
+    render(root, state);
+    setStatus(root, result.message ?? "자동 추천 투수 운용으로 되돌렸습니다.");
+  });
+
+  root.querySelectorAll("[data-action='set-game-plan']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const selectedTeam = getSelectedTeam(state);
+      if (!selectedTeam) return;
+      const result = commitGameInterventionPlan(state, {
+        teamId: selectedTeam.id,
+        preset: button.dataset.gamePlanPreset || "balanced"
+      });
+      render(root, state);
+      setStatus(root, result.message ?? "다음 경기 전략을 저장했습니다.");
+    });
+  });
+
+  root.querySelectorAll("[data-action='commit-scout-assignment']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const selectedTeam = getSelectedTeam(state);
+      if (!selectedTeam) return;
+      const result = commitScoutAssignment(state, {
+        teamId: selectedTeam.id,
+        assignmentId: button.dataset.scoutAssignmentId || ""
+      });
+      render(root, state);
+      setStatus(root, result.message ?? "스카우트 리포트를 생성했습니다.");
+    });
   });
 
   root.querySelectorAll("[data-action='next-day']").forEach((button) => {
@@ -2725,6 +2977,7 @@ function renderNextGamePanel(state, selectedTeam, nextGame) {
   const venueText = nextGame?.ok
     ? `${nextGame.ballpark || getTeamLocation(home)} · ${userIsAway ? "원정" : "홈"}`
     : nextGame?.message ?? "다음 경기를 기다리는 중";
+  const currentPlan = getCurrentGameInterventionPlan(state, selectedTeam);
 
   return `
     <section class="next-game-panel" aria-label="다음 경기 진행">
@@ -2756,8 +3009,26 @@ function renderNextGamePanel(state, selectedTeam, nextGame) {
         <button class="button button-soft" data-action="simulate-next-game" ${disabled}>스킵</button>
         <small>${nextGame?.ok ? `${escapeHtml(getTeamShortName(opponent) ?? "상대")}전 · 도트 중계로 보거나 결과만 스킵` : "정규시즌 가능 상태에서 진행됩니다."}</small>
       </div>
+      <div class="game-plan-strip" aria-label="다음 경기 감독 전략">
+        <span>${escapeHtml(currentPlan?.label ?? "균형 운영")}</span>
+        ${renderGamePlanButton("balanced", "균형", currentPlan)}
+        ${renderGamePlanButton("smallBall", "스몰볼", currentPlan)}
+        ${renderGamePlanButton("aggressive", "강공", currentPlan)}
+        ${renderGamePlanButton("patient", "출루", currentPlan)}
+        ${renderGamePlanButton("bullpenEarly", "불펜", currentPlan)}
+      </div>
     </section>
   `;
+}
+
+function getCurrentGameInterventionPlan(state, selectedTeam) {
+  const teamId = String(selectedTeam?.id ?? state?.selectedTeamId ?? "");
+  return teamId ? state?.gameInterventions?.[teamId] ?? null : null;
+}
+
+function renderGamePlanButton(preset, label, currentPlan) {
+  const active = String(currentPlan?.preset ?? "balanced") === preset ? "is-active" : "";
+  return `<button class="game-plan-chip ${active}" data-action="set-game-plan" data-game-plan-preset="${escapeAttribute(preset)}" type="button">${escapeHtml(label)}</button>`;
 }
 
 function renderScheduleCalendarPanel(state, selectedTeam, schedule) {
@@ -2922,6 +3193,11 @@ function renderPlayerDetailPanel(state, entry) {
           ${renderDetailMeter("체력 여유", 100 - Number(player.fatigue ?? 0), 100)}
         </article>
 
+        <article class="player-detail-card player-personality-card">
+          <span class="mini-label">개인성</span>
+          ${renderPlayerPersonality(player)}
+        </article>
+
         <article class="player-detail-card player-attribute-card">
           <div class="player-detail-card-head">
             <span class="mini-label">능력치</span>
@@ -2940,6 +3216,35 @@ function renderPlayerDetailPanel(state, entry) {
         </article>
       </div>
     </section>
+  `;
+}
+
+function renderPlayerPersonality(player) {
+  const personality = player?.personality ?? {};
+  const traits = personality.traits ?? {};
+  const rows = [
+    ["야망", traits.ambition],
+    ["충성", traits.loyalty],
+    ["압박감", traits.pressure],
+    ["프로의식", traits.professionalism],
+    ["적응", traits.adaptability],
+    ["미디어", traits.mediaTemper]
+  ];
+
+  return `
+    <div class="player-personality-summary">
+      <strong>${escapeHtml(personality.archetype ?? "균형형")}</strong>
+      <small>${escapeHtml(personality.roleExpectation ?? "역할 확인 중")} · 클럽하우스 ${formatNumber(personality.clubhouseImpact)}</small>
+    </div>
+    <div class="personality-trait-grid">
+      ${rows.map(([label, value]) => `
+        <span>
+          <b>${escapeHtml(label)}</b>
+          <i class="${attributeLevelClass(value, 20)}" style="--meter:${attributePercent(value, 20)}%"></i>
+          <em>${formatNumber(value)}</em>
+        </span>
+      `).join("")}
+    </div>
   `;
 }
 

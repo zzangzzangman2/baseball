@@ -1,5 +1,5 @@
 import { REGULAR_SEASON_GAMES, formatDateKey } from "./data.js";
-import { buildTradeMarket } from "./frontOffice.js";
+import { buildScoutAssignments, buildTradeMarket } from "./frontOffice.js";
 import { appendFinanceLedger, syncStateFoundation } from "./stateSchema.js";
 
 const KBO_TEAM_COUNT = 10;
@@ -69,6 +69,48 @@ const ACTIVE_ROSTER_TARGET = 30;
 const ACTIVE_PITCHER_TARGET = 13;
 const ACTIVE_HITTER_TARGET = ACTIVE_ROSTER_TARGET - ACTIVE_PITCHER_TARGET;
 const ACTIVE_PITCHER_MIN_REQUIRED = 12;
+const GAME_INTERVENTION_PRESETS = {
+  balanced: {
+    label: "균형 운영",
+    approach: "balanced",
+    baserunning: "balanced",
+    bullpenHook: "standard",
+    pinchHit: "standard",
+    bunt: "selective"
+  },
+  smallBall: {
+    label: "스몰볼",
+    approach: "contact",
+    baserunning: "aggressive",
+    bullpenHook: "standard",
+    pinchHit: "matchup",
+    bunt: "aggressive"
+  },
+  aggressive: {
+    label: "강공",
+    approach: "aggressive",
+    baserunning: "aggressive",
+    bullpenHook: "standard",
+    pinchHit: "power",
+    bunt: "rare"
+  },
+  patient: {
+    label: "출루 압박",
+    approach: "patient",
+    baserunning: "conservative",
+    bullpenHook: "standard",
+    pinchHit: "matchup",
+    bunt: "rare"
+  },
+  bullpenEarly: {
+    label: "불펜 빠르게",
+    approach: "balanced",
+    baserunning: "balanced",
+    bullpenHook: "early",
+    pinchHit: "matchup",
+    bunt: "selective"
+  }
+};
 const PAYROLL_TARGET_RATIO = 1.08;
 const KBO_BALLPARK_RULE_SOURCE = "KBO 구장 성향 v1: 2024 스탯티즈 홈런 파크팩터 기반, 한화 신구장 2026은 중립 임시값";
 const KBO_BALLPARK_FACTORS = {
@@ -217,8 +259,145 @@ function resolveManualLineup(team, hitterPool) {
   return lineup.length === 9 ? lineup : [];
 }
 
+function hasManualPitchingPlan(team) {
+  const plan = team?.pitchingPlan;
+  return Boolean(plan && (plan.mode === "manual" || Array.isArray(plan.rotationOrder) || Array.isArray(plan.rotationIds)));
+}
+
+function uniquePitcherIds(values) {
+  const source = Array.isArray(values) ? values : [values];
+  const seen = new Set();
+  const ids = [];
+
+  for (const value of source) {
+    const id = String(value ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+
+  return ids;
+}
+
+function mapAvailablePitchersById(pitchers) {
+  return new Map((pitchers ?? []).map((player) => [String(player?.id ?? ""), player]));
+}
+
+function resolveManualRotation(team, pitchers) {
+  const plan = team?.pitchingPlan ?? {};
+  const pitcherById = mapAvailablePitchersById(pitchers);
+  const used = new Set();
+  const rotation = [];
+  const plannedIds = uniquePitcherIds(plan.rotationOrder ?? plan.rotationIds ?? []);
+
+  for (const id of plannedIds) {
+    const player = pitcherById.get(id);
+    const playerId = String(player?.id ?? "");
+    if (!player || !playerId || used.has(playerId)) continue;
+    rotation.push(player);
+    used.add(playerId);
+    if (rotation.length === 5) break;
+  }
+
+  const fallback = (pitchers ?? [])
+    .map((player, index) => ({ player, index, score: starterScore(player) }))
+    .sort(comparePitcherEntries);
+  for (const { player } of fallback) {
+    if (rotation.length >= 5) break;
+    const playerId = String(player?.id ?? "");
+    if (!playerId || used.has(playerId)) continue;
+    rotation.push(player);
+    used.add(playerId);
+  }
+
+  return rotation;
+}
+
+function resolveManualBullpen(team, pitchers, rotation) {
+  const plan = team?.pitchingPlan ?? {};
+  const pitcherById = mapAvailablePitchersById(pitchers);
+  const used = new Set((rotation ?? []).map((player) => String(player?.id ?? "")).filter(Boolean));
+  const bullpen = [];
+  const roles = {};
+
+  const addPitcher = (id, role) => {
+    const player = pitcherById.get(String(id ?? "").trim());
+    const playerId = String(player?.id ?? "");
+    if (!player || !playerId || used.has(playerId)) return;
+    bullpen.push(player);
+    used.add(playerId);
+    roles[playerId] = role;
+  };
+
+  addPitcher(plan.closerId, "CL");
+  for (const id of uniquePitcherIds(plan.setupIds ?? [])) addPitcher(id, "SU");
+  for (const id of uniquePitcherIds(plan.longReliefIds ?? plan.longReliefId ?? [])) addPitcher(id, "LR");
+
+  const fallback = (pitchers ?? [])
+    .map((player, index) => ({ player, index, score: bullpenScore(player) }))
+    .sort(comparePitcherEntries);
+  for (const { player } of fallback) {
+    if (bullpen.length >= 7) break;
+    const playerId = String(player?.id ?? "");
+    if (!playerId || used.has(playerId)) continue;
+    bullpen.push(player);
+    used.add(playerId);
+  }
+
+  assignMissingBullpenRoles(bullpen, roles);
+  return { bullpen, roles };
+}
+
+function assignMissingBullpenRoles(bullpen, roles) {
+  const roleCount = (role) => Object.values(roles).filter((entry) => entry === role).length;
+  const unassigned = () => (bullpen ?? []).filter((player) => !roles[String(player?.id ?? "")]);
+  const bestUnassigned = (scoreFn) =>
+    unassigned()
+      .map((player, index) => ({ player, index, score: scoreFn(player) }))
+      .sort(comparePitcherEntries)[0]?.player;
+  const assign = (player, role) => {
+    const playerId = String(player?.id ?? "");
+    if (playerId && !roles[playerId]) roles[playerId] = role;
+  };
+
+  if (roleCount("CL") === 0) assign(bestUnassigned(bullpenScore), "CL");
+  while (roleCount("SU") < 2) {
+    const player = bestUnassigned(bullpenScore);
+    if (!player) break;
+    assign(player, "SU");
+  }
+  if (roleCount("LR") === 0) assign(bestUnassigned(starterScore), "LR");
+
+  for (const player of bullpen ?? []) {
+    const playerId = String(player?.id ?? "");
+    if (playerId && !roles[playerId]) roles[playerId] = "MR";
+  }
+}
+
+function buildManualPitchingSnapshot(team, pitchers) {
+  const rotationPlayers = resolveManualRotation(team, pitchers);
+  const bullpenPlan = resolveManualBullpen(team, pitchers, rotationPlayers);
+  const nextIndex = nextRotationIndex(team, rotationPlayers.length);
+  const rotation = rotationPlayers.map((player, index) =>
+    toPitchingRole(player, index === nextIndex ? "nextStarter" : "starter", index + 1)
+  );
+  const bullpen = bullpenPlan.bullpen.map((player, index) =>
+    toPitchingRole(player, bullpenPlan.roles[String(player?.id ?? "")] ?? bullpenRole(index), index + 1)
+  );
+
+  return {
+    rotation,
+    bullpen,
+    nextStarter: rotation.find((entry) => entry.role === "nextStarter") ?? rotation[0] ?? null
+  };
+}
+
 export function buildPitchingSnapshot(team) {
   const pitchers = getAvailablePitchers(team);
+  if (hasManualPitchingPlan(team)) {
+    return buildManualPitchingSnapshot(team, pitchers);
+  }
+
   const rotation = pitchers
     .map((player, index) => ({ player, index, score: starterScore(player) }))
     .sort(comparePitcherEntries)
@@ -237,6 +416,305 @@ export function buildPitchingSnapshot(team) {
     bullpen,
     nextStarter: rotation.find((entry) => entry.role === "nextStarter") ?? rotation[0] ?? null
   };
+}
+
+export function commitPitchingPlan(state, input = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  normalizeState(state);
+
+  const team = findTeamById(state, input.teamId ?? state.selectedTeamId);
+  if (!team) return { ok: false, code: "missing-team", message: "투수 운용을 저장할 구단을 찾을 수 없습니다." };
+
+  if (input.mode === "auto" || input.clear === true) {
+    team.pitchingPlan = null;
+    addLog(state, `${state.currentDate} ${team.name} 투수 운용: 자동 추천으로 복귀했습니다.`);
+    rememberManagerAction(state, {
+      type: "pitching-plan-auto",
+      teamId: team.id,
+      subject: "자동 투수 운용",
+      headline: `${team.shortName ?? team.name} 자동 투수 운용 복귀`,
+      summary: "감독실이 수동 로테이션/불펜 역할 지정을 해제하고 자동 추천 운용으로 돌아갔습니다.",
+      heat: 7,
+      confidence: 58,
+      tags: ["pitching", "manager", "automation"]
+    });
+    syncStateFoundation(state);
+    return { ok: true, code: "cleared", message: "자동 투수 운용으로 되돌렸습니다.", pitchingPlan: null };
+  }
+
+  const pitchers = getAvailablePitchers(team);
+  const pitcherById = new Map(pitchers.map((player) => [String(player.id ?? ""), player]));
+  const rotationOrder = uniquePitcherIds(input.rotationOrder ?? input.rotationIds ?? []).slice(0, 5);
+  const closerId = String(input.closerId ?? "").trim();
+  const setupIds = uniquePitcherIds(input.setupIds ?? []).slice(0, 2);
+  const longReliefIds = uniquePitcherIds(input.longReliefIds ?? input.longReliefId ?? []).slice(0, 2);
+  const roleIds = [closerId, ...setupIds, ...longReliefIds].filter(Boolean);
+  const problems = [];
+
+  if (rotationOrder.length !== 5) {
+    problems.push(`선발 로테이션은 5명이어야 합니다(${rotationOrder.length}/5).`);
+  }
+  for (const id of rotationOrder) {
+    if (!pitcherById.has(id)) problems.push(`로테이션 선수 ${id}는 현재 가용 투수가 아닙니다.`);
+  }
+  for (const id of roleIds) {
+    if (!pitcherById.has(id)) problems.push(`불펜 역할 선수 ${id}는 현재 가용 투수가 아닙니다.`);
+  }
+  const allAssignedIds = [...rotationOrder, ...roleIds];
+  if (new Set(allAssignedIds).size !== allAssignedIds.length) {
+    problems.push("한 투수를 로테이션/불펜 역할에 중복 지정할 수 없습니다.");
+  }
+
+  if (problems.length > 0) {
+    return {
+      ok: false,
+      code: "invalid-pitching-plan",
+      message: `투수 운용 저장 실패: ${problems[0]}`,
+      problems
+    };
+  }
+
+  team.pitchingPlan = {
+    mode: "manual",
+    rotationOrder,
+    closerId,
+    setupIds,
+    longReliefIds,
+    updatedAt: state.currentDate,
+    source: "manager-pitching-plan-v1"
+  };
+  addLog(state, `${state.currentDate} ${team.name} 투수 운용 저장: 로테이션 ${rotationOrder.length}명, 마무리 ${pitcherById.get(closerId)?.name ?? "자동"}.`);
+  rememberManagerAction(state, {
+    type: "pitching-plan-manual",
+    teamId: team.id,
+    subject: "수동 투수 운용",
+    headline: `${team.shortName ?? team.name} 투수 운용 직접 지정`,
+    summary: `감독실이 선발 로테이션 5명과 불펜 핵심 역할을 저장했습니다. 다음 경기부터 수동 운용이 우선 적용됩니다.`,
+    heat: 12,
+    confidence: 66,
+    tags: ["pitching", "manager", "game-plan"]
+  });
+  syncStateFoundation(state);
+
+  return {
+    ok: true,
+    code: "saved",
+    message: "투수 운용을 저장했습니다. 다음 경기부터 수동 운용이 우선 적용됩니다.",
+    pitchingPlan: team.pitchingPlan
+  };
+}
+
+export function commitGameInterventionPlan(state, input = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  normalizeState(state);
+
+  const team = findTeamById(state, input.teamId ?? state.selectedTeamId);
+  if (!team) return { ok: false, code: "missing-team", message: "경기 전략을 저장할 구단을 찾을 수 없습니다." };
+
+  const presetKey = String(input.preset ?? input.mode ?? "balanced");
+  const preset = GAME_INTERVENTION_PRESETS[presetKey] ?? GAME_INTERVENTION_PRESETS.balanced;
+  const plan = {
+    mode: "manual",
+    preset: GAME_INTERVENTION_PRESETS[presetKey] ? presetKey : "balanced",
+    label: input.label ?? preset.label,
+    approach: input.approach ?? preset.approach,
+    baserunning: input.baserunning ?? preset.baserunning,
+    bullpenHook: input.bullpenHook ?? preset.bullpenHook,
+    pinchHit: input.pinchHit ?? preset.pinchHit,
+    bunt: input.bunt ?? preset.bunt,
+    updatedAt: state.currentDate,
+    source: "manager-game-intervention-v1"
+  };
+
+  state.gameInterventions = {
+    ...(state.gameInterventions ?? {}),
+    [team.id]: plan
+  };
+  addLog(state, {
+    date: state.currentDate,
+    type: "coaching",
+    tag: "경기 전략",
+    source: "벤치",
+    headline: `${team.shortName ?? team.name} 다음 경기 전략: ${plan.label}`,
+    text: `타석 접근 ${gamePlanApproachLabel(plan.approach)}, 주루 ${gamePlanTempoLabel(plan.baserunning)}, 불펜 ${gamePlanTempoLabel(plan.bullpenHook)}로 저장했습니다.`
+  });
+  rememberManagerAction(state, {
+    type: "game-intervention",
+    teamId: team.id,
+    subject: "경기 중 감독 개입",
+    subjectId: plan.preset,
+    headline: `${team.shortName ?? team.name} ${plan.label} 플랜`,
+    summary: `다음 경기 운영 방향을 ${plan.label}로 저장했습니다. 경기 결과와 함께 장기 서사에 반영됩니다.`,
+    heat: 10,
+    confidence: 64,
+    tags: ["game-plan", "manager", "intervention"]
+  });
+  syncStateFoundation(state);
+
+  return {
+    ok: true,
+    code: "saved",
+    message: `${plan.label} 경기 전략을 저장했습니다.`,
+    plan
+  };
+}
+
+export function commitScoutAssignment(state, input = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  normalizeState(state);
+
+  const team = findTeamById(state, input.teamId ?? state.selectedTeamId);
+  if (!team) return { ok: false, code: "missing-team", message: "스카우트 업무를 지시할 구단을 찾을 수 없습니다." };
+
+  const board = buildScoutAssignments(state, team.id);
+  const assignment = (board.assignments ?? []).find((entry) => String(entry.id) === String(input.assignmentId)) ?? board.assignments?.[0];
+  if (!assignment) return { ok: false, code: "missing-assignment", message: "지시 가능한 스카우트 업무가 없습니다." };
+
+  state.scoutingQueue = Array.isArray(state.scoutingQueue) ? state.scoutingQueue : [];
+  state.scoutingReportsById = state.scoutingReportsById && typeof state.scoutingReportsById === "object" ? state.scoutingReportsById : {};
+  const queueItem = {
+    id: `scout-task-${state.currentDate}-${assignment.id}`,
+    assignmentId: assignment.id,
+    teamId: team.id,
+    title: assignment.title,
+    focus: assignment.focus,
+    status: "reported",
+    orderedAt: state.currentDate,
+    dueDate: assignment.dueDate,
+    completedAt: state.currentDate,
+    source: "scout-assignment-v1"
+  };
+  state.scoutingQueue = [queueItem, ...state.scoutingQueue.filter((item) => item.assignmentId !== assignment.id)].slice(0, 40);
+
+  const reports = buildAssignmentScoutingReports(state, team, assignment, queueItem);
+  for (const report of reports) {
+    state.scoutingReportsById[report.id] = report;
+  }
+
+  addLog(state, {
+    date: state.currentDate,
+    type: "scout",
+    tag: "스카우트 리포트",
+    source: "스카우트팀",
+    headline: `${assignment.title} 리포트 도착`,
+    text: reports.length
+      ? `${reports[0].playerName} 등 ${reports.length}명 관측치가 업데이트됐습니다. 신뢰도 평균 ${formatAverageReportConfidence(reports)}.`
+      : `${assignment.focus} 업무가 완료됐지만 실명 후보 데이터가 없어 포지션 방향 리포트만 남겼습니다.`
+  });
+  rememberManagerAction(state, {
+    type: "scouting-report",
+    teamId: team.id,
+    subjectId: assignment.id,
+    subject: assignment.title,
+    headline: `${team.shortName ?? team.name} 정보 비대칭 축소`,
+    summary: reports.length
+      ? `${assignment.title} 결과로 ${reports.length}명 관측 리포트가 생성됐습니다. 실제 능력치 대신 오차 범위와 협상 레버리지를 우선 표시합니다.`
+      : `${assignment.title} 결과로 후보군 방향성이 뉴스함에 기록됐습니다.`,
+    heat: 11,
+    confidence: 70,
+    tags: ["scout", "information", "negotiation"]
+  });
+  syncStateFoundation(state);
+
+  return {
+    ok: true,
+    code: "reported",
+    message: `${assignment.title} 스카우트 리포트를 생성했습니다.`,
+    assignment: queueItem,
+    reports
+  };
+}
+
+function buildAssignmentScoutingReports(state, team, assignment, queueItem) {
+  return (assignment.candidates ?? [])
+    .filter(Boolean)
+    .slice(0, 5)
+    .map((candidate, index) => {
+      const entry = findPlayerEntry(state, candidate.id, candidate.teamId) ?? findPlayerEntry(state, candidate.id);
+      const player = entry?.player ?? candidate;
+      const confidenceBase = candidate.sourceConfidence === "high" ? 78 : candidate.sourceConfidence === "medium" ? 66 : 54;
+      const confidence = clamp(confidenceBase + deterministicRange(state.currentDate, assignment.id, candidate.id, "confidence", -7, 8), 42, 92);
+      const error = scoutingErrorFromConfidence(confidence);
+      const observedOvr = clamp(Math.round(safeNumber(player.ovr) / 2) + deterministicRange(state.currentDate, assignment.id, candidate.id, "ovr", -error, error), 20, 95);
+      const observedPot = clamp(Math.round(safeNumber(player.pot, player.ovr) / 2) + deterministicRange(state.currentDate, assignment.id, candidate.id, "pot", -error, error), observedOvr, 98);
+      const leverage = scoutingNegotiationLeverage({ state, assignment, player, confidence, index });
+
+      return {
+        id: `scout-report-${team.id}-${candidate.id}`,
+        playerId: candidate.id,
+        sourcePlayerId: candidate.playerId ?? "",
+        teamId: candidate.teamId ?? player.teamId ?? "",
+        orderedByTeamId: team.id,
+        playerName: candidate.name ?? player.name ?? "후보",
+        playerTeamName: candidate.teamName ?? entry?.team?.name ?? "",
+        position: candidate.position ?? player.position ?? "",
+        role: candidate.role ?? player.role ?? "",
+        date: state.currentDate,
+        assignmentId: assignment.id,
+        assignmentTitle: assignment.title,
+        currentGrade: observedOvr,
+        futureGrade: observedPot,
+        uncertainty: error,
+        confidence,
+        negotiationLeverage: leverage.score,
+        leverageLabel: leverage.label,
+        visibility: "scouted",
+        summary: `${gamePlanTempoLabel(leverage.label)} 레버리지, 관측 OVR ${observedOvr}, POT ${observedPot}, 오차 ±${error}`,
+        queueItemId: queueItem.id,
+        source: "scout-assignment-v1"
+      };
+    });
+}
+
+function scoutingErrorFromConfidence(confidence) {
+  return clamp(Math.round(18 - safeNumber(confidence, 60) / 7), 4, 12);
+}
+
+function scoutingNegotiationLeverage({ state, assignment, player, confidence, index }) {
+  const agePressure = safeNumber(player.age, 27) >= 31 ? 8 : safeNumber(player.age, 27) <= 24 ? -3 : 0;
+  const fatiguePressure = safeNumber(player.fatigue) >= 38 ? 6 : 0;
+  const injuryPressure = safeNumber(player.injuredDays) > 0 ? 12 : 0;
+  const availability = assignment.type === "trade-pro" ? 9 : 3;
+  const score = clamp(
+    46 + availability + agePressure + fatiguePressure + injuryPressure + deterministicRange(state.currentDate, assignment.id, player.id ?? player.name, "leverage", -8, 9) + Math.round((safeNumber(confidence) - 60) / 5) - index * 2,
+    15,
+    92
+  );
+  const label = score >= 70 ? "강함" : score >= 52 ? "보통" : "약함";
+  return { score, label };
+}
+
+function formatAverageReportConfidence(reports) {
+  const count = Math.max(1, reports.length);
+  return `${Math.round(reports.reduce((total, report) => total + safeNumber(report.confidence), 0) / count)}%`;
+}
+
+function gamePlanApproachLabel(value) {
+  const labels = {
+    balanced: "균형",
+    contact: "컨택",
+    aggressive: "강공",
+    patient: "출루"
+  };
+  return labels[value] ?? value ?? "균형";
+}
+
+function gamePlanTempoLabel(value) {
+  const labels = {
+    balanced: "균형",
+    standard: "표준",
+    selective: "선택",
+    conservative: "보수",
+    aggressive: "공격",
+    early: "빠르게",
+    rare: "최소",
+    matchup: "매치업",
+    power: "장타",
+    "강함": "강함",
+    "보통": "보통",
+    "약함": "약함"
+  };
+  return labels[value] ?? value ?? "표준";
 }
 
 export function getNextGamePreview(state, teamId = state?.selectedTeamId) {
@@ -2791,12 +3269,77 @@ export function commitTradeProposal(state, proposal) {
   };
 }
 
+function buildGameInterventionForTeam(state, team) {
+  const plan = state?.gameInterventions?.[team?.id];
+  if (!plan || plan.mode !== "manual") return null;
+  return {
+    teamId: team.id,
+    preset: plan.preset ?? "balanced",
+    label: plan.label ?? GAME_INTERVENTION_PRESETS[plan.preset]?.label ?? "균형 운영",
+    approach: plan.approach ?? "balanced",
+    baserunning: plan.baserunning ?? "balanced",
+    bullpenHook: plan.bullpenHook ?? "standard",
+    pinchHit: plan.pinchHit ?? "standard",
+    bunt: plan.bunt ?? "selective",
+    updatedAt: plan.updatedAt ?? ""
+  };
+}
+
+function applyPitchingIntervention(pitchingPlan, gamePlan) {
+  if (!pitchingPlan || !gamePlan) return pitchingPlan;
+  pitchingPlan.managerIntervention = gamePlan;
+  if (gamePlan.bullpenHook === "early") {
+    pitchingPlan.starterTargetOuts = Math.max(12, safeNumber(pitchingPlan.starterTargetOuts, 18) - 3);
+    pitchingPlan.starterPitchLimit = Math.max(68, safeNumber(pitchingPlan.starterPitchLimit, 90) - 12);
+  } else if (gamePlan.bullpenHook === "patient") {
+    pitchingPlan.starterTargetOuts = Math.min(24, safeNumber(pitchingPlan.starterTargetOuts, 18) + 2);
+    pitchingPlan.starterPitchLimit = Math.min(112, safeNumber(pitchingPlan.starterPitchLimit, 90) + 8);
+  }
+  return pitchingPlan;
+}
+
+function summarizeGameIntervention(plan) {
+  if (!plan) return null;
+  return {
+    preset: plan.preset,
+    label: plan.label,
+    approach: plan.approach,
+    baserunning: plan.baserunning,
+    bullpenHook: plan.bullpenHook
+  };
+}
+
+function recordGameInterventionOutcome(state, game, away, home, awayPlan, homePlan) {
+  for (const [team, plan] of [[away, awayPlan], [home, homePlan]]) {
+    if (!plan || String(team?.id ?? "") !== String(state.selectedTeamId ?? "")) continue;
+    const diff = teamRunDiff(game, team.id);
+    const resultText = diff > 0 ? "승리" : diff < 0 ? "패배" : "무승부";
+    rememberManagerAction(state, {
+      type: "game-intervention-result",
+      teamId: team.id,
+      subjectId: `${game.id}-${plan.preset}`,
+      subject: plan.label,
+      headline: `${plan.label} 플랜 ${resultText}`,
+      summary: `${game.away} ${game.awayScore}-${game.homeScore} ${game.home}. ${plan.label} 전략의 타석 접근과 주루/불펜 운영이 경기 리포트에 기록됐습니다.`,
+      heat: diff > 0 ? 12 : 9,
+      confidence: 66,
+      date: game.date,
+      source: "경기 결과",
+      tags: ["game-plan", "result", "manager"]
+    });
+  }
+}
+
 function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {}) {
   const { away, home } = matchup;
   const awayLineup = buildLineup(away);
   const homeLineup = buildLineup(home);
   const awayPitchingPlan = buildPitchingPlan(away);
   const homePitchingPlan = buildPitchingPlan(home);
+  const awayGamePlan = buildGameInterventionForTeam(state, away);
+  const homeGamePlan = buildGameInterventionForTeam(state, home);
+  applyPitchingIntervention(awayPitchingPlan, awayGamePlan);
+  applyPitchingIntervention(homePitchingPlan, homeGamePlan);
   const seed = hashParts(state.day, dateKey, gameIndex, away.id, home.id, state.gamesPlayed, options.gameType ?? "regular", options.seriesId ?? "");
   const gameId = options.gameType === "postseason"
     ? makePostseasonGameId(dateKey, options, away.id, home.id)
@@ -2810,6 +3353,7 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
     lineup: awayLineup,
     defenseLineup: homeLineup,
     pitchingPlan: homePitchingPlan,
+    gamePlan: awayGamePlan,
     seed: seed + 11,
     weather: gameEnvironment,
     side: "away"
@@ -2821,6 +3365,7 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
     lineup: homeLineup,
     defenseLineup: awayLineup,
     pitchingPlan: awayPitchingPlan,
+    gamePlan: homeGamePlan,
     seed: seed + 37,
     weather: gameEnvironment,
     side: "home"
@@ -2899,6 +3444,10 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
     } : null,
     extraDecision,
     boxScore,
+    managerPlans: {
+      away: summarizeGameIntervention(awayGamePlan),
+      home: summarizeGameIntervention(homeGamePlan)
+    },
     plateAppearanceEvents,
     scoringEvents,
     totalRuns,
@@ -2906,6 +3455,7 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
   };
 
   appendEvent(state, buildGameFinalEvent(result));
+  recordGameInterventionOutcome(state, result, away, home, awayGamePlan, homeGamePlan);
   return result;
 }
 
@@ -4283,7 +4833,7 @@ function applyGameStats(home, away, homeRuns, awayRuns, attendance) {
   }
 }
 
-function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitchingPlan, seed, weather, side }) {
+function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitchingPlan, gamePlan, seed, weather, side }) {
   const result = {
     runs: 0,
     hits: 0,
@@ -4345,7 +4895,8 @@ function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitc
       plateAppearance: result.plateAppearances,
       side,
       bases,
-      outs
+      outs,
+      gamePlan
     });
     const basesBeforePlay = [Boolean(bases[0]), Boolean(bases[1]), Boolean(bases[2])];
     const advancement = applyPlateAppearanceOutcome({
@@ -4409,7 +4960,8 @@ function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitc
         pitcher,
         seed,
         plateAppearance: result.plateAppearances,
-        side
+        side,
+        gamePlan
       });
       const outsBeforeSteal = outs;
       outs += steal.outs;
@@ -4432,7 +4984,7 @@ function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitc
   return result;
 }
 
-function resolvePlateAppearance({ hitter, pitcher, defenseQuality, defenseContext, weather, seed, plateAppearance, side, bases, outs }) {
+function resolvePlateAppearance({ hitter, pitcher, defenseQuality, defenseContext, weather, seed, plateAppearance, side, bases, outs, gamePlan }) {
   const pitcherHand = normalizeGameHand(pitcher?.throws, "R");
   const batterSide = effectiveBatterSide(hitter, pitcherHand);
   const contact = hitterSplitRating(hitter, "contact", pitcherHand);
@@ -4462,29 +5014,30 @@ function resolvePlateAppearance({ hitter, pitcher, defenseQuality, defenseContex
   const lineDriveBoost = battedBallType === "lineDrive" ? 0.018 : 0;
   const flyBallBoost = battedBallType === "flyBall" ? 0.006 : 0;
 
-  const walkRate = clamp((0.086 + (eye + patience - 20) * 0.004 - (control - 10) * 0.0052) * anonymousProfile.walkScale, 0.035, 0.165);
+  const gamePlanAdjustment = managerPlateAppearanceAdjustment(gamePlan, hitter, bases, outs);
+  const walkRate = clamp(((0.086 + (eye + patience - 20) * 0.004 - (control - 10) * 0.0052) * anonymousProfile.walkScale) + gamePlanAdjustment.walk, 0.035, 0.165);
   const strikeoutRate = clamp(
     clamp(
       0.182 + (stuff - 10) * 0.0092 + (velocity - 10) * 0.0036 - (contact - 10) * 0.0078 - (eye - 10) * 0.0023 + platoonPressure,
       0.078,
       0.35
-    ) + anonymousProfile.strikeoutAdd,
+    ) + anonymousProfile.strikeoutAdd + gamePlanAdjustment.strikeout,
     0.078,
     0.39
   );
   const homeRunRate = clamp(
-    (0.029 + (power - 10) * 0.0038 + (battedBall - 10) * 0.002 - (hrSuppression - 10) * 0.0032 - platoonPressure * 0.7 + flyBallBoost) * weatherHomer * anonymousProfile.homerScale,
+    ((0.029 + (power - 10) * 0.0038 + (battedBall - 10) * 0.002 - (hrSuppression - 10) * 0.0032 - platoonPressure * 0.7 + flyBallBoost) * weatherHomer * anonymousProfile.homerScale) + gamePlanAdjustment.homeRun,
     0.005,
     0.09
   );
   const tripleRate = clamp((0.003 + (safeNumber(hitter.speed, 10) - 10) * 0.00055 - (outfieldDefense - 10) * 0.00038) * weatherHit, 0.001, 0.014);
   const doubleRate = clamp(
-    (0.047 + (power - 10) * 0.0023 + (contact - 10) * 0.001 - (movement - 10) * 0.0019 - (outfieldDefense - 10) * 0.0012 - platoonPressure * 0.5 + lineDriveBoost) * weatherRun * anonymousProfile.extraBaseScale,
+    ((0.047 + (power - 10) * 0.0023 + (contact - 10) * 0.001 - (movement - 10) * 0.0019 - (outfieldDefense - 10) * 0.0012 - platoonPressure * 0.5 + lineDriveBoost) * weatherRun * anonymousProfile.extraBaseScale) + gamePlanAdjustment.double,
     0.02,
     0.084
   );
   const singleRate = clamp(
-    (0.107 + (contact - 10) * 0.0045 + condition + pitcherFreshness - (stuff - 10) * 0.005 - (movement - 10) * 0.0031 - (battedBallDefense - 10) * 0.0029 - platoonPressure * 0.8 + lineDriveBoost - groundBallPenalty) * weatherHit * anonymousProfile.singleScale,
+    ((0.107 + (contact - 10) * 0.0045 + condition + pitcherFreshness - (stuff - 10) * 0.005 - (movement - 10) * 0.0031 - (battedBallDefense - 10) * 0.0029 - platoonPressure * 0.8 + lineDriveBoost - groundBallPenalty) * weatherHit * anonymousProfile.singleScale) + gamePlanAdjustment.single,
     0.058,
     0.18
   );
@@ -4504,6 +5057,43 @@ function resolvePlateAppearance({ hitter, pitcher, defenseQuality, defenseContex
 
   const doublePlay = shouldTurnDoublePlay({ bases, outs, hitter, pitcher, defenseContext, seed, plateAppearance, side, battedBallType });
   return { type: "out", isAtBat: true, bases: 0, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, doublePlay, ballpark: weather?.ballpark };
+}
+
+function managerPlateAppearanceAdjustment(gamePlan, hitter, bases, outs) {
+  if (!gamePlan) {
+    return { walk: 0, strikeout: 0, homeRun: 0, double: 0, single: 0 };
+  }
+
+  const traits = hitter?.personality?.traits ?? {};
+  const coachability = (safeNumber(traits.professionalism, 10) + safeNumber(traits.adaptability, 10)) / 20;
+  const pressureBonus = countOccupiedBases(bases ?? []) >= 2 && safeNumber(traits.pressure, 10) >= 15 ? 0.0015 : 0;
+  const fit = clamp(0.78 + coachability * 0.22, 0.78, 1.04);
+  const adjustment = { walk: 0, strikeout: 0, homeRun: 0, double: 0, single: pressureBonus };
+
+  if (gamePlan.approach === "patient") {
+    adjustment.walk += 0.010 * fit;
+    adjustment.strikeout += 0.004 * fit;
+    adjustment.single -= 0.004;
+    adjustment.homeRun -= 0.002;
+  } else if (gamePlan.approach === "aggressive") {
+    adjustment.walk -= 0.007;
+    adjustment.strikeout += 0.007 * fit;
+    adjustment.homeRun += 0.004 * fit;
+    adjustment.double += 0.003 * fit;
+  } else if (gamePlan.approach === "contact") {
+    adjustment.walk -= 0.002;
+    adjustment.strikeout -= 0.004 * fit;
+    adjustment.single += 0.006 * fit;
+    adjustment.homeRun -= 0.002;
+  }
+
+  if (gamePlan.bunt === "aggressive" && outs % 3 < 2 && bases?.[0] && !bases?.[1]) {
+    adjustment.strikeout -= 0.002;
+    adjustment.single += 0.002;
+    adjustment.homeRun -= 0.003;
+  }
+
+  return adjustment;
 }
 
 function normalizeGameHand(value, fallback = "R") {
@@ -4732,13 +5322,15 @@ function clearBases(bases) {
   bases[2] = null;
 }
 
-function maybeAttemptSteal({ bases, pitcher, seed, plateAppearance, side }) {
+function maybeAttemptSteal({ bases, pitcher, seed, plateAppearance, side, gamePlan }) {
   const runner = bases[0];
   if (!runner || bases[1]) return { outs: 0 };
 
   const speed = safeNumber(runner.speed, 10);
   const stealing = safeNumber(runner.stealing, speed);
-  const attemptRate = clamp((speed + stealing - 18) * 0.008, 0, 0.16);
+  const tempoMultiplier = gamePlan?.baserunning === "aggressive" ? 1.55 : gamePlan?.baserunning === "conservative" ? 0.58 : 1;
+  const personalityBoost = safeNumber(runner.personality?.traits?.pressure, 10) >= 15 ? 1.08 : 1;
+  const attemptRate = clamp((speed + stealing - 18) * 0.008 * tempoMultiplier * personalityBoost, 0, 0.24);
   if (rollUnit(seed, side, "steal-attempt", plateAppearance, runner.id) >= attemptRate) return { outs: 0 };
 
   const hold = safeNumber(pitcher?.holdRunners, 10);
@@ -4799,6 +5391,25 @@ function choosePitcherForPlateAppearance(pitchingPlan, result, outs) {
     safeNumber(starterLine?.runsAllowed) < 5
   ) {
     return pitchingPlan.starter;
+  }
+
+  if (pitchingPlan.manual) {
+    const preferredRoles = outs >= 24
+      ? ["CL", "SU", "MR", "LR", "RP"]
+      : outs >= 21
+        ? ["SU", "CL", "MR", "LR", "RP"]
+        : ["LR", "MR", "SU", "CL", "RP"];
+    for (const role of preferredRoles) {
+      for (const candidate of pitchingPlan.bullpen ?? []) {
+        if (bullpenRoleForPitcher(pitchingPlan, candidate) !== role) continue;
+        const line = getExistingGamePitchingLine(result, candidate);
+        if (!line || safeNumber(line.pitches) < 28) return candidate;
+      }
+    }
+    for (const candidate of pitchingPlan.bullpen ?? []) {
+      const line = getExistingGamePitchingLine(result, candidate);
+      if (!line || safeNumber(line.pitches) < 28) return candidate;
+    }
   }
 
   let bullpenIndex = outs >= 24 ? 2 : outs >= 21 ? 1 : 0;
@@ -5330,7 +5941,8 @@ function buildGameFinalEvent(game) {
       hits: safeNumber(game.awayHits) + safeNumber(game.homeHits),
       homeRuns: safeNumber(game.awayHomeRuns) + safeNumber(game.homeHomeRuns),
       plateAppearances: safeNumber(game.boxScore?.totals?.plateAppearances)
-    }
+    },
+    managerPlans: game.managerPlans ?? null
   };
 }
 
@@ -5379,6 +5991,10 @@ function toBaseOccupancy(value) {
 
 function buildPitchingPlan(team) {
   const pitchers = getAvailablePitchers(team);
+  if (hasManualPitchingPlan(team)) {
+    return buildManualGamePitchingPlan(team, pitchers);
+  }
+
   const rotationEntries = pitchers
     .map((player, index) => ({ player, index, score: starterScore(player) }))
     .sort(comparePitcherEntries)
@@ -5402,6 +6018,29 @@ function buildPitchingPlan(team) {
     bullpen: bullpen.length ? bullpen : pitchers.filter((player) => player !== starter).slice(0, 4),
     starterTargetOuts,
     starterPitchLimit,
+    policy: {
+      hookFatigue: 34,
+      lateLeadRole: "CL"
+    }
+  };
+}
+
+function buildManualGamePitchingPlan(team, pitchers) {
+  const rotation = resolveManualRotation(team, pitchers);
+  const bullpenPlan = resolveManualBullpen(team, pitchers, rotation);
+  const starter = rotation[nextRotationIndex(team, rotation.length)] ?? rotation[0] ?? pitchers[0] ?? null;
+  const starterTargetOuts = clamp(Math.round(12 + safeNumber(starter?.stamina, 10) * 0.7), 15, 21);
+  const starterPitchLimit = clamp(Math.round(72 + safeNumber(starter?.stamina, 10) * 2.1 + (safeNumber(starter?.armFreshness, 80) - 70) * 0.45), 78, 106);
+
+  return {
+    teamId: team?.id ?? "",
+    starter,
+    rotation,
+    bullpen: bullpenPlan.bullpen.length ? bullpenPlan.bullpen : pitchers.filter((player) => player !== starter).slice(0, 4),
+    bullpenRoles: bullpenPlan.roles,
+    starterTargetOuts,
+    starterPitchLimit,
+    manual: true,
     policy: {
       hookFatigue: 34,
       lateLeadRole: "CL"
@@ -5462,6 +6101,9 @@ function bullpenRole(index) {
 }
 
 function bullpenRoleForPitcher(plan, pitcher) {
+  const playerId = String(pitcher?.id ?? "");
+  const plannedRole = playerId ? plan?.bullpenRoles?.[playerId] : "";
+  if (plannedRole) return plannedRole;
   const index = (plan?.bullpen ?? []).findIndex((entry) => String(entry.id) === String(pitcher?.id));
   return index === -1 ? "RP" : bullpenRole(index);
 }
@@ -5700,6 +6342,11 @@ function normalizeState(state) {
   state.eventLog = Array.isArray(state.eventLog) ? state.eventLog : [];
   state.logs = Array.isArray(state.logs) ? state.logs : [];
   normalizeNarratives(state);
+  state.gameInterventions = normalizeGameInterventions(state.gameInterventions);
+  state.scoutingQueue = Array.isArray(state.scoutingQueue) ? state.scoutingQueue.slice(0, 40) : [];
+  state.scoutingReportsById = state.scoutingReportsById && typeof state.scoutingReportsById === "object"
+    ? state.scoutingReportsById
+    : {};
   state.mailDecisions = Array.isArray(state.mailDecisions) ? state.mailDecisions : [];
   state.pendingMailDecision = state.pendingMailDecision && typeof state.pendingMailDecision === "object"
     ? state.pendingMailDecision
@@ -5724,6 +6371,7 @@ function normalizeState(state) {
     team.homeGames = safeNumber(team.homeGames);
     team.roster = Array.isArray(team.roster) ? team.roster : [];
     for (const player of team.roster) {
+      player.personality = normalizePlayerPersonality(player, team);
       if (player.rosterLock && typeof player.rosterLock !== "object") {
         player.rosterLock = null;
       }
@@ -5731,6 +6379,72 @@ function normalizeState(state) {
   }
 
   syncStateFoundation(state);
+}
+
+function normalizeGameInterventions(source) {
+  const result = {};
+  const input = source && typeof source === "object" ? source : {};
+  for (const [teamId, plan] of Object.entries(input)) {
+    if (!plan || typeof plan !== "object") continue;
+    const preset = GAME_INTERVENTION_PRESETS[plan.preset] ?? GAME_INTERVENTION_PRESETS.balanced;
+    result[teamId] = {
+      mode: "manual",
+      preset: plan.preset ?? "balanced",
+      label: plan.label ?? preset.label,
+      approach: plan.approach ?? preset.approach,
+      baserunning: plan.baserunning ?? preset.baserunning,
+      bullpenHook: plan.bullpenHook ?? preset.bullpenHook,
+      pinchHit: plan.pinchHit ?? preset.pinchHit,
+      bunt: plan.bunt ?? preset.bunt,
+      updatedAt: plan.updatedAt ?? "",
+      source: plan.source ?? "manager-game-intervention-v1"
+    };
+  }
+  return result;
+}
+
+function normalizePlayerPersonality(player, team) {
+  const existing = player?.personality && typeof player.personality === "object" ? player.personality : {};
+  const seedParts = [team?.id ?? player?.teamId ?? "", player?.id ?? "", player?.name ?? ""];
+  const traits = {
+    ambition: clamp(Math.round(safeNumber(existing.traits?.ambition, deterministicRange(...seedParts, "ambition", 7, 19))), 1, 20),
+    loyalty: clamp(Math.round(safeNumber(existing.traits?.loyalty, deterministicRange(...seedParts, "loyalty", 6, 19))), 1, 20),
+    pressure: clamp(Math.round(safeNumber(existing.traits?.pressure, deterministicRange(...seedParts, "pressure", 5, 19))), 1, 20),
+    professionalism: clamp(Math.round(safeNumber(existing.traits?.professionalism, deterministicRange(...seedParts, "professionalism", 6, 19))), 1, 20),
+    adaptability: clamp(Math.round(safeNumber(existing.traits?.adaptability, deterministicRange(...seedParts, "adaptability", 5, 19))), 1, 20),
+    mediaTemper: clamp(Math.round(safeNumber(existing.traits?.mediaTemper, deterministicRange(...seedParts, "mediaTemper", 4, 18))), 1, 20)
+  };
+  const archetype = existing.archetype ?? playerPersonalityArchetype(traits);
+  const roleExpectation = existing.roleExpectation ?? playerRoleExpectation(player);
+
+  return {
+    version: 1,
+    archetype,
+    roleExpectation,
+    traits,
+    clubhouseImpact: clamp(Math.round((traits.professionalism + traits.loyalty + traits.pressure) / 3), 1, 20),
+    volatility: clamp(Math.round((21 - traits.professionalism + 21 - traits.mediaTemper) / 2), 1, 20),
+    source: existing.source ?? "deterministic-personality-v1"
+  };
+}
+
+function playerPersonalityArchetype(traits) {
+  if (traits.professionalism >= 16 && traits.pressure >= 15) return "큰 경기형 리더";
+  if (traits.ambition >= 16 && traits.loyalty <= 9) return "상승 지향형";
+  if (traits.loyalty >= 16 && traits.professionalism >= 13) return "프랜차이즈형";
+  if (traits.adaptability >= 16) return "적응형";
+  if (traits.mediaTemper <= 7) return "민감형";
+  if (traits.pressure <= 8) return "관리 필요형";
+  return "균형형";
+}
+
+function playerRoleExpectation(player) {
+  const ovr = safeNumber(player?.ovr);
+  if (ovr >= 150) return "핵심 주전";
+  if (ovr >= 130) return "주전 경쟁";
+  if (safeNumber(player?.pot, ovr) - ovr >= 28 && safeNumber(player?.age, 99) <= 25) return "육성 우선";
+  if (player?.status === "futures") return "퓨처스 대기";
+  return "로테이션/백업";
 }
 
 function normalizeNarratives(state) {

@@ -273,6 +273,8 @@ async function main() {
   await runCheck("선수 누적 기록 모델", checkPlayerSeasonStats);
   await runCheck("경기 박스스코어/eventLog", checkGameBoxScoreEventLog);
   await runCheck("로테이션/불펜 운용 snapshot", checkPitchingSnapshotUsage);
+  await runCheck("수동 투수 운용 우선 적용", checkManualPitchingPlan);
+  await runCheck("운영 깊이 v0: 개인성/전략/스카우트/서사", checkManagementDepthV0);
   await runCheck("simulateDays 실행", checkSimulateDays);
   await runCheck("simulateRegularSeason 종료 상태", checkSimulateRegularSeason);
   await runCheck("포스트시즌/시상식 자동 생성", checkPostseasonAwards);
@@ -343,6 +345,9 @@ async function checkModuleImports() {
   assertExport(engineModule, "commitFreeAgentSigning", MODULE_PATHS.engine);
   assertExport(engineModule, "commitForeignPlayerSigning", MODULE_PATHS.engine);
   assertExport(engineModule, "commitTradeProposal", MODULE_PATHS.engine);
+  assertExport(engineModule, "commitPitchingPlan", MODULE_PATHS.engine);
+  assertExport(engineModule, "commitGameInterventionPlan", MODULE_PATHS.engine);
+  assertExport(engineModule, "commitScoutAssignment", MODULE_PATHS.engine);
   assertExport(engineModule, "runAutonomousOffseason", MODULE_PATHS.engine);
   assertExport(engineModule, "advanceSeason", MODULE_PATHS.engine);
   assertExport(engineModule, "advanceToNextSeason", MODULE_PATHS.engine);
@@ -1117,6 +1122,153 @@ function checkPitchingSnapshotUsage() {
   assert(pitcherLosses === teamLosses, `투수 패 ${pitcherLosses}, 팀 패 ${teamLosses}`, MODULE_PATHS.engine);
 
   return `7일 선발 ${gamesStarted}명, 등판 투수 ${pitchersUsed}명, W-L ${pitcherWins}-${pitcherLosses}, SV ${pitcherSaves}, HLD ${pitcherHolds}`;
+}
+
+function checkManualPitchingPlan() {
+  ensureImportsReady();
+  const state = dataModule.createInitialState();
+  state.selectedTeamId = "lg";
+  advanceToRegularSeason(state);
+  const team = state.teams.find((entry) => entry.id === state.selectedTeamId) ?? state.teams[0];
+  const autoSnapshot = engineModule.buildPitchingSnapshot(team);
+  const rotationOrder = (autoSnapshot.rotation ?? []).map((entry) => String(entry.id)).reverse();
+  const bullpenIds = (autoSnapshot.bullpen ?? []).map((entry) => String(entry.id));
+  const assigned = new Set(rotationOrder);
+  const takeBullpenIds = (preferred, count) => {
+    const result = [];
+    for (const id of [...preferred, ...bullpenIds]) {
+      const value = String(id ?? "");
+      if (!value || assigned.has(value) || result.includes(value)) continue;
+      result.push(value);
+      assigned.add(value);
+      if (result.length === count) break;
+    }
+    return result;
+  };
+
+  assert(rotationOrder.length === 5, `수동 테스트 로테이션 후보 ${rotationOrder.length}/5`, MODULE_PATHS.engine);
+  const closerId = takeBullpenIds([(autoSnapshot.bullpen ?? []).find((entry) => entry.role === "CL")?.id], 1)[0];
+  const setupIds = takeBullpenIds((autoSnapshot.bullpen ?? []).filter((entry) => entry.role === "SU").map((entry) => entry.id), 2);
+  const longReliefIds = takeBullpenIds((autoSnapshot.bullpen ?? []).filter((entry) => entry.role === "LR").map((entry) => entry.id), 1);
+
+  const saved = engineModule.commitPitchingPlan(state, {
+    teamId: team.id,
+    rotationOrder,
+    closerId,
+    setupIds,
+    longReliefIds
+  });
+  assert(saved.ok, `수동 투수 운용 저장 실패: ${saved.message}`, MODULE_PATHS.engine);
+
+  const manualSnapshot = engineModule.buildPitchingSnapshot(team);
+  assert(
+    (manualSnapshot.rotation ?? []).map((entry) => String(entry.id)).join("|") === rotationOrder.join("|"),
+    "수동 로테이션 순서가 snapshot에 우선 적용되지 않았습니다.",
+    MODULE_PATHS.engine
+  );
+  assert(String(manualSnapshot.nextStarter?.id ?? "") === rotationOrder[0], `수동 nextStarter=${manualSnapshot.nextStarter?.id}, 기대=${rotationOrder[0]}`, MODULE_PATHS.engine);
+  assert(
+    (manualSnapshot.bullpen ?? []).some((entry) => String(entry.id) === String(closerId) && entry.role === "CL"),
+    "수동 마무리 지정이 bullpen snapshot에 반영되지 않았습니다.",
+    MODULE_PATHS.engine
+  );
+
+  const rejected = engineModule.commitPitchingPlan(state, {
+    teamId: team.id,
+    rotationOrder,
+    closerId: rotationOrder[0],
+    setupIds,
+    longReliefIds
+  });
+  assert(!rejected.ok, "중복 투수 지정이 거부되지 않았습니다.", MODULE_PATHS.engine);
+
+  const fillState = dataModule.createInitialState();
+  fillState.selectedTeamId = team.id;
+  advanceToRegularSeason(fillState);
+  const fillTeam = fillState.teams.find((entry) => entry.id === team.id);
+  const fillSave = engineModule.commitPitchingPlan(fillState, {
+    teamId: fillTeam.id,
+    rotationOrder,
+    closerId,
+    setupIds,
+    longReliefIds
+  });
+  assert(fillSave.ok, `자동 보정용 투수 운용 저장 실패: ${fillSave.message}`, MODULE_PATHS.engine);
+  const injuredStarter = fillTeam.roster.find((player) => String(player.id) === rotationOrder[0]);
+  injuredStarter.injuredDays = 5;
+  const filledSnapshot = engineModule.buildPitchingSnapshot(fillTeam);
+  assert(
+    !(filledSnapshot.rotation ?? []).some((entry) => String(entry.id) === rotationOrder[0]) && (filledSnapshot.rotation ?? []).length === 5,
+    "부상으로 무효가 된 수동 로테이션 슬롯이 자동 보정되지 않았습니다.",
+    MODULE_PATHS.engine
+  );
+
+  const played = engineModule.simulateNextUserGame(state, { teamId: team.id, mode: "watch" });
+  assert(played.ok, `수동 투수 운용 경기 진행 실패: ${played.message}`, MODULE_PATHS.engine);
+  const game = played.game;
+  const side = game.awayTeamId === team.id ? "away" : "home";
+  const pitchingLines = game.boxScore?.pitching?.[side] ?? [];
+  const starterLine = pitchingLines.find((line) => line.role === "SP");
+  const closerLine = pitchingLines.find((line) => line.role === "CL");
+  const saveLine = pitchingLines.find((line) => String(line.decision ?? "").includes("S"));
+
+  assert(String(starterLine?.playerId ?? "") === rotationOrder[0], `실제 경기 선발=${starterLine?.playerId}, 기대=${rotationOrder[0]}`, MODULE_PATHS.engine);
+  assert(String(closerLine?.playerId ?? "") === String(closerId), `실제 경기 CL=${closerLine?.playerId}, 기대=${closerId}`, MODULE_PATHS.engine);
+  if (saveLine) {
+    assert(String(saveLine.playerId) === String(closerId), `세이브 투수=${saveLine.playerId}, 기대 마무리=${closerId}`, MODULE_PATHS.engine);
+  }
+
+  return `수동 nextStarter ${starterLine.name}, CL ${closerLine.name}${saveLine ? `, SV ${saveLine.name}` : ""}, 부상 슬롯 자동 보정 확인`;
+}
+
+function checkManagementDepthV0() {
+  ensureImportsReady();
+  const state = dataModule.createInitialState();
+  state.selectedTeamId = "lg";
+  advanceToRegularSeason(state);
+  const team = state.teams.find((entry) => entry.id === state.selectedTeamId) ?? state.teams[0];
+
+  const personalities = team.roster
+    .map((player) => player.personality)
+    .filter((personality) =>
+      personality?.archetype &&
+      personality?.roleExpectation &&
+      Number.isFinite(Number(personality?.traits?.ambition)) &&
+      Number.isFinite(Number(personality?.traits?.professionalism))
+    );
+  assert(personalities.length === team.roster.length, `선수 개인성 생성 ${personalities.length}/${team.roster.length}`, MODULE_PATHS.engine);
+
+  const plan = engineModule.commitGameInterventionPlan(state, { teamId: team.id, preset: "aggressive" });
+  assert(plan.ok, `경기 전략 저장 실패: ${plan.message}`, MODULE_PATHS.engine);
+  assert(state.gameInterventions?.[team.id]?.preset === "aggressive", "경기 전략이 state.gameInterventions에 저장되지 않았습니다.", MODULE_PATHS.engine);
+
+  const scoutBoard = frontOfficeModule.buildScoutAssignments(state, team.id);
+  const assignment = scoutBoard.assignments.find((entry) => (entry.candidates ?? []).length > 0) ?? scoutBoard.assignments[0];
+  const scout = engineModule.commitScoutAssignment(state, { teamId: team.id, assignmentId: assignment?.id });
+  assert(scout.ok, `스카우트 업무 지시 실패: ${scout.message}`, MODULE_PATHS.engine);
+  assert((scout.reports ?? []).length > 0, "스카우트 업무가 후보 관측 리포트를 생성하지 않았습니다.", MODULE_PATHS.engine);
+  const firstReport = scout.reports[0];
+  assert(
+    firstReport.visibility === "scouted" &&
+    Number.isFinite(Number(firstReport.currentGrade)) &&
+    Number.isFinite(Number(firstReport.confidence)) &&
+    Number.isFinite(Number(firstReport.negotiationLeverage)),
+    "스카우트 리포트 관측치/신뢰도/협상 레버리지 필드가 부족합니다.",
+    MODULE_PATHS.engine
+  );
+  assert(state.scoutingReportsById?.[firstReport.id], "스카우트 리포트가 state.scoutingReportsById에 저장되지 않았습니다.", MODULE_PATHS.engine);
+  assert((state.scoutingQueue ?? []).some((entry) => entry.status === "reported"), "스카우트 업무 큐에 완료 기록이 없습니다.", MODULE_PATHS.engine);
+
+  const played = engineModule.simulateNextUserGame(state, { teamId: team.id, mode: "watch" });
+  assert(played.ok, `전략 저장 후 경기 진행 실패: ${played.message}`, MODULE_PATHS.engine);
+  const side = played.game.awayTeamId === team.id ? "away" : "home";
+  assert(played.game.managerPlans?.[side]?.preset === "aggressive", `경기 결과 managerPlans.${side}에 전략이 반영되지 않았습니다.`, MODULE_PATHS.engine);
+
+  const arcs = state.narratives?.arcs ?? [];
+  assert(arcs.some((arc) => String(arc.type).includes("game-intervention")), "경기 전략 장기 서사가 기록되지 않았습니다.", MODULE_PATHS.engine);
+  assert(arcs.some((arc) => String(arc.type).includes("scouting-report")), "스카우트 리포트 장기 서사가 기록되지 않았습니다.", MODULE_PATHS.engine);
+
+  return `개인성 ${personalities.length}명, 전략 ${played.game.managerPlans[side].label}, 스카우트 리포트 ${scout.reports.length}건, 서사 ${arcs.length}개`;
 }
 
 function checkSimulateDays() {
