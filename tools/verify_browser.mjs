@@ -981,7 +981,7 @@ async function checkGamecastLab() {
     mobile: false
   });
   let loadEvent = cdp.once("Page.loadEventFired");
-  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&qa=lab-desktop-${Date.now()}` });
+  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fps=1&qa=lab-desktop-${Date.now()}` });
   await loadEvent;
   await waitForGamecastLabModal();
   await delay(300);
@@ -1003,7 +1003,9 @@ async function checkGamecastLab() {
         totalEvents,
         feedCount,
         feedText: modal?.querySelector(".gamecast-feed")?.textContent?.trim() ?? "",
-        activeSpeed: modal?.querySelector("[data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? ""
+        activeSpeed: modal?.querySelector("[data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? "",
+        fpsText: modal?.querySelector("[data-gamecast-fps]")?.textContent?.trim() ?? "",
+        soundText: modal?.querySelector("[data-gamecast-sound]")?.textContent?.trim() ?? ""
       };
     })()
   `);
@@ -1015,6 +1017,8 @@ async function checkGamecastLab() {
   assert(desktopProbe.totalEvents > 20, `랩 PA 이벤트가 부족합니다: ${desktopProbe.totalEvents}`, "src/gamecastLab.js");
   assert(desktopProbe.feedCount > 0 && desktopProbe.feedCount < desktopProbe.totalEvents, `랩 시작 피드가 전체 경기를 스포일러합니다: feed=${desktopProbe.feedCount}, total=${desktopProbe.totalEvents}`, "src/ui.js");
   assert(desktopProbe.activeSpeed === "1", `랩 초기 배속이 x1이 아닙니다: x${desktopProbe.activeSpeed}`, "src/ui.js");
+  assert(/FPS\s+\d+/i.test(desktopProbe.fpsText), `FPS 오버레이가 갱신되지 않았습니다: ${desktopProbe.fpsText}`, "src/ui.js");
+  assert(desktopProbe.soundText.includes("소리"), `게임캐스트 소리 토글을 찾지 못했습니다: ${desktopProbe.soundText}`, "src/ui.js");
 
   await evaluateInBrowser(`document.querySelector("[data-gamecast-modal] [data-gamecast-speed='2']")?.click(); true`);
   await delay(1900);

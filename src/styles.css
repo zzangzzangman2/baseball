@@ -3740,6 +3740,33 @@ img {
   color: #315288;
 }
 
+.gamecast-fps-overlay {
+  position: absolute;
+  left: 3%;
+  bottom: 3%;
+  z-index: 6;
+  display: grid;
+  gap: 2px;
+  min-width: 72px;
+  padding: 5px 7px;
+  border: 1px solid rgba(255, 254, 251, 0.18);
+  border-radius: 4px;
+  background: rgba(8, 15, 22, 0.86);
+  box-shadow: 0 0 0 2px rgba(17, 27, 39, 0.38);
+  color: #fff0a8;
+  font-size: 0.64rem;
+  font-weight: 950;
+  line-height: 1;
+  pointer-events: none;
+  text-align: left;
+}
+
+.gamecast-fps-overlay small {
+  color: rgba(255, 254, 251, 0.72);
+  font-size: 0.56rem;
+  font-weight: 850;
+}
+
 .gamecast-broadcast-backdrop {
   position: fixed;
   inset: 0;

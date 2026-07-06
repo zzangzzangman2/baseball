@@ -241,6 +241,14 @@ function createGamecastScene(scene, runtime) {
   scene.ballSpriteLayer = scene.add.container(0, 0).setDepth(32);
   scene.fxGraphics = scene.add.graphics().setDepth(40);
   scene.gamecastTeamTextureCache = new Map();
+  scene.gamecastImagePools = {
+    players: [],
+    balls: []
+  };
+  scene.gamecastPoolCursor = {
+    players: 0,
+    balls: 0
+  };
   scene.flashRect = scene.add.rectangle(0, 0, runtime.metrics.bufferW, runtime.metrics.bufferH, 0xfffefb, 0)
     .setOrigin(0)
     .setDepth(45);
@@ -313,8 +321,7 @@ function renderScene(scene, runtime, frame) {
   player.clear();
   ball.clear();
   fx.clear();
-  scene.spriteLayer?.removeAll(true);
-  scene.ballSpriteLayer?.removeAll(true);
+  beginGamecastPoolFrame(scene);
 
   drawPhaserAtmosphere(fx, runtime, frame);
   drawStaticDefense(scene, player, runtime, frame, useSprites);
@@ -331,6 +338,47 @@ function renderScene(scene, runtime, frame) {
 
   const flashAlpha = frame.flash ? 0.2 : frame.scoreFlash ? 0.08 : 0;
   scene.flashRect.setAlpha(flashAlpha);
+  endGamecastPoolFrame(scene);
+}
+
+function beginGamecastPoolFrame(scene) {
+  if (!scene?.gamecastPoolCursor) return;
+  scene.gamecastPoolCursor.players = 0;
+  scene.gamecastPoolCursor.balls = 0;
+}
+
+function endGamecastPoolFrame(scene) {
+  const pools = scene?.gamecastImagePools;
+  const cursor = scene?.gamecastPoolCursor;
+  if (!pools || !cursor) return;
+  hideUnusedPoolItems(pools.players, cursor.players);
+  hideUnusedPoolItems(pools.balls, cursor.balls);
+}
+
+function hideUnusedPoolItems(pool, usedCount) {
+  for (let index = usedCount; index < pool.length; index += 1) {
+    pool[index]?.setVisible?.(false);
+  }
+}
+
+function acquirePooledImage(scene, poolName, layer, textureKey, frame) {
+  if (!scene?.gamecastImagePools || !scene?.gamecastPoolCursor || !layer) return null;
+  const pool = scene.gamecastImagePools[poolName];
+  if (!pool) return null;
+  const index = scene.gamecastPoolCursor[poolName] ?? 0;
+  scene.gamecastPoolCursor[poolName] = index + 1;
+  let image = pool[index];
+  if (!image) {
+    image = scene.add.image(0, 0, textureKey, frame);
+    image.setVisible(false);
+    pool[index] = image;
+    layer.add(image);
+  }
+  if (image.texture?.key !== textureKey || image.frame?.name !== frame) {
+    image.setTexture(textureKey, frame);
+  }
+  image.setVisible(true).setAlpha(1);
+  return image;
 }
 
 function paintStaticHoldFrame(runtime, frame) {
@@ -609,15 +657,13 @@ function drawSpritePlayer(scene, graphics, runtime, sprite, role) {
   const facing = Number(sprite.facing ?? (role === "batter" ? -1 : 1));
   const squashX = sprite.squash ? 1.06 : 1;
   const squashY = sprite.squash ? 0.94 : 1;
-  const image = scene.add.image(
-    Math.round(x * metrics.drawScaleX),
-    Math.round(y * metrics.drawScaleY),
-    textureKey,
-    frame
-  )
+  const image = acquirePooledImage(scene, "players", scene.spriteLayer, textureKey, frame);
+  if (!image) return false;
+  image
+    .setPosition(Math.round(x * metrics.drawScaleX), Math.round(y * metrics.drawScaleY))
     .setOrigin(CENTER_ORIGIN_X, BASELINE_ORIGIN_Y)
-    .setScale(metrics.drawScaleX * (facing < 0 ? -squashX : squashX), metrics.drawScaleY * squashY);
-  scene.spriteLayer.add(image);
+    .setScale(metrics.drawScaleX * (facing < 0 ? -squashX : squashX), metrics.drawScaleY * squashY)
+    .setRotation(0);
   return true;
 }
 
@@ -786,16 +832,17 @@ function drawGamecastBall(scene, graphics, runtime, ball, color) {
   }
   const metrics = runtime.metrics;
   const size = Math.max(0.7, Math.min(1.2, Number(ball.size ?? 1) * 0.52));
-  const image = scene.add.image(
-    Math.round(ball.x * metrics.drawScaleX),
-    Math.round(ball.y * metrics.drawScaleY),
-    "gamecast-props",
-    frame
-  )
+  const image = acquirePooledImage(scene, "balls", scene.ballSpriteLayer, "gamecast-props", frame);
+  if (!image) {
+    drawBall(graphics, runtime, ball, color);
+    return;
+  }
+  image
+    .setPosition(Math.round(ball.x * metrics.drawScaleX), Math.round(ball.y * metrics.drawScaleY))
     .setOrigin(0.5)
     .setScale(metrics.drawScaleX * size, metrics.drawScaleY * size)
+    .setRotation(0)
     .setAlpha(Math.max(0, Math.min(1, Number(ball.opacity ?? 1))));
-  scene.ballSpriteLayer.add(image);
 }
 
 function drawContactBurst(graphics, runtime, burst, frame) {

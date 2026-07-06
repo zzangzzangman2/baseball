@@ -15,6 +15,7 @@ state.selectedTeamId = params.get("team") || state.selectedTeamId;
 state.manager = { name: "랩 테스터", age: 45, style: "balanced" };
 state.ui.screen = "game";
 if (params.get("engine")) state.ui.gamecastEngine = params.get("engine");
+state.ui.gamecastFps = params.get("fps") === "1";
 
 function clearOpenMail() {
   for (let guard = 0; guard < 6; guard += 1) {

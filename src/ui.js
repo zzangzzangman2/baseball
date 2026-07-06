@@ -164,6 +164,9 @@ let gamecastPlaybackStore = {
   playbackRate: 1,
   done: false
 };
+let gamecastSoundEnabled = true;
+let gamecastAudioUnlocked = false;
+let gamecastAudioRuntime = null;
 
 export function mountApp(root, state) {
   render(root, state);
@@ -282,7 +285,7 @@ function render(root, state) {
     </main>
   `;
 
-  if (!isAdvancing) initGamecastPixelScreen(root);
+  if (!isAdvancing) initGamecastPixelScreen(root, state);
   bindActions(root, state);
 }
 
@@ -2656,12 +2659,13 @@ function bindActions(root, state) {
   });
 
   root.querySelectorAll("[data-action='watch-next-game']").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (event) => {
       if (stopForBlockingMail(root, state)) return;
       if (state.phase !== "regular") {
         setStatus(root, "프리시즌에는 경기 시작으로 개막전까지 건너뛰지 않습니다. 캠프 하루 진행으로 뉴스함을 확인하세요.");
         return;
       }
+      if (state.ui?.gamecastSound !== false) resumeGamecastAudio(Boolean(event.isTrusted));
       const result = simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
       state.ui = {
         ...(state.ui ?? {}),
@@ -4475,6 +4479,7 @@ function renderGamecastPanel(state) {
   const feedEvents = playbackView.feedEvents;
   const featured = playbackView.featured;
   const broadcastOpen = sequence.mode === "watch" && state.ui?.gamecastExpanded === true;
+  const showFps = Boolean(state.ui?.gamecastFps);
   const broadcastModal = renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, featured, gamecastEngine);
 
   return `
@@ -4509,7 +4514,7 @@ function renderGamecastPanel(state) {
           ${broadcastOpen
             ? renderGamecastInlinePlaceholder()
             : `<div class="gamecast-screen is-${escapeAttribute(gamecastEngine)} ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen data-gamecast-engine-current="${escapeAttribute(gamecastEngine)}" aria-hidden="true">
-                ${renderGamecastPixelStage("inline", gamecastEngine)}
+                ${renderGamecastPixelStage("inline", gamecastEngine, showFps)}
               </div>`}
           <div class="gamecast-now">
             <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
@@ -4527,6 +4532,7 @@ function renderGamecastPanel(state) {
 
 function renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, featured, gamecastEngine) {
   if (sequence.mode !== "watch" || state.ui?.gamecastExpanded !== true) return "";
+  const showFps = Boolean(state.ui?.gamecastFps);
 
   return `
     <div class="gamecast-broadcast-backdrop" data-gamecast-modal>
@@ -4556,7 +4562,7 @@ function renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, f
             ${renderGamecastControls(sequence, "broadcast")}
             ${renderGamecastMatchup(featured)}
             <div class="gamecast-screen gamecast-screen-large is-${escapeAttribute(gamecastEngine)} ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen data-gamecast-engine-current="${escapeAttribute(gamecastEngine)}" aria-hidden="true">
-              ${renderGamecastPixelStage("broadcast", gamecastEngine)}
+              ${renderGamecastPixelStage("broadcast", gamecastEngine, showFps)}
             </div>
             <div class="gamecast-now gamecast-broadcast-now">
               <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
@@ -4647,7 +4653,7 @@ function gamecastMatchupResult(event) {
   return outcomeLabel(event.outcome) || "-";
 }
 
-function renderGamecastPixelStage(instanceId, engine = GAMECAST_DEFAULT_ENGINE) {
+function renderGamecastPixelStage(instanceId, engine = GAMECAST_DEFAULT_ENGINE, showFps = false) {
   const safeInstanceId = escapeAttribute(instanceId);
   const safeEngine = escapeAttribute(normalizeGamecastEngine(engine));
   return `
@@ -4675,6 +4681,7 @@ function renderGamecastPixelStage(instanceId, engine = GAMECAST_DEFAULT_ENGINE) 
       </div>
       <span class="gamecast-player-label" data-gamecast-player-label></span>
       <span class="gamecast-action-burst" data-gamecast-action-burst></span>
+      ${showFps ? `<div class="gamecast-fps-overlay" data-gamecast-fps>FPS --<small>1% --ms</small></div>` : ""}
     </div>
   `;
 }
@@ -4682,11 +4689,13 @@ function renderGamecastPixelStage(instanceId, engine = GAMECAST_DEFAULT_ENGINE) 
 function renderGamecastControls(sequence, variant = "inline") {
   if (sequence.mode !== "watch") return "";
   const activeSpeed = sanitizeGamecastSpeed(sequence.playbackRate);
+  const soundOn = sequence.soundEnabled !== false;
   return `
     <div class="gamecast-controls ${variant === "broadcast" ? "is-broadcast" : ""}" aria-label="중계 재생 속도">
       ${GAMECAST_SPEED_OPTIONS.map((speed) => `
         <button class="gamecast-speed-button ${speed === activeSpeed ? "is-active" : ""}" data-gamecast-speed="${speed}" type="button" aria-pressed="${speed === activeSpeed ? "true" : "false"}">x${formatNumber(speed)}</button>
       `).join("")}
+      <button class="gamecast-speed-button gamecast-sound-button ${soundOn ? "is-active" : ""}" data-gamecast-sound type="button" aria-pressed="${soundOn ? "true" : "false"}">${soundOn ? "소리 켬" : "소리 끔"}</button>
       <button class="gamecast-speed-button is-skip" data-gamecast-skip type="button">스킵</button>
     </div>
   `;
@@ -4768,6 +4777,7 @@ function buildGamecastSequence(game, state) {
     mode,
     paMs: mode === "watch" ? GAMECAST_WATCH_PA_MS : GAMECAST_PA_MS,
     gapMs: mode === "watch" ? GAMECAST_WATCH_GAP_MS : GAMECAST_PA_GAP_MS,
+    soundEnabled: state.ui?.gamecastSound !== false && gamecastSoundEnabled,
     events: tail.map((event) => normalizeGamecastEvent(event, state))
   };
 }
@@ -5050,7 +5060,7 @@ function gamecastOutcomeClass(outcome) {
   return "is-ball";
 }
 
-function initGamecastPixelScreen(root) {
+function initGamecastPixelScreen(root, appState = null) {
   cleanupActiveGamecastPixelScreen();
 
   const modalScreen = root?.querySelector?.("[data-gamecast-modal] [data-gamecast-screen]");
@@ -5071,6 +5081,7 @@ function initGamecastPixelScreen(root) {
       screen,
       stage,
       canvas,
+      appState,
       sequence: latestGamecastSequence,
       scoreNodes: [...board.querySelectorAll(".gamecast-scoreline strong")],
       nowTitle: board.querySelector(".gamecast-now strong"),
@@ -5078,10 +5089,12 @@ function initGamecastPixelScreen(root) {
       matchup: board.querySelector("[data-gamecast-matchup]"),
       playerLabel,
       actionBurst,
+      fpsNode: screen.querySelector("[data-gamecast-fps]"),
       hud: collectGamecastHud(screen),
       feedList: instanceRoot.querySelector("[data-gamecast-feed]"),
       feedItems: [...instanceRoot.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")],
       speedControls: [...board.querySelectorAll("[data-gamecast-speed]")],
+      soundControls: [...board.querySelectorAll("[data-gamecast-sound]")],
       skipControls: [...board.querySelectorAll("[data-gamecast-skip]")]
     };
 
@@ -5182,23 +5195,28 @@ function createGamecastPalette() {
   };
 }
 
-function createGamecastPhaserController({ screen, stage, canvas, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, hud, feedList, feedItems, speedControls = [], skipControls = [] }) {
+function createGamecastPhaserController({ screen, stage, canvas, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, fpsNode, hud, feedList, feedItems, speedControls = [], soundControls = [], skipControls = [] }) {
   const palette = createGamecastPalette();
   const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const normalizedSequence = normalizeGamecastSequenceForPlayback(sequence);
   const state = {
     playbackRate: sanitizeGamecastSpeed(normalizedSequence.playbackRate),
+    soundEnabled: normalizedSequence.soundEnabled !== false && gamecastSoundEnabled,
+    soundMarks: new Set(),
     elapsedMs: Number(normalizedSequence.initialElapsedMs ?? 0),
     done: Boolean(normalizedSequence.done),
     hidden: typeof document !== "undefined" ? document.hidden : false,
     visible: true,
     sequence: normalizedSequence,
+    appState,
     scoreNodes,
     nowTitle,
     nowDetail,
     matchup,
     playerLabel,
     actionBurst,
+    fpsNode,
+    fpsStats: createGamecastFpsStats(),
     hud,
     feedList,
     feedItems,
@@ -5251,6 +5269,18 @@ function createGamecastPhaserController({ screen, stage, canvas, sequence, score
     phaser.setSpeed(state.playbackRate);
     syncGamecastSpeedControls(state, speedControls, skipControls);
   };
+  const setSound = (enabled, allowUnlock = false) => {
+    state.soundEnabled = Boolean(enabled);
+    gamecastSoundEnabled = state.soundEnabled;
+    if (state.appState) {
+      state.appState.ui = {
+        ...(state.appState.ui ?? {}),
+        gamecastSound: state.soundEnabled
+      };
+    }
+    if (state.soundEnabled) resumeGamecastAudio(allowUnlock);
+    syncGamecastSoundControls(state, soundControls);
+  };
   const finish = () => {
     state.done = true;
     state.elapsedMs = gamecastTotalDuration(state.sequence);
@@ -5266,6 +5296,10 @@ function createGamecastPhaserController({ screen, stage, canvas, sequence, score
     event.preventDefault();
     finish();
   };
+  const onSoundClick = (event) => {
+    event.preventDefault();
+    setSound(!state.soundEnabled, Boolean(event.isTrusted));
+  };
   const onVisibilityChange = () => {
     state.hidden = Boolean(document.hidden);
     if (state.hidden) phaser.pause();
@@ -5273,7 +5307,9 @@ function createGamecastPhaserController({ screen, stage, canvas, sequence, score
   };
 
   syncGamecastSpeedControls(state, speedControls, skipControls);
+  syncGamecastSoundControls(state, soundControls);
   for (const button of speedControls) button.addEventListener("click", onSpeedClick);
+  for (const button of soundControls) button.addEventListener("click", onSoundClick);
   for (const button of skipControls) button.addEventListener("click", onSkipClick);
 
   const intersectionObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver((entries) => {
@@ -5295,6 +5331,7 @@ function createGamecastPhaserController({ screen, stage, canvas, sequence, score
       phaser.cleanup();
       intersectionObserver?.disconnect();
       for (const button of speedControls) button.removeEventListener("click", onSpeedClick);
+      for (const button of soundControls) button.removeEventListener("click", onSoundClick);
       for (const button of skipControls) button.removeEventListener("click", onSkipClick);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -5308,7 +5345,7 @@ function createGamecastPhaserController({ screen, stage, canvas, sequence, score
   };
 }
 
-function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, hud, feedList, feedItems, speedControls = [], skipControls = [] }) {
+function createGamecastPixelController({ screen, stage, canvas, ctx, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, fpsNode, hud, feedList, feedItems, speedControls = [], soundControls = [], skipControls = [] }) {
   const palette = createGamecastPalette();
   const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
   const normalizedSequence = normalizeGamecastSequenceForPlayback(sequence);
@@ -5319,18 +5356,23 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     scale: 1,
     dpr: 1,
     playbackRate: sanitizeGamecastSpeed(normalizedSequence.playbackRate),
+    soundEnabled: normalizedSequence.soundEnabled !== false && gamecastSoundEnabled,
+    soundMarks: new Set(),
     elapsedMs: Number(normalizedSequence.initialElapsedMs ?? 0),
     lastTimestamp: 0,
     done: Boolean(normalizedSequence.done),
     shakeTimer: 0,
     offscreenTimer: 0,
     sequence: normalizedSequence,
+    appState,
     scoreNodes,
     nowTitle,
     nowDetail,
     matchup,
     playerLabel,
     actionBurst,
+    fpsNode,
+    fpsStats: createGamecastFpsStats(),
     hud,
     feedList,
     feedItems,
@@ -5441,9 +5483,25 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
     syncGamecastSpeedControls(state, speedControls, skipControls);
     start();
   };
+  const setSound = (enabled, allowUnlock = false) => {
+    state.soundEnabled = Boolean(enabled);
+    gamecastSoundEnabled = state.soundEnabled;
+    if (state.appState) {
+      state.appState.ui = {
+        ...(state.appState.ui ?? {}),
+        gamecastSound: state.soundEnabled
+      };
+    }
+    if (state.soundEnabled) resumeGamecastAudio(allowUnlock);
+    syncGamecastSoundControls(state, soundControls);
+  };
   const onSpeedClick = (event) => {
     event.preventDefault();
     setSpeed(event.currentTarget?.dataset?.gamecastSpeed);
+  };
+  const onSoundClick = (event) => {
+    event.preventDefault();
+    setSound(!state.soundEnabled, Boolean(event.isTrusted));
   };
   const onSkipClick = (event) => {
     event.preventDefault();
@@ -5453,7 +5511,9 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
   resize();
   renderCurrentFrame(state.done || state.prefersReducedMotion || !state.sequence.events.length);
   syncGamecastSpeedControls(state, speedControls, skipControls);
+  syncGamecastSoundControls(state, soundControls);
   for (const button of speedControls) button.addEventListener("click", onSpeedClick);
+  for (const button of soundControls) button.addEventListener("click", onSoundClick);
   for (const button of skipControls) button.addEventListener("click", onSkipClick);
 
   const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
@@ -5487,6 +5547,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, sequence, s
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
       for (const button of speedControls) button.removeEventListener("click", onSpeedClick);
+      for (const button of soundControls) button.removeEventListener("click", onSoundClick);
       for (const button of skipControls) button.removeEventListener("click", onSkipClick);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -5514,6 +5575,7 @@ function normalizeGamecastSequenceForPlayback(sequence) {
     playbackRate: sanitizeGamecastSpeed(sequence?.playbackRate),
     initialElapsedMs: Math.max(0, Number(sequence?.initialElapsedMs ?? 0)),
     done: Boolean(sequence?.done),
+    soundEnabled: sequence?.soundEnabled !== false,
     events: Array.isArray(sequence?.events) ? sequence.events : []
   };
   normalized.initialElapsedMs = Math.min(gamecastTotalDuration(normalized), normalized.initialElapsedMs);
@@ -5552,6 +5614,15 @@ function syncGamecastSpeedControls(state, speedControls, skipControls) {
   for (const button of skipControls ?? []) {
     button.classList.toggle("is-active", Boolean(state.done));
     button.disabled = Boolean(state.done);
+  }
+}
+
+function syncGamecastSoundControls(state, soundControls) {
+  for (const button of soundControls ?? []) {
+    const enabled = state.soundEnabled !== false;
+    button.classList.toggle("is-active", enabled);
+    button.setAttribute("aria-pressed", enabled ? "true" : "false");
+    button.textContent = enabled ? "소리 켬" : "소리 끔";
   }
 }
 
@@ -6714,7 +6785,14 @@ function buildGamecastFrameState(state, forceFinal = false) {
   const index = Math.min(events.length - 1, Math.floor(state.elapsedMs / slotMs));
   const localMs = state.elapsedMs - index * slotMs;
   const event = events[index];
-  const progress = Math.max(0, Math.min(1, localMs / paMs));
+  const nextEvent = events[index + 1] ?? null;
+  const gapMs = Math.max(0, Number(seq.gapMs ?? GAMECAST_PA_GAP_MS));
+  const rawProgress = Math.max(0, Math.min(1, localMs / paMs));
+  const gapProgress = localMs > paMs && gapMs > 0
+    ? Math.max(0, Math.min(1, (localMs - paMs) / gapMs))
+    : 0;
+  const leverage = gamecastLeverageScore(seq, events, index);
+  const progress = gapProgress > 0 ? 1 : gamecastTempoProgress(event, rawProgress, leverage);
   const settling = progress >= 0.72;
   const clearingInning = event.inningEnded && progress >= 0.92;
   const baseOccupancy = settling
@@ -6744,7 +6822,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
     playerLabel: buildGamecastPlayerLabel(event, progress, runners),
     actionBurst: buildGamecastActionBurst(event, progress),
     baseCallout: buildGamecastBaseCallout(event, progress),
-    inningSlate: buildGamecastInningSlate(event, progress),
+    inningSlate: buildGamecastBridgeSlate(event, nextEvent, gapProgress) ?? buildGamecastInningSlate(event, progress),
     scoreFlash: event.runs > 0 && progress >= 0.62 && progress <= 0.84,
     flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
     offenseColor: event.teamColor ?? state.palette.runner,
@@ -6755,8 +6833,41 @@ function buildGamecastFrameState(state, forceFinal = false) {
     defenseJerseyColor: event.defenseJerseyColor ?? state.palette.defenderL,
     defenseJerseyShadow: event.defenseJerseyShadow ?? state.palette.uniformSh,
     defenseAccentColor: event.defenseAccentColor ?? event.defenseColor ?? state.palette.defender,
-    progress
+    progress,
+    rawProgress,
+    gapProgress,
+    bridge: gapProgress > 0,
+    leverage
   };
+}
+
+function gamecastLeverageScore(seq, events, index) {
+  const event = events[index];
+  if (!event) return 0;
+  const beforeScore = scoreForGamecastFrame(seq, events, index, false);
+  const diff = Math.abs(Number(beforeScore.away ?? 0) - Number(beforeScore.home ?? 0));
+  const inning = Number(event.inning ?? 1);
+  const baseCount = (event.basesBefore ?? []).filter(Boolean).length;
+  let score = 0;
+  if (inning >= 7) score += 0.24;
+  if (inning >= 9) score += 0.16;
+  if (diff <= 1) score += 0.24;
+  else if (diff <= 3) score += 0.12;
+  score += Math.min(0.22, baseCount * 0.075);
+  if (outsInInning(event.outsBefore) >= 2) score += 0.08;
+  if (Number(event.runs ?? 0) > 0 || event.outcome === "homeRun") score += 0.1;
+  return Math.max(0, Math.min(1, score));
+}
+
+function gamecastTempoProgress(event, rawProgress, leverage) {
+  const raw = Math.max(0, Math.min(1, Number(rawProgress) || 0));
+  const lev = Math.max(0, Math.min(1, Number(leverage) || 0));
+  const lowLeverageOut = event?.outcome === "out" && lev < 0.25 && Number(event?.runs ?? 0) <= 0;
+  if (lowLeverageOut) return Math.min(1, raw * 1.18);
+  const hold = 0.12 * lev;
+  if (raw < hold) return raw * 0.24;
+  const shifted = (raw - hold) / Math.max(0.01, 1 - hold);
+  return Math.max(0, Math.min(1, shifted));
 }
 
 function buildGamecastBaseCallout(event, progress) {
@@ -6803,6 +6914,16 @@ function buildGamecastInningSlate(event, progress) {
   const t = Math.max(0, Math.min(1, (progress - 0.78) / 0.2));
   return {
     text: "CHANGE",
+    opacity: Math.sin(t * Math.PI)
+  };
+}
+
+function buildGamecastBridgeSlate(event, nextEvent, gapProgress) {
+  const t = Math.max(0, Math.min(1, Number(gapProgress) || 0));
+  if (!event || !nextEvent || t <= 0) return null;
+  const changingSide = event.inning !== nextEvent.inning || event.side !== nextEvent.side || event.inningEnded;
+  return {
+    text: changingSide ? "CHANGE" : "NEXT",
     opacity: Math.sin(t * Math.PI)
   };
 }
@@ -7425,9 +7546,210 @@ function syncGamecastDom(state, frame) {
   syncGamecastActionBurst(state.actionBurst, frame.done ? null : frame.actionBurst);
   syncGamecastHud(state.hud, frame);
   syncGamecastFeed(state, frame);
+  syncGamecastFpsOverlay(state);
+  playGamecastSoundForFrame(state, frame);
   for (const item of state.feedItems ?? []) {
     item.classList.toggle("is-live", Boolean(frame.event?.id && !frame.done && item.dataset.gamecastEventId === frame.event.id));
   }
+}
+
+function createGamecastFpsStats() {
+  return {
+    lastTimestamp: 0,
+    lastRenderTimestamp: 0,
+    samples: []
+  };
+}
+
+function syncGamecastFpsOverlay(state) {
+  const node = state?.fpsNode;
+  const stats = state?.fpsStats;
+  if (!node || !stats || typeof performance === "undefined") return;
+  const now = performance.now();
+  if (stats.lastTimestamp > 0) {
+    const delta = now - stats.lastTimestamp;
+    if (delta > 0 && delta < 1000) {
+      stats.samples.push(delta);
+      if (stats.samples.length > 180) stats.samples.shift();
+    }
+  }
+  stats.lastTimestamp = now;
+  if (now - stats.lastRenderTimestamp < 250 && stats.samples.length) return;
+  stats.lastRenderTimestamp = now;
+
+  if (!stats.samples.length) {
+    node.innerHTML = "FPS --<small>1% --ms</small>";
+    return;
+  }
+  const averageDelta = stats.samples.reduce((sum, value) => sum + value, 0) / stats.samples.length;
+  const fps = Math.max(0, Math.min(99, Math.round(1000 / Math.max(1, averageDelta))));
+  const sorted = [...stats.samples].sort((a, b) => a - b);
+  const worstIndex = Math.max(0, Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99)));
+  const worst = sorted[worstIndex] ?? averageDelta;
+  node.innerHTML = `FPS ${formatNumber(fps)}<small>1% ${formatNumber(Math.round(worst))}ms</small>`;
+}
+
+function playGamecastSoundForFrame(state, frame) {
+  if (!state?.soundEnabled || frame?.done || frame?.paused || state.sequence?.mode !== "watch") return;
+  const event = frame?.event;
+  if (!event?.id || !state.soundMarks) return;
+  const progress = Number(frame.progress ?? 0);
+  const pitchEnd = gamecastPitchEnd(event);
+  const mark = (name) => {
+    const key = `${event.id}:${name}`;
+    if (state.soundMarks.has(key)) return false;
+    state.soundMarks.add(key);
+    return true;
+  };
+
+  if (isBattedBallOutcome(event.outcome) && progress >= pitchEnd + 0.015 && mark("contact")) {
+    playGamecastContactSound(event);
+  }
+  if (event.outcome === "strikeout" && progress >= 0.42 && mark("strikeout")) {
+    playGamecastStrikeoutSound(event);
+  }
+  if (event.outcome === "walk" && progress >= 0.54 && mark("walk")) {
+    playGamecastWalkSound(event);
+  }
+  if ((event.outcome === "out" || event.doublePlay) && progress >= 0.62 && mark("catch")) {
+    playGamecastCatchSound(event);
+  }
+  if ((Number(event.runs ?? 0) > 0 || event.outcome === "homeRun") && progress >= 0.68 && mark("crowd")) {
+    playGamecastCrowdSwell(event);
+  }
+}
+
+function resumeGamecastAudio(allowUnlock = false) {
+  if (allowUnlock) gamecastAudioUnlocked = true;
+  if (!gamecastAudioUnlocked) return;
+  const runtime = getGamecastAudioRuntime();
+  if (!runtime) return;
+  if (runtime.context.state === "suspended") {
+    runtime.context.resume?.().catch?.(() => {});
+  }
+}
+
+function getGamecastAudioRuntime() {
+  if (!gamecastSoundEnabled || !gamecastAudioUnlocked || typeof window === "undefined") return null;
+  if (gamecastAudioRuntime) return gamecastAudioRuntime;
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor) return null;
+  try {
+    const context = new AudioContextCtor();
+    const master = context.createGain();
+    master.gain.value = 0.08;
+    master.connect(context.destination);
+    gamecastAudioRuntime = { context, master };
+    return gamecastAudioRuntime;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function playGamecastContactSound(event) {
+  const noise = gamecastEventNoise(event, 23);
+  if (event.outcome === "homeRun") {
+    playGamecastTone({ frequency: 124 + (noise % 18), endFrequency: 58, duration: 0.22, type: "sawtooth", gain: 0.38 });
+    playGamecastNoise({ duration: 0.16, gain: 0.18, filter: 1800, seed: noise });
+    return;
+  }
+  if (["single", "double", "triple", "error"].includes(event.outcome)) {
+    playGamecastTone({ frequency: 166 + (noise % 24), endFrequency: 96, duration: 0.13, type: "triangle", gain: 0.3 });
+    playGamecastNoise({ duration: 0.07, gain: 0.08, filter: 2400, seed: noise });
+    return;
+  }
+  playGamecastTone({ frequency: 118 + (noise % 18), endFrequency: 82, duration: 0.08, type: "square", gain: 0.18 });
+}
+
+function playGamecastCatchSound(event) {
+  const noise = gamecastEventNoise(event, 29);
+  playGamecastTone({ frequency: 92 + (noise % 14), endFrequency: 54, duration: 0.09, type: "triangle", gain: 0.2 });
+  playGamecastNoise({ duration: 0.05, gain: 0.07, filter: 1200, seed: noise });
+}
+
+function playGamecastStrikeoutSound(event) {
+  const noise = gamecastEventNoise(event, 31);
+  playGamecastTone({ frequency: 420 + (noise % 60), endFrequency: 300, duration: 0.16, type: "square", gain: 0.12 });
+  window.setTimeout(() => playGamecastTone({ frequency: 240, endFrequency: 210, duration: 0.13, type: "triangle", gain: 0.08 }), 95);
+}
+
+function playGamecastWalkSound(event) {
+  const noise = gamecastEventNoise(event, 37);
+  playGamecastTone({ frequency: 260 + (noise % 45), endFrequency: 330, duration: 0.14, type: "sine", gain: 0.1 });
+}
+
+function playGamecastCrowdSwell(event) {
+  const homer = event?.outcome === "homeRun";
+  const runs = Math.max(1, Number(event?.runs ?? 1));
+  playGamecastNoise({
+    duration: homer ? 1.15 : 0.62 + runs * 0.08,
+    gain: homer ? 0.28 : 0.16,
+    filter: homer ? 3200 : 2200,
+    swell: true,
+    seed: gamecastEventNoise(event, 41)
+  });
+  if (homer) {
+    window.setTimeout(() => playGamecastTone({ frequency: 196, endFrequency: 262, duration: 0.34, type: "triangle", gain: 0.09 }), 120);
+  }
+}
+
+function playGamecastTone({ frequency, endFrequency, duration, type = "sine", gain = 0.12 }) {
+  const runtime = getGamecastAudioRuntime();
+  if (!runtime) return;
+  resumeGamecastAudio();
+  const { context, master } = runtime;
+  const now = context.currentTime;
+  const osc = context.createOscillator();
+  const envelope = context.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(Math.max(20, Number(frequency) || 120), now);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(20, Number(endFrequency ?? frequency) || 80), now + Math.max(0.03, duration));
+  envelope.gain.setValueAtTime(0.0001, now);
+  envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), now + 0.012);
+  envelope.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.04, duration));
+  osc.connect(envelope);
+  envelope.connect(master);
+  osc.start(now);
+  osc.stop(now + Math.max(0.05, duration + 0.02));
+}
+
+function playGamecastNoise({ duration = 0.12, gain = 0.08, filter = 1800, swell = false, seed = 1 }) {
+  const runtime = getGamecastAudioRuntime();
+  if (!runtime) return;
+  resumeGamecastAudio();
+  const { context, master } = runtime;
+  const sampleRate = context.sampleRate;
+  const length = Math.max(1, Math.floor(sampleRate * duration));
+  const buffer = context.createBuffer(1, length, sampleRate);
+  const data = buffer.getChannelData(0);
+  let brown = 0;
+  let rng = (Number(seed) || 1) >>> 0;
+  for (let index = 0; index < length; index += 1) {
+    rng = (rng * 1664525 + 1013904223) >>> 0;
+    const value = (rng / 4294967296) * 2 - 1;
+    brown = (brown + value * 0.05) / 1.05;
+    data[index] = Math.max(-1, Math.min(1, brown * 3.5));
+  }
+  const now = context.currentTime;
+  const source = context.createBufferSource();
+  const biquad = context.createBiquadFilter();
+  const envelope = context.createGain();
+  source.buffer = buffer;
+  biquad.type = "lowpass";
+  biquad.frequency.value = Math.max(180, Number(filter) || 1800);
+  envelope.gain.setValueAtTime(0.0001, now);
+  if (swell) {
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), now + duration * 0.22);
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain * 0.48), now + duration * 0.72);
+  } else {
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), now + 0.01);
+  }
+  envelope.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  source.connect(biquad);
+  biquad.connect(envelope);
+  envelope.connect(master);
+  source.start(now);
+  source.stop(now + duration + 0.02);
 }
 
 function syncGamecastFeed(state, frame) {
