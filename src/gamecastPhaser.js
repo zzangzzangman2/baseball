@@ -613,25 +613,33 @@ function lerp(from, to, amount) {
 function drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale) {
   const shirts = [palette.crowdA, palette.crowdB, palette.crowdC, palette.defenderL, palette.runnerL, palette.base, palette.spark, "#ff8f83", profile.homeColor];
   const dense = Math.max(0.16, Math.min(1, Number(profile.attendanceRatio ?? 0.62)));
-  const unit = Math.max(1, Math.round(scale * 0.62));
+  const unit = Math.max(1, Math.round(scale * 0.42));
   const startY = sy(3);
   const endY = sy(42);
-  const stepX = Math.max(scale * (dense > 0.82 ? 4 : dense > 0.52 ? 5 : 7), sx(dense > 0.82 ? 3 : dense > 0.52 ? 4 : 6));
-  const stepY = Math.max(scale * (dense > 0.82 ? 5 : 6), sy(dense > 0.82 ? 4 : 5));
+  const stepX = Math.max(scale * (dense > 0.82 ? 6 : dense > 0.52 ? 7 : 9), sx(dense > 0.82 ? 5 : dense > 0.52 ? 6 : 8));
+  const stepY = Math.max(scale * (dense > 0.82 ? 6 : 7), sy(dense > 0.82 ? 5 : 6));
+  const seatBack = Math.max(2, Math.floor(stepY * 0.45));
+  const rail = Math.max(1, Math.floor(scale * 0.35));
   for (let y = startY; y < endY; y += stepY) {
     const row = Math.floor((y - startY) / Math.max(1, stepY));
+    ctx.fillStyle = row % 2 ? "rgba(18, 23, 33, 0.78)" : "rgba(39, 45, 58, 0.78)";
+    ctx.fillRect(0, y + Math.floor(stepY * 0.28), width, seatBack);
+    ctx.fillStyle = row % 2 ? "rgba(255, 254, 251, 0.1)" : "rgba(0, 0, 0, 0.18)";
+    ctx.fillRect(0, y + stepY - rail, width, rail);
     for (let x = sx(2) + (row % 2 ? Math.floor(stepX / 2) : 0); x < width - sx(3); x += stepX) {
       const lx = (x / width) * 120;
       const ly = (y / height) * 108;
       if (ly >= phaserOutfieldWallY(profile, lx) - 1) continue;
-      if (((row * 19 + x) % 100) > dense * 100) continue;
-      if ((row * 17 + x) % 41 === 0) {
+      const col = Math.floor(x / Math.max(1, stepX));
+      const hash = Math.abs((row * 73856093) ^ (col * 19349663) ^ 0x9e3779b9);
+      if ((hash % 100) > 42 + dense * 44) continue;
+      if (hash % 97 === 0) {
         ctx.fillStyle = palette.outline;
-        ctx.fillRect(x - unit, y + unit, unit * 7, unit * 4);
+        ctx.fillRect(x - unit, y + unit * 2, unit * 7, unit * 4);
         ctx.fillStyle = palette.base;
-        ctx.fillRect(x, y + unit * 2, unit * 5, unit);
-        ctx.fillStyle = shirts[(row + x) % shirts.length];
-        ctx.fillRect(x + unit, y + unit, unit * 3, unit);
+        ctx.fillRect(x, y + unit * 3, unit * 5, unit);
+        ctx.fillStyle = shirts[hash % shirts.length];
+        ctx.fillRect(x + unit, y + unit * 2, unit * 3, unit);
         continue;
       }
       ctx.fillStyle = palette.crowdHair;
@@ -641,11 +649,15 @@ function drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale) {
       ctx.fillStyle = palette.outline;
       ctx.fillRect(x + unit, y + unit * 2, unit, unit);
       ctx.fillRect(x + unit * 2, y + unit * 2, unit, unit);
-      ctx.fillStyle = shirts[(row + x) % shirts.length];
+      ctx.fillStyle = shirts[hash % shirts.length];
       ctx.fillRect(x, y + unit * 3, unit * 4, unit * 2);
-      ctx.fillStyle = row % 3 === 0 ? palette.sparkL : palette.stand;
+      ctx.fillStyle = hash % 3 === 0 ? palette.sparkL : palette.stand;
       ctx.fillRect(x, y + unit * 5, unit * 4, unit);
     }
+  }
+  ctx.fillStyle = "rgba(255, 254, 251, 0.08)";
+  for (let x = sx(18); x < sx(108); x += sx(24)) {
+    ctx.fillRect(x, startY, Math.max(1, Math.floor(scale * 0.5)), Math.max(1, endY - startY));
   }
 }
 
@@ -658,20 +670,6 @@ function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile) {
     ctx.fillStyle = "rgba(221, 236, 255, 0.28)";
     ctx.fillRect(sx(12), sy(19), sx(96), scale);
   }
-  ctx.fillStyle = palette.outline;
-  ctx.fillRect(sx(40), sy(3), sx(40), sy(13));
-  ctx.fillStyle = "#0d1915";
-  ctx.fillRect(sx(42), sy(5), sx(36), sy(9));
-  ctx.fillStyle = palette.wallCap;
-  ctx.fillRect(sx(42), sy(5), sx(36), scale);
-  drawTinyCanvasText(ctx, String(profile.label ?? "KBO").slice(0, 4), sx(46), sy(8), palette.base, scale);
-  drawTinyCanvasText(ctx, profile.roofed ? "DOME" : "LIVE", sx(62), sy(8), palette.sparkL, scale);
-  ctx.fillStyle = palette.sparkL;
-  for (let x = sx(46); x < sx(74); x += Math.max(2, sx(4))) ctx.fillRect(x, sy(9), scale, scale);
-  ctx.fillStyle = palette.base;
-  ctx.fillRect(sx(49), sy(11), sx(8), scale);
-  ctx.fillRect(sx(63), sy(11), sx(8), scale);
-
   const adColors = [palette.ribbon, palette.defender, palette.spark, palette.runner, palette.wallCap];
   for (let index = 0; index < 10; index += 1) {
     const x = sx(7 + index * 11);
@@ -784,7 +782,7 @@ function buildStaticDefenseSprites(runtime, frame) {
   const jerseyShadow = frame.defenseJerseyShadow ?? runtime.palette.uniformSh;
   const accentColor = frame.defenseAccentColor ?? color;
   const positions = [
-    { key: "C", x: fieldX(runtime, 52), y: fieldY(runtime, 100) },
+    { key: "C", x: fieldX(runtime, 60), y: fieldY(runtime, 99) },
     { key: "1B", x: fieldX(runtime, 94), y: fieldY(runtime, 77) },
     { key: "2B", x: fieldX(runtime, 78), y: fieldY(runtime, 65) },
     { key: "3B", x: fieldX(runtime, 26), y: fieldY(runtime, 77) },
@@ -802,9 +800,11 @@ function buildStaticDefenseSprites(runtime, frame) {
       jerseyColor,
       jerseyShadow,
       accentColor,
-      pose: "field",
+      pose: item.key === "C" ? "catcher" : "field",
       runFrame: 0,
-      fieldingKey: item.key
+      fieldingKey: item.key,
+      facing: item.key === "C" ? 1 : undefined,
+      renderScale: item.key === "C" ? 0.58 : undefined
     });
   }
   return sprites;
@@ -904,6 +904,7 @@ function gamecastPlayerRenderScale(runtime, sprite, role) {
   const base = PLAYER_MIN_RENDER_SCALE + depth * (PLAYER_MAX_RENDER_SCALE - PLAYER_MIN_RENDER_SCALE);
   if (role === "batter") return Math.min(PLAYER_MAX_RENDER_SCALE, base + 0.025);
   if (role === "umpire") return Math.min(PLAYER_MAX_RENDER_SCALE, base - 0.015);
+  if (String(sprite?.fieldingKey ?? "") === "C") return Math.min(PLAYER_MAX_RENDER_SCALE, base - 0.035);
   if (["LF", "CF", "RF"].includes(String(sprite?.fieldingKey ?? ""))) return Math.max(0.43, base - 0.035);
   return base;
 }
@@ -1148,11 +1149,12 @@ function buildUmpireSprite(runtime, frame) {
   if (!frame.event) return null;
   const bases = runtime.basePositions;
   return {
-    position: { x: bases.home.x - fieldSize(runtime, 8), y: bases.home.y + fieldSize(runtime, 2) },
+    position: { x: bases.home.x - fieldSize(runtime, 8), y: bases.home.y + fieldSize(runtime, 8) },
     jerseyColor: "#25232c",
     jerseyShadow: "#15131a",
     accentColor: "#5f5b67",
-    pose: "idle"
+    pose: "idle",
+    renderScale: 0.58
   };
 }
 

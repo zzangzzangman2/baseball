@@ -6267,21 +6267,9 @@ function drawBallparkOutfield(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neu
 }
 
 function drawPixelStadiumScoreboard(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
-  const x = gamecastX(40);
-  const y = gamecastY(3);
-  const w = gamecastSize(40);
-  const h = gamecastSize(13);
-  ctx.fillStyle = palette.outline;
-  ctx.fillRect(x, y, w, h);
-  ctx.fillStyle = "#0d1915";
-  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(2), w - gamecastSize(2), h - gamecastSize(3));
-  ctx.fillStyle = palette.wallCap;
-  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), w - gamecastSize(2), gamecastSize(1));
-  drawMiniPixelText(ctx, palette, String(profile.label ?? "KBO").slice(0, 4), x + gamecastSize(5), y + gamecastSize(4), palette.base, 4);
-  drawMiniPixelText(ctx, palette, profile.roofed ? "DOME" : "LIVE", x + gamecastSize(23), y + gamecastSize(4), palette.sparkL, 4);
-  ctx.fillStyle = palette.baseSh;
-  ctx.fillRect(x + gamecastSize(8), y + gamecastSize(10), gamecastSize(9), gamecastSize(1));
-  ctx.fillRect(x + gamecastSize(23), y + gamecastSize(10), gamecastSize(9), gamecastSize(1));
+  void ctx;
+  void palette;
+  void profile;
 }
 
 function drawBallparkArchitecture(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
@@ -6362,7 +6350,7 @@ function drawPixelCrowd(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) 
 }
 
 function drawPixelFan(ctx, palette, x, y, shirt) {
-  const u = Math.max(1, Math.round(gamecastSize(1) * 0.62));
+  const u = 1;
   ctx.fillStyle = palette.crowdHair;
   ctx.fillRect(x, y, u * 4, u);
   ctx.fillStyle = palette.crowdSkin;
@@ -6380,7 +6368,7 @@ function drawPixelFan(ctx, palette, x, y, shirt) {
 }
 
 function drawPixelFanSign(ctx, palette, x, y, color) {
-  const u = Math.max(1, Math.round(gamecastSize(1) * 0.62));
+  const u = 1;
   ctx.fillStyle = palette.outline;
   ctx.fillRect(x, y, u * 7, u * 4);
   ctx.fillStyle = palette.base;
@@ -7217,7 +7205,7 @@ function gamecastDefensiveAlignment() {
     { key: "3B", position: { x: gamecastX(26), y: gamecastY(77) }, frame: 2 },
     { key: "1B", position: { x: gamecastX(94), y: gamecastY(77) }, frame: 2 },
     { key: "P", position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(2) }, frame: 2 },
-    { key: "C", position: { x: bases.home.x - gamecastSize(8), y: bases.home.y + gamecastSize(4) }, frame: 2 }
+    { key: "C", position: { x: bases.home.x, y: bases.home.y + gamecastSize(5) }, frame: 2 }
   ];
 }
 
@@ -7676,16 +7664,17 @@ function buildGamecastPlayerLabel(event, progress, runners) {
   const targetPath = targetBase > 0 ? gamecastPathBetween(0, targetBase) : [];
   const target = targetPath.length ? targetPath[targetPath.length - 1] : { x: bases.home.x + gamecastSize(7), y: bases.home.y - gamecastSize(3) };
   const position = batterRunner?.position
-    ?? (progress < 0.72 ? { x: bases.home.x, y: bases.home.y - gamecastSize(4) } : target)
-    ?? { x: bases.home.x, y: bases.home.y - gamecastSize(4) };
+    ?? (progress < 0.72 ? { x: bases.home.x + gamecastSize(8), y: bases.home.y - gamecastSize(1) } : target)
+    ?? { x: bases.home.x + gamecastSize(8), y: bases.home.y - gamecastSize(1) };
   const fadeIn = Math.min(1, Math.max(0, progress / 0.08));
   const fadeOut = progress > 0.82 ? Math.max(0, (0.96 - progress) / 0.14) : 1;
   const opacity = Math.max(0, Math.min(1, fadeIn * fadeOut));
+  const lift = batterRunner ? gamecastSize(8) : gamecastSize(3);
   return {
     visible: opacity > 0.08,
     text: shortenGamecastPlayerName(event.hitterName),
     x: Math.max(gamecastX(10), Math.min(gamecastX(110), position.x)),
-    y: Math.max(gamecastY(10), Math.min(gamecastY(98), position.y - gamecastSize(14))),
+    y: Math.max(gamecastY(10), Math.min(gamecastY(102), position.y - lift)),
     opacity,
     scoring: Number(event.runs ?? 0) > 0 && progress >= 0.55
   };
