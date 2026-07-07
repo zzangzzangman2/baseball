@@ -1058,6 +1058,127 @@ async function checkGamecastLab() {
   assert(defenseProbe.duplicateKeys.length === 0, `수비 포지션 중복이 있습니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
   assert(defenseProbe.uniqueCoordCount >= 9, `수비 좌표가 중복됩니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
 
+  const playFeelSamples = [];
+  for (let index = 0; index < 60; index += 1) {
+    playFeelSamples.push(await evaluateInBrowser(`
+      (() => {
+        const screen = document.querySelector("[data-gamecast-modal] [data-gamecast-screen]");
+        const canvas = document.querySelector("[data-gamecast-modal] [data-gamecast-canvas].gamecast-pixel-canvas");
+        const frame = screen?.__gamecastDebugFrame ?? null;
+        const defenders = [
+          ...((frame?.staticDefense ?? []).map((sprite) => ({ source: "static", ...sprite }))),
+          ...((frame?.defenseSprites ?? []).map((sprite) => ({ source: "dynamic", ...sprite })))
+        ];
+        const pitcherVisible = defenders.some((sprite) => String(sprite.fieldingKey ?? sprite.key ?? "") === "P");
+        let pitchPathWhitePixels = 0;
+        if (canvas && frame?.ball?.kind === "pitch") {
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          const image = ctx?.getImageData(0, 0, canvas.width, canvas.height);
+          if (image?.data) {
+            const sx = canvas.width / 400;
+            const sy = canvas.height / 360;
+            const from = { x: Math.round(200 * sx), y: Math.round(253 * sy) };
+            const to = { x: Math.round(207 * sx), y: Math.round(300 * sy) };
+            for (let step = 0; step <= 18; step += 1) {
+              const t = step / 18;
+              const cx = Math.round(from.x + (to.x - from.x) * t);
+              const cy = Math.round(from.y + (to.y - from.y) * t);
+              for (let y = cy - 7; y <= cy + 7; y += 1) {
+                for (let x = cx - 7; x <= cx + 7; x += 1) {
+                  if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) continue;
+                  const offset = (y * canvas.width + x) * 4;
+                  const r = image.data[offset];
+                  const g = image.data[offset + 1];
+                  const b = image.data[offset + 2];
+                  const a = image.data[offset + 3];
+                  if (a > 120 && r > 245 && g > 245 && b > 232) pitchPathWhitePixels += 1;
+                }
+              }
+            }
+          }
+        }
+        const burst = document.querySelector("[data-gamecast-modal] [data-gamecast-action-burst]");
+        return {
+          outcome: frame?.event?.outcome ?? "",
+          progress: Number(frame?.progress ?? 0),
+          resultRevealed: Boolean(frame?.resultRevealed),
+          pitcherVisible,
+          ballVisible: Boolean(frame?.ball),
+          ballKind: frame?.ball?.kind ?? "",
+          pitchPathWhitePixels,
+          movingDefense: (frame?.defenseSprites ?? []).some((sprite) => String(sprite.fieldingKey ?? "") !== "P"),
+          runnerCount: frame?.runners?.length ?? 0,
+          burstVisible: Boolean(burst?.classList.contains("is-visible"))
+        };
+      })()
+    `));
+    const enough =
+      playFeelSamples.length >= 20 &&
+      playFeelSamples.some((sample) => sample.ballKind === "batted") &&
+      playFeelSamples.some((sample) => sample.movingDefense || sample.runnerCount > 0) &&
+      playFeelSamples.filter((sample) => sample.ballVisible).length >= 3;
+    if (enough) break;
+    await delay(260);
+  }
+  const playFeelProbe = {
+    pitcherFrames: playFeelSamples.filter((sample) => sample.pitcherVisible).length,
+    ballFrames: playFeelSamples.filter((sample) => sample.ballVisible).length,
+    pitchPixelFrames: playFeelSamples.filter((sample) => sample.pitchPathWhitePixels > 0).length,
+    battedBallFrames: playFeelSamples.filter((sample) => sample.ballKind === "batted").length,
+    movingDefenseFrames: playFeelSamples.filter((sample) => sample.movingDefense).length,
+    runnerFrames: playFeelSamples.filter((sample) => sample.runnerCount > 0).length,
+    burstBeforeRevealFrames: playFeelSamples.filter((sample) => sample.burstVisible && !sample.resultRevealed).length
+  };
+  assert(playFeelProbe.pitcherFrames >= 2, `버스트 샘플에서 투수가 충분히 보이지 않습니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
+  assert(playFeelProbe.ballFrames >= 3 && playFeelProbe.pitchPixelFrames >= 1, `버스트 샘플에서 공/투구 픽셀이 부족합니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
+  assert(playFeelProbe.battedBallFrames >= 1, `버스트 샘플에서 타구 비행이 잡히지 않습니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
+  assert(playFeelProbe.movingDefenseFrames >= 1 || playFeelProbe.runnerFrames >= 1, `버스트 샘플에서 수비/주자 움직임이 없습니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
+  assert(playFeelProbe.burstBeforeRevealFrames === 0, `결과 배지가 연기 전에 표시됩니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
+
+  const viewportSweep = [];
+  for (const width of [800, 920, 1100]) {
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false
+    });
+    await delay(450);
+    viewportSweep.push(await evaluateInBrowser(`
+      (() => {
+        const screen = document.querySelector("[data-gamecast-modal] [data-gamecast-screen]");
+        const canvas = document.querySelector("[data-gamecast-modal] [data-gamecast-canvas].gamecast-pixel-canvas");
+        const screenRect = screen?.getBoundingClientRect();
+        const canvasRect = canvas?.getBoundingClientRect();
+        const doc = document.documentElement;
+        const body = document.body;
+        return {
+          width: window.innerWidth,
+          screenWidth: Math.round(screenRect?.width ?? 0),
+          screenHeight: Math.round(screenRect?.height ?? 0),
+          canvasWidth: Math.round(canvasRect?.width ?? 0),
+          canvasHeight: Math.round(canvasRect?.height ?? 0),
+          canvasBottomGap: Math.round((screenRect?.bottom ?? 0) - (canvasRect?.bottom ?? 0)),
+          canvasTopGap: Math.round((canvasRect?.top ?? 0) - (screenRect?.top ?? 0)),
+          overflowPx: Math.max(doc.scrollWidth, body.scrollWidth) - doc.clientWidth
+        };
+      })()
+    `));
+  }
+  for (const probe of viewportSweep) {
+    assert(probe.canvasWidth > 0 && probe.canvasHeight > 0, `중간 뷰포트 캔버스가 없습니다: ${JSON.stringify(probe)}`, "src/styles.css");
+    assert(probe.canvasHeight >= probe.screenHeight * 0.84, `중간 뷰포트에서 캔버스 하단 공백이 큽니다: ${JSON.stringify(probe)}`, "src/styles.css");
+    assert(probe.canvasTopGap >= -2 && probe.canvasBottomGap >= -2 && probe.canvasBottomGap <= 42, `중간 뷰포트에서 캔버스가 잘리거나 뜹니다: ${JSON.stringify(probe)}`, "src/styles.css");
+    assert(probe.overflowPx <= 1, `중간 뷰포트 수평 overflow ${probe.overflowPx}px: ${JSON.stringify(probe)}`, "src/styles.css");
+  }
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false
+  });
+  await delay(300);
+
   await evaluateInBrowser(`document.querySelector("[data-gamecast-modal] [data-gamecast-pause]")?.click(); true`);
   await delay(1200);
   const pauseProbe = await evaluateInBrowser(`
@@ -1237,6 +1358,8 @@ async function checkGamecastLab() {
     "speed-persist OK",
     "defense/skip/x4 OK",
     "pause/step OK",
+    `playfeel ball ${playFeelProbe.ballFrames}/${playFeelSamples.length}`,
+    `midview ${viewportSweep.map((probe) => probe.width).join("/")}`,
     `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`
   ].join(", ");
 }

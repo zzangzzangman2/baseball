@@ -221,9 +221,7 @@ function calculatePhaserMetrics(runtime) {
       + Number.parseFloat(style.borderRightWidth || "0")
     : 0;
   const available = Math.max(1, Math.floor((rect.width || runtime.width) - horizontalInset));
-  const cssScale = available >= runtime.width
-    ? Math.max(1, Math.floor(available / runtime.width))
-    : Math.max(0.5, available / runtime.width);
+  const cssScale = Math.max(0.5, available / runtime.width);
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   const cssW = runtime.width * cssScale;
   const cssH = runtime.height * cssScale;
@@ -385,6 +383,7 @@ function renderRuntimeFrame(runtime, forceFinal = false) {
 
 function renderScene(scene, runtime, frame) {
   if (!scene || !frame) return;
+  applyGamecastCamera(scene, runtime, frame);
   const palette = runtime.palette;
   const player = scene.playerGraphics;
   const skin = scene.skinHighlightGraphics;
@@ -420,6 +419,29 @@ function renderScene(scene, runtime, frame) {
   const flashAlpha = frame.flash ? 0.2 : frame.scoreFlash ? 0.08 : 0;
   scene.flashRect.setAlpha(flashAlpha);
   endGamecastPoolFrame(scene);
+}
+
+function applyGamecastCamera(scene, runtime, frame) {
+  const camera = scene?.cameras?.main;
+  if (!camera || !runtime?.metrics) return;
+  const spec = frame?.camera;
+  const zoom = spec ? Math.max(1, Math.min(1.12, Number(spec.zoom ?? 1))) : 1;
+  camera.setZoom(zoom);
+  if (!spec) {
+    camera.setScroll(0, 0);
+    return;
+  }
+  const metrics = runtime.metrics;
+  const focusX = Math.max(0, Math.min(runtime.width, Number(spec.x ?? runtime.width / 2))) * metrics.drawScaleX;
+  const focusY = Math.max(0, Math.min(runtime.height, Number(spec.y ?? runtime.height / 2))) * metrics.drawScaleY;
+  const viewW = metrics.bufferW / zoom;
+  const viewH = metrics.bufferH / zoom;
+  const maxScrollX = Math.max(0, metrics.bufferW - viewW);
+  const maxScrollY = Math.max(0, metrics.bufferH - viewH);
+  camera.setScroll(
+    Math.max(0, Math.min(maxScrollX, focusX - viewW / 2)),
+    Math.max(0, Math.min(maxScrollY, focusY - viewH / 2))
+  );
 }
 
 function beginGamecastPoolFrame(scene) {
@@ -980,7 +1002,7 @@ function gamecastActorRoleOrder(actor) {
 function drawPhaserAtmosphere(graphics, runtime, frame) {
   const palette = runtime.palette;
   const progress = Number(frame.progress ?? 0);
-  if (frame.scoreFlash || frame.event?.outcome === "homeRun") {
+  if (frame.scoreFlash || (frame.event?.outcome === "homeRun" && frame.resultRevealed)) {
     const color = frame.event?.outcome === "homeRun" ? palette.homerL : palette.spark;
     for (const y of [fieldY(runtime, 18), fieldY(runtime, 24)]) {
       for (let x = fieldX(runtime, 14); x < fieldX(runtime, 106); x += fieldSize(runtime, 9)) {
@@ -1320,28 +1342,26 @@ function drawBallShadow(graphics, runtime, shadow) {
 }
 
 function drawBall(graphics, runtime, ball, color) {
-  const size = Math.max(2, Number(ball.size ?? 1) * 2.6);
+  const size = Math.max(4, Number(ball.size ?? 1) * 3.4);
   rect(graphics, runtime, ball.x - size / 2 - 1, ball.y - size / 2 - 1, size + 2, size + 2, runtime.palette.outline, Number(ball.opacity ?? 1));
   rect(graphics, runtime, ball.x - size / 2, ball.y - size / 2, size, size, color, Number(ball.opacity ?? 1));
   rect(graphics, runtime, ball.x, ball.y - 1, 1, size, runtime.palette.ballSeam, 0.85);
 }
 
 function drawGamecastBall(scene, graphics, runtime, ball, color) {
+  drawBall(graphics, runtime, ball, color);
   if (!scene?.ballSpriteLayer || !scene.textures.exists("gamecast-props")) {
-    drawBall(graphics, runtime, ball, color);
     return;
   }
   const speed = Math.abs(Number(ball.velocityX ?? 0)) + Math.abs(Number(ball.velocityY ?? 0));
   const frame = `ball${Math.max(1, Math.min(3, (Math.floor(speed) % 3) + 1))}`;
   if (!scene.textures.getFrame("gamecast-props", frame)) {
-    drawBall(graphics, runtime, ball, color);
     return;
   }
   const metrics = runtime.metrics;
-  const size = Math.max(0.7, Math.min(1.2, Number(ball.size ?? 1) * 0.52));
+  const size = Math.max(1.05, Math.min(1.85, Number(ball.size ?? 1) * 0.68));
   const image = acquirePooledImage(scene, "balls", scene.ballSpriteLayer, "gamecast-props", frame);
   if (!image) {
-    drawBall(graphics, runtime, ball, color);
     return;
   }
   image
@@ -1361,8 +1381,8 @@ function drawContactBurst(graphics, runtime, burst, frame) {
 function shouldShake(frame) {
   if (!frame?.event || frame.done) return false;
   const progress = Number(frame.progress ?? 0);
-  if (frame.event.outcome === "homeRun" && progress >= 0.68) return true;
-  if (Number(frame.event.runs ?? 0) > 0 && progress >= 0.64) return true;
+  if (frame.event.outcome === "homeRun" && frame.scoreRevealed) return true;
+  if (Number(frame.event.runs ?? 0) > 0 && frame.scoreRevealed) return true;
   return ["double", "triple", "strikeout"].includes(frame.event.outcome) && progress >= 0.36;
 }
 

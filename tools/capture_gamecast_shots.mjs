@@ -3,10 +3,15 @@ import { spawn } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
-// 사용: node tools/capture_gamecast_shots.mjs [출력폴더] [랩URL]
+// 사용:
+//   node tools/capture_gamecast_shots.mjs [출력폴더] [랩URL]
+//   node tools/capture_gamecast_shots.mjs burst [출력폴더] [랩URL]
 // 정적 서버가 떠 있어야 한다 (python -m http.server 5177)
-const OUT = process.argv[2] ?? "reports/gamecast-shots";
-const BASE = process.argv[3] ?? "http://127.0.0.1:5177/gamecast-lab.html";
+const MODE = process.argv[2] === "burst" ? "burst" : "shots";
+const OUT = MODE === "burst" ? (process.argv[3] ?? "reports/gamecast-burst") : (process.argv[2] ?? "reports/gamecast-shots");
+const BASE = MODE === "burst"
+  ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=phaser&team=lg&days=3&fullscreen=1&holds=0&speed=1&fps=1")
+  : (process.argv[3] ?? "http://127.0.0.1:5177/gamecast-lab.html");
 const PORT = 9223;
 mkdirSync(OUT, { recursive: true });
 
@@ -64,12 +69,75 @@ const shot = async (name) => {
   writeFileSync(path.join(OUT, name), Buffer.from(res.result.data, "base64"));
   console.log("saved", name);
 };
+const burstProbe = () => scopedEval(`
+  const screen = root.querySelector("[data-gamecast-screen]");
+  const frame = screen?.__gamecastDebugFrame ?? null;
+  const defenders = [
+    ...((frame?.staticDefense ?? []).map((sprite) => ({ source: "static", ...sprite }))),
+    ...((frame?.defenseSprites ?? []).map((sprite) => ({ source: "dynamic", ...sprite })))
+  ];
+  const pitcherVisible = defenders.some((sprite) => String(sprite.fieldingKey ?? sprite.key ?? "") === "P");
+  const movingDefense = (frame?.defenseSprites ?? []).some((sprite) => String(sprite.fieldingKey ?? "") !== "P");
+  const burst = root.querySelector("[data-gamecast-action-burst]");
+  const burstVisible = Boolean(burst?.classList.contains("is-visible"));
+  const canvas = root.querySelector("[data-gamecast-canvas]");
+  const rect = canvas?.getBoundingClientRect();
+  return {
+    eventId: frame?.event?.id ?? "",
+    outcome: frame?.event?.outcome ?? "",
+    progress: Number(frame?.progress ?? 0),
+    rawProgress: Number(frame?.rawProgress ?? 0),
+    resultRevealed: Boolean(frame?.resultRevealed),
+    scoreRevealed: Boolean(frame?.scoreRevealed),
+    ballVisible: Boolean(frame?.ball),
+    ballKind: frame?.ball?.kind ?? "",
+    ballX: Math.round(Number(frame?.ball?.x ?? 0)),
+    ballY: Math.round(Number(frame?.ball?.y ?? 0)),
+    ballTrailCount: frame?.ballTrail?.length ?? 0,
+    pitcherVisible,
+    movingDefense,
+    runnerCount: frame?.runners?.length ?? 0,
+    burstVisible,
+    burstText: burst?.textContent?.trim() ?? "",
+    scoreText: [...root.querySelectorAll(".gamecast-scoreline strong")].map((node) => node.textContent.trim()).join("-"),
+    jumbotron: root.querySelector("[data-gamecast-jumbo-result]")?.textContent?.trim() ?? "",
+    canvasWidth: Math.round(rect?.width ?? 0),
+    canvasHeight: Math.round(rect?.height ?? 0)
+  };
+`);
 
 await send("Page.enable");
 await send("Runtime.enable");
 await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
 const go = async (url, waitMs) => { await send("Page.navigate", { url }); await sleep(waitMs); };
+
+if (MODE === "burst") {
+  await go(BASE, 2600);
+  await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));
+  const samples = [];
+  for (let index = 0; index < 16; index += 1) {
+    const name = `burst-${String(index + 1).padStart(2, "0")}.png`;
+    const meta = await evalJs(burstProbe());
+    samples.push({ frame: index + 1, file: name, ...meta });
+    await shot(name);
+    if (index < 15) await sleep(420);
+  }
+  const checklist = {
+    pitcherFrames: samples.filter((sample) => sample.pitcherVisible).length,
+    ballFrames: samples.filter((sample) => sample.ballVisible).length,
+    battedBallFrames: samples.filter((sample) => sample.ballKind === "batted").length,
+    movingDefenseFrames: samples.filter((sample) => sample.movingDefense).length,
+    runnerFrames: samples.filter((sample) => sample.runnerCount > 0).length,
+    burstBeforeRevealFrames: samples.filter((sample) => sample.burstVisible && !sample.resultRevealed).length
+  };
+  writeFileSync(path.join(OUT, "burst-summary.json"), JSON.stringify({ checklist, samples }, null, 2));
+  console.log("checklist", JSON.stringify(checklist));
+  ws.close();
+  proc.kill();
+  console.log("done");
+  process.exit(0);
+}
 
 await go(BASE, 5000);
 await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));

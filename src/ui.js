@@ -156,6 +156,7 @@ const GAMECAST_SPEED_OPTIONS = [0.5, 1, 1.5, 2, 4];
 const GAMECAST_RESUME_COUNTDOWN_MS = 400;
 const GAMECAST_HOLD_LEVERAGE_THRESHOLD = 0.55;
 const GAMECAST_SCORE_SLOW_RATE = 0.35;
+const GAMECAST_FAST_BALL_RATE = 1.5;
 const GAMECAST_DEFAULT_ENGINE = "phaser";
 // Ballpark dimensions are visual rendering data only. Sources:
 // Jamsil: venue listings commonly publish LF/RF 100m, CF 125m.
@@ -5128,7 +5129,7 @@ function renderGamecastMatchup(event) {
   `;
 }
 
-function gamecastMatchupSummary(event) {
+function gamecastMatchupSummary(event, frame = null) {
   if (!event) {
     return {
       state: "WAIT",
@@ -5138,12 +5139,13 @@ function gamecastMatchupSummary(event) {
       className: ""
     };
   }
+  const revealed = frame ? gamecastFrameResultRevealed(frame) : true;
   return {
     state: `${formatGamecastInningCompact(event)} · ${formatNumber(outsInInning(event.outsBefore))}OUT`,
     hitter: event.hitterName || "타자",
     pitcher: `vs ${event.pitcherName || "투수"}`,
-    result: gamecastMatchupResult(event),
-    className: gamecastOutcomeClass(event.outcome)
+    result: revealed ? gamecastMatchupResult(event) : gamecastLivePhaseLabel(event, Number(frame?.progress ?? 0)),
+    className: revealed ? gamecastOutcomeClass(event.outcome) : "is-ball"
   };
 }
 
@@ -5160,6 +5162,19 @@ function gamecastMatchupResult(event) {
   if (event.outcome === "error") return "실책 출루";
   if (event.outcome === "out") return event.fieldingPosition ? `${event.fieldingPosition} 아웃` : "아웃";
   return outcomeLabel(event.outcome) || "-";
+}
+
+function gamecastLivePhaseLabel(event, progress) {
+  if (!event) return "대기";
+  const pitchEnd = gamecastPitchEnd(event);
+  if (progress < pitchEnd - 0.04) return "투구";
+  if (progress < pitchEnd + 0.08) return "컨택";
+  if (event.outcome === "walk") return "볼넷?";
+  if (event.outcome === "strikeout") return "승부구";
+  if (event.outcome === "homeRun") return "큰 타구";
+  if (event.outcome === "out" || event.doublePlay) return "수비";
+  if (["single", "double", "triple", "error"].includes(event.outcome)) return "주루";
+  return "진행";
 }
 
 function renderGamecastPixelStage(instanceId, engine = GAMECAST_DEFAULT_ENGINE, showFps = false) {
@@ -5444,7 +5459,8 @@ function getGamecastPlaybackView(sequence, fallbackEvents, state) {
     ? sequence.events.length - 1
     : Math.max(0, Math.min(sequence.events.length - 1, Math.floor(elapsedMs / Math.max(1, slotMs))));
   const localMs = done ? slotMs : elapsedMs - currentIndex * slotMs;
-  const revealCurrent = done || localMs > Math.max(80, Number(sequence.paMs ?? GAMECAST_WATCH_PA_MS)) * 0.62;
+  const currentEvent = sequence.events[currentIndex] ?? null;
+  const revealCurrent = done || localMs > Math.max(80, Number(sequence.paMs ?? GAMECAST_WATCH_PA_MS)) * gamecastResultRevealProgress(currentEvent);
   const feedEndIndex = revealCurrent ? currentIndex : currentIndex - 1;
   return {
     feedEvents: feedEndIndex >= 0 ? sequence.events.slice(0, feedEndIndex + 1) : [],
@@ -5609,6 +5625,31 @@ function formatGamecastInningCompact(event) {
 
 function gamecastNowDetail(event) {
   return gamecastBroadcastSentence(event);
+}
+
+function gamecastFrameNowDetail(frame) {
+  const event = frame?.event;
+  if (!event) return "타석 이벤트 대기";
+  if (gamecastFrameResultRevealed(frame)) return gamecastBroadcastSentence(event);
+  const progress = Number(frame.progress ?? 0);
+  const pitchEnd = gamecastPitchEnd(event);
+  if (progress < pitchEnd - 0.04) {
+    return `${event.pitcherName || "투수"} 와인드업, ${event.hitterName || "타자"}가 타이밍을 잡습니다.`;
+  }
+  if (progress < pitchEnd + 0.08) {
+    return "공이 홈플레이트로 들어옵니다.";
+  }
+  if (isBattedBallOutcome(event.outcome)) {
+    const defender = event.defenderName
+      ? `${event.defenderName}${event.fieldingPosition ? `(${event.fieldingPosition})` : ""}`
+      : "수비수";
+    if (event.outcome === "homeRun") return "큰 타구가 외야 담장 쪽으로 뻗습니다.";
+    if (event.outcome === "out" || event.doublePlay) return `${defender}가 타구를 따라 움직입니다.`;
+    return "타구가 그라운드에 떨어지고 주자가 움직입니다.";
+  }
+  if (event.outcome === "walk") return "볼 카운트가 쌓이며 타자가 1루를 바라봅니다.";
+  if (event.outcome === "strikeout") return "결정구가 포수 미트로 들어갑니다.";
+  return "플레이가 진행 중입니다.";
 }
 
 function gamecastBroadcastSentence(event) {
@@ -6627,8 +6668,8 @@ function shouldTriggerGamecastImpactShake(frame) {
   const event = frame.event;
   if (!event || frame.done) return false;
   const progress = Number(frame.progress ?? 0);
-  if (event.outcome === "homeRun" && progress >= 0.68) return true;
-  if (Number(event.runs ?? 0) > 0 && progress >= 0.64) return true;
+  if (event.outcome === "homeRun" && progress >= gamecastScoreRevealProgress(event)) return true;
+  if (Number(event.runs ?? 0) > 0 && progress >= gamecastScoreRevealProgress(event)) return true;
   if (["double", "triple", "strikeout"].includes(event.outcome) && progress >= 0.36) return true;
   return false;
 }
@@ -6693,9 +6734,7 @@ function resizeGamecastCanvas(screen, stage, canvas, ctx, state) {
     Number.parseFloat(style.borderLeftWidth || "0") +
     Number.parseFloat(style.borderRightWidth || "0");
   const available = Math.max(1, Math.floor((rect.width || GAMECAST_PIXEL_W) - horizontalInset));
-  const scale = available >= GAMECAST_PIXEL_W
-    ? Math.max(1, Math.floor(available / GAMECAST_PIXEL_W))
-    : Math.max(0.5, available / GAMECAST_PIXEL_W);
+  const scale = Math.max(0.5, available / GAMECAST_PIXEL_W);
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   const cssW = Math.max(1, GAMECAST_PIXEL_W * scale);
   const cssH = Math.max(1, GAMECAST_PIXEL_H * scale);
@@ -7200,9 +7239,10 @@ function drawPixelCenterScoreboard(ctx, palette, frame) {
   const y = gamecastY(4);
   const w = gamecastSize(24);
   const h = gamecastSize(10);
-  const result = gamecastJumbotronText(frame.event);
+  const result = gamecastJumbotronTextForFrame(frame);
+  const revealed = gamecastFrameResultRevealed(frame);
   const accent = frame.event?.outcome === "homeRun"
-    ? palette.homerL
+    ? (revealed ? palette.homerL : palette.throw)
     : frame.scoreFlash
       ? palette.spark
       : frame.offenseColor ?? palette.grassHi;
@@ -7222,7 +7262,7 @@ function drawPixelCenterScoreboard(ctx, palette, frame) {
   const textX = Math.max(x + 2, Math.round(x + (w - miniPixelTextWidth(result)) / 2));
   drawMiniPixelText(ctx, palette, result, textX, y + 8, result === "HR" ? palette.homerL : result === "K" || result === "OUT" ? palette.out : palette.sparkL, 6);
 
-  if (frame.scoreFlash || frame.event?.outcome === "homeRun") {
+  if (frame.scoreFlash || (frame.event?.outcome === "homeRun" && revealed)) {
     const pulse = Math.floor(Number(frame.progress ?? 0) * 20) % 2;
     ctx.fillStyle = pulse ? palette.sparkL : palette.homerL;
     ctx.fillRect(x + w - 4, y + 3, 2, 1);
@@ -7238,6 +7278,18 @@ function gamecastJumbotronText(event) {
   if (event.outcome === "strikeout") return "K";
   if (event.outcome === "walk") return "BB";
   if (event.outcome === "out") return "OUT";
+  return "LIVE";
+}
+
+function gamecastJumbotronTextForFrame(frame) {
+  const event = frame?.event;
+  if (!event) return "LIVE";
+  if (frame?.done || gamecastFrameResultRevealed(frame)) return gamecastJumbotronText(event);
+  const progress = Number(frame.progress ?? 0);
+  if (progress < gamecastPitchEnd(event) - 0.04) return "PITCH";
+  if (isBattedBallOutcome(event.outcome)) return "BALL";
+  if (event.outcome === "walk") return "COUNT";
+  if (event.outcome === "strikeout") return "PITCH";
   return "LIVE";
 }
 
@@ -7373,8 +7425,8 @@ function drawPixelAtmosphere(ctx, palette, frame) {
   drawPixelCrowdWave(ctx, palette, frame, progress);
   drawPixelCameraFlashes(ctx, palette, frame, progress);
   drawPixelDugoutReaction(ctx, palette, frame, progress);
-  if (frame.event?.outcome === "homeRun" && progress >= 0.66) {
-    const t = Math.max(0, Math.min(1, (progress - 0.66) / 0.3));
+  if (frame.event?.outcome === "homeRun" && progress >= gamecastScoreRevealProgress(frame.event)) {
+    const t = Math.max(0, Math.min(1, (progress - gamecastScoreRevealProgress(frame.event)) / 0.08));
     drawPixelFirework(ctx, palette, gamecastX(26), gamecastY(19), t);
     drawPixelFirework(ctx, palette, gamecastX(95), gamecastY(20), Math.max(0, t - 0.18));
   }
@@ -7389,9 +7441,10 @@ function drawPixelAtmosphere(ctx, palette, frame) {
 function drawPixelRibbonPulse(ctx, palette, frame, progress) {
   const event = frame.event;
   if (!event || progress < 0.28 || progress > 0.92) return;
-  const active = event.outcome === "homeRun" || frame.scoreFlash || ["double", "triple", "strikeout"].includes(event.outcome);
+  const homerRevealed = event.outcome === "homeRun" && frame.resultRevealed;
+  const active = homerRevealed || frame.scoreFlash || ["double", "triple", "strikeout"].includes(event.outcome);
   if (!active) return;
-  const color = event.outcome === "homeRun" ? palette.homerL : frame.scoreFlash ? palette.spark : frame.offenseColor ?? palette.runnerL;
+  const color = homerRevealed ? palette.homerL : frame.scoreFlash ? palette.spark : frame.offenseColor ?? palette.runnerL;
   const glow = event.outcome === "strikeout" ? palette.throw : palette.sparkL;
   const phase = Math.floor(progress * 24);
   for (const [start, end] of [[18, 40], [80, 102]]) {
@@ -7399,7 +7452,7 @@ function drawPixelRibbonPulse(ctx, palette, frame, progress) {
     for (let x = gamecastX(start); x < gamecastX(end); x += gamecastSize(4)) {
       ctx.fillStyle = ((x + phase) % gamecastSize(8)) < gamecastSize(4) ? color : glow;
       ctx.fillRect(x, y, gamecastSize(3), gamecastSize(1));
-      if (frame.scoreFlash || event.outcome === "homeRun") {
+      if (frame.scoreFlash || homerRevealed) {
         ctx.fillStyle = palette.base;
         ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), gamecastSize(1), gamecastSize(1));
       }
@@ -7410,10 +7463,11 @@ function drawPixelRibbonPulse(ctx, palette, frame, progress) {
 function drawPixelCameraFlashes(ctx, palette, frame, progress) {
   const event = frame.event;
   if (!event || progress < 0.34 || progress > 0.88) return;
-  const heat = event.outcome === "homeRun" ? 1 : frame.scoreFlash ? 0.8 : ["double", "triple"].includes(event.outcome) ? 0.46 : event.outcome === "strikeout" ? 0.32 : 0;
+  const homerRevealed = event.outcome === "homeRun" && frame.resultRevealed;
+  const heat = homerRevealed ? 1 : frame.scoreFlash ? 0.8 : ["double", "triple"].includes(event.outcome) ? 0.46 : event.outcome === "strikeout" ? 0.32 : 0;
   if (heat <= 0) return;
   const phase = Math.floor(progress * 28);
-  const count = event.outcome === "homeRun" ? 14 : frame.scoreFlash ? 10 : 6;
+  const count = homerRevealed ? 14 : frame.scoreFlash ? 10 : 6;
   for (let index = 0; index < count; index += 1) {
     if ((index * 7 + phase) % 5 > Math.ceil(heat * 4)) continue;
     const nx = Math.abs(gamecastEventNoise(event, 31 + index));
@@ -7431,9 +7485,10 @@ function drawPixelCameraFlashes(ctx, palette, frame, progress) {
 function drawPixelDugoutReaction(ctx, palette, frame, progress) {
   const event = frame.event;
   if (!event || progress < 0.42 || progress > 0.9) return;
-  const bigPlay = event.outcome === "homeRun" || frame.scoreFlash || ["double", "triple"].includes(event.outcome);
+  const homerRevealed = event.outcome === "homeRun" && frame.resultRevealed;
+  const bigPlay = homerRevealed || frame.scoreFlash || ["double", "triple"].includes(event.outcome);
   if (!bigPlay) return;
-  const heat = event.outcome === "homeRun" ? 1 : frame.scoreFlash ? 0.76 : 0.48;
+  const heat = homerRevealed ? 1 : frame.scoreFlash ? 0.76 : 0.48;
   const pulse = Math.floor(progress * 18);
   const y = gamecastY(92);
   const isHome = event.side === "home";
@@ -7458,7 +7513,8 @@ function drawPixelDugoutReaction(ctx, palette, frame, progress) {
 function drawPixelCrowdWave(ctx, palette, frame, progress) {
   const event = frame.event;
   if (!event || progress <= 0.18) return;
-  const heat = event.outcome === "homeRun" ? 1 : frame.scoreFlash ? 0.82 : ["double", "triple", "strikeout"].includes(event.outcome) ? 0.48 : 0.24;
+  const homerRevealed = event.outcome === "homeRun" && frame.resultRevealed;
+  const heat = homerRevealed ? 1 : frame.scoreFlash ? 0.82 : ["double", "triple", "strikeout"].includes(event.outcome) ? 0.48 : 0.24;
   if (heat <= 0.25 && progress > 0.7) return;
   const phase = Math.floor(progress * 20);
   const top = gamecastY(16);
@@ -7576,20 +7632,21 @@ function drawPixelCameraFx(ctx, palette, frame) {
   const pitchEnd = gamecastPitchEnd(event);
   if (progress < pitchEnd) drawPixelPitchTunnel(ctx, palette, event, progress, pitchEnd);
 
-  if (isBattedBallOutcome(event.outcome) && progress >= pitchEnd + 0.06 && progress <= 0.84) {
-    const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, 0.76 - pitchEnd)));
+  if (isBattedBallOutcome(event.outcome) && progress >= pitchEnd + 0.06 && progress <= gamecastBallFlightEnd(event)) {
+    const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, gamecastBallFlightEnd(event) - pitchEnd)));
     const point = frame.ball ?? battedBallPoint(event, Math.min(1, t));
     drawPixelTrackingReticle(ctx, palette, point, progress, event);
   }
 
-  if (event.outcome === "strikeout" && progress >= 0.34 && progress <= 0.78) {
-    const fade = Math.sin(Math.max(0, Math.min(1, (progress - 0.34) / 0.44)) * Math.PI);
+  const reveal = gamecastResultRevealProgress(event);
+  if (event.outcome === "strikeout" && progress >= reveal && progress <= reveal + 0.18) {
+    const fade = Math.sin(Math.max(0, Math.min(1, (progress - reveal) / 0.18)) * Math.PI);
     drawPixelBlockLetters(ctx, palette, "K", gamecastX(19), gamecastY(63), 3, palette.out, palette.base, fade);
-  } else if (event.outcome === "walk" && progress >= 0.42 && progress <= 0.78) {
-    const fade = Math.sin(Math.max(0, Math.min(1, (progress - 0.42) / 0.36)) * Math.PI);
+  } else if (event.outcome === "walk" && progress >= reveal && progress <= reveal + 0.18) {
+    const fade = Math.sin(Math.max(0, Math.min(1, (progress - reveal) / 0.18)) * Math.PI);
     drawPixelBlockLetters(ctx, palette, "BB", gamecastX(17), gamecastY(63), 2, palette.walk, palette.outline, fade);
-  } else if (event.doublePlay && progress >= 0.56 && progress <= 0.86) {
-    const fade = Math.sin(Math.max(0, Math.min(1, (progress - 0.56) / 0.3)) * Math.PI);
+  } else if (event.doublePlay && progress >= reveal && progress <= reveal + 0.18) {
+    const fade = Math.sin(Math.max(0, Math.min(1, (progress - reveal) / 0.18)) * Math.PI);
     drawPixelBlockLetters(ctx, palette, "DP", gamecastX(15), gamecastY(62), 2, palette.spark, palette.outline, fade);
   }
 }
@@ -7794,11 +7851,13 @@ function drawPixelFielders(ctx, palette, frame) {
   const jerseyColor = frame.defenseJerseyColor ?? palette.defenderL;
   const activeProgress = Number(frame.progress ?? 0);
   const positions = frame.staticDefense ?? gamecastStaticDefenseSnapshot(frame);
+  const activeStart = frame.event ? gamecastPitchEnd(frame.event) + 0.06 : 0.28;
+  const activeEnd = frame.event ? gamecastResultRevealProgress(frame.event) : 0.82;
 
   for (const fielder of positions) {
-    const isActive = activePosition && fielder.key === activePosition && activeProgress >= 0.28 && activeProgress <= 0.82;
+    const isActive = activePosition && fielder.key === activePosition && activeProgress >= activeStart && activeProgress <= activeEnd;
     if (isActive) continue;
-    const pose = fielder.transitioning ? "run" : fielder.key === "C" ? "catcher" : activePosition === fielder.key && activeProgress > 0.82 ? "catch" : "field";
+    const pose = fielder.transitioning ? "run" : fielder.key === "C" ? "catcher" : activePosition === fielder.key && activeProgress > activeEnd ? "catch" : "field";
     drawPixelRunner(ctx, palette, fielder.position, false, defenderColor, fielder.frame, {
       jerseyColor,
       jerseyShadow: frame.defenseJerseyShadow ?? palette.uniformSh,
@@ -7828,7 +7887,7 @@ function gamecastDefensiveAlignment() {
 function gamecastStaticDefenseSnapshot(frame) {
   const movingFielders = new Set(frame?.activeFielders ?? []);
   const activeProgress = Number(frame?.progress ?? 0);
-  const pitchingNow = frame?.event && activeProgress < gamecastPitchEnd(frame.event) + 0.04;
+  const pitchingNow = frame?.event && activeProgress < gamecastPitchEnd(frame.event) + 0.09;
   return gamecastDefensiveAlignment()
     .filter((fielder) => !movingFielders.has(fielder.key) && !(pitchingNow && fielder.key === "P"))
     .map((fielder) => {
@@ -7986,12 +8045,16 @@ function buildGamecastFrameState(state, forceFinal = false) {
     : 0;
   const leverage = gamecastLeverageScore(seq, events, index);
   const progress = gapProgress > 0 ? 1 : gamecastTempoProgress(event, rawProgress, leverage, state.stepMode);
-  const settling = progress >= 0.72;
+  const resultRevealProgress = gamecastResultRevealProgress(event);
+  const scoreRevealProgress = gamecastScoreRevealProgress(event);
+  const resultRevealed = gapProgress > 0 || progress >= resultRevealProgress;
+  const scoreRevealed = gapProgress > 0 || progress >= scoreRevealProgress;
+  const settling = resultRevealed;
   const clearingInning = event.inningEnded && progress >= 0.92;
   const baseOccupancy = settling
     ? (clearingInning ? [false, false, false] : event.basesAfter)
     : baseOccupancyDuringMove(event, progress);
-  const score = scoreForGamecastFrame(seq, events, index, progress >= 0.68);
+  const score = scoreForGamecastFrame(seq, events, index, scoreRevealed);
   const runners = buildRunnerSprites(event, progress, state.palette);
   const defenseSprites = buildGamecastDefenseSprites(event, progress, state.palette);
   const activeFielders = [...new Set(defenseSprites.map((sprite) => sprite.fieldingKey).filter(Boolean))];
@@ -8024,8 +8087,11 @@ function buildGamecastFrameState(state, forceFinal = false) {
     baseCallout: buildGamecastBaseCallout(event, progress),
     inningSlate,
     ballparkProfile: seq.ballparkProfile,
-    scoreFlash: event.runs > 0 && progress >= 0.62 && progress <= 0.84,
-    flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
+    resultRevealed,
+    scoreRevealed,
+    scoreFlash: event.runs > 0 && progress >= scoreRevealProgress && progress <= Math.min(0.99, scoreRevealProgress + 0.18),
+    flash: event.outcome === "homeRun" && progress >= scoreRevealProgress && progress < Math.min(0.99, scoreRevealProgress + 0.09),
+    camera: buildGamecastCamera(event, progress),
     offenseColor: event.teamColor ?? state.palette.runner,
     offenseJerseyColor: event.teamJerseyColor ?? state.palette.uniform,
     offenseJerseyShadow: event.teamJerseyShadow ?? state.palette.uniformSh,
@@ -8071,10 +8137,21 @@ function gamecastEffectivePlaybackRate(state, frame = null) {
   if (state?.paused || state?.done) return 0;
   const rate = sanitizeGamecastSpeed(state?.playbackRate);
   const activeFrame = frame ?? state?.currentFrame;
+  if (rate >= 4 && gamecastCriticalBallPhase(activeFrame)) {
+    return Math.min(rate, GAMECAST_FAST_BALL_RATE);
+  }
   if (activeFrame?.scoreFlash && state?.sequence?.mode === "watch") {
     return Math.min(rate, GAMECAST_SCORE_SLOW_RATE);
   }
   return rate;
+}
+
+function gamecastCriticalBallPhase(frame) {
+  const event = frame?.event;
+  if (!event || frame.done) return false;
+  const progress = Number(frame.progress ?? 0);
+  if (progress < gamecastPitchEnd(event)) return true;
+  return isBattedBallOutcome(event.outcome) && progress < gamecastBallFlightEnd(event);
 }
 
 function maybeHoldGamecastPlayback(state, frame, applyHold) {
@@ -8120,7 +8197,7 @@ function maybeHoldGamecastPlayback(state, frame, applyHold) {
     }
   }
 
-  if (state.stepMode && nextEvent && Number(frame.progress ?? 0) >= 0.68) {
+  if (state.stepMode && nextEvent && Number(frame.progress ?? 0) >= gamecastResultRevealProgress(event)) {
     return issueHold({
       type: "step",
       key: `step:${event.id}`,
@@ -8155,8 +8232,9 @@ function buildGamecastBaseCallout(event, progress) {
   if (!event) return null;
   const isSafeOutcome = ["single", "double", "triple", "walk", "error"].includes(event.outcome);
   const isOutOutcome = event.outcome === "out" || event.doublePlay;
-  const start = isSafeOutcome ? 0.6 : 0.56;
-  const end = isSafeOutcome ? 0.9 : 0.84;
+  const reveal = gamecastResultRevealProgress(event);
+  const start = Math.max(0.5, reveal - 0.1);
+  const end = Math.min(0.98, reveal + 0.1);
   if ((!isSafeOutcome && !isOutOutcome) || progress < start || progress > end) return null;
   const t = Math.max(0, Math.min(1, (progress - start) / Math.max(0.01, end - start)));
   const anchor = gamecastCalloutAnchor(event);
@@ -8212,8 +8290,8 @@ function buildGamecastBridgeSlate(event, nextEvent, gapProgress) {
 function buildGamecastActionBurst(event, progress) {
   if (!event) return null;
   const profile = gamecastBurstProfile(event.outcome);
-  const start = Math.max(0.2, gamecastPitchEnd(event) + profile.delay);
-  const end = profile.end;
+  const start = Math.max(gamecastResultRevealProgress(event), gamecastPitchEnd(event) + profile.delay);
+  const end = Math.max(profile.end, Math.min(1, start + 0.22));
   if (progress < start || progress > end) return null;
 
   const t = Math.max(0, Math.min(1, (progress - start) / Math.max(0.01, end - start)));
@@ -8278,7 +8356,9 @@ function buildBatterSprite(event, progress, palette) {
   const advance = gamecastAdvanceCount(event.outcome);
   const pitchEnd = gamecastPitchEnd(event);
   const batted = isBattedBallOutcome(event.outcome);
-  if ((advance > 0 || event.outcome === "walk") && progress >= (batted ? pitchEnd + 0.26 : gamecastRunnerMoveStart(event) + 0.06)) return null;
+  const runnerStart = gamecastRunnerMoveStart(event);
+  if ((advance > 0 || event.outcome === "walk") && progress >= (batted ? runnerStart + 0.04 : runnerStart + 0.04)) return null;
+  if (event.outcome === "out" && progress >= runnerStart) return null;
   let pose = "stance";
   if (progress >= pitchEnd - 0.08 && progress < pitchEnd + 0.01) pose = "load";
   else if (progress >= pitchEnd + 0.01 && progress < pitchEnd + 0.16) {
@@ -8310,10 +8390,12 @@ function buildGamecastPlayerLabel(event, progress, runners) {
   if (!event || progress >= 0.96) {
     return { visible: false, text: "", x: 50, y: 50, scoring: false };
   }
-  const showFielder = event.defenderName && isBattedBallOutcome(event.outcome) && progress >= 0.48 && progress < 0.84;
+  const showFielder = event.defenderName && event.outcome !== "homeRun" && isBattedBallOutcome(event.outcome) && progress >= gamecastPitchEnd(event) + 0.16 && progress < gamecastResultRevealProgress(event);
   if (showFielder) {
     const pitchEnd = gamecastPitchEnd(event);
-    const fieldT = Math.max(0, Math.min(1, (progress - pitchEnd - 0.12) / 0.46));
+    const runStart = Math.max(0.34, pitchEnd + 0.06);
+    const catchProgress = gamecastFieldingCatchProgress(event);
+    const fieldT = Math.max(0, Math.min(1, (progress - runStart) / Math.max(0.01, catchProgress - runStart)));
     const target = battedBallGroundPoint(event, 1);
     const start = gamecastDefenderStartForTarget(target, event);
     const eased = easeOutCubic(fieldT);
@@ -8321,7 +8403,8 @@ function buildGamecastPlayerLabel(event, progress, runners) {
       x: Math.round(lerp(start.x, target.x, eased)),
       y: Math.round(lerp(start.y, target.y, eased))
     };
-    const fadeOut = progress > 0.76 ? Math.max(0, (0.84 - progress) / 0.08) : 1;
+    const revealProgress = gamecastResultRevealProgress(event);
+    const fadeOut = progress > revealProgress - 0.08 ? Math.max(0, (revealProgress - progress) / 0.08) : 1;
     return {
       visible: fadeOut > 0.08,
       text: shortenGamecastPlayerName(event.defenderName),
@@ -8338,10 +8421,10 @@ function buildGamecastPlayerLabel(event, progress, runners) {
   const targetPath = targetBase > 0 ? gamecastPathBetween(0, targetBase) : [];
   const target = targetPath.length ? targetPath[targetPath.length - 1] : { x: bases.home.x + gamecastSize(7), y: bases.home.y - gamecastSize(3) };
   const position = batterRunner?.position
-    ?? (progress < 0.72 ? { x: bases.home.x + gamecastSize(8), y: bases.home.y - gamecastSize(1) } : target)
+    ?? (progress < gamecastRunnerMoveEnd(event) ? { x: bases.home.x + gamecastSize(8), y: bases.home.y - gamecastSize(1) } : target)
     ?? { x: bases.home.x + gamecastSize(8), y: bases.home.y - gamecastSize(1) };
   const fadeIn = Math.min(1, Math.max(0, progress / 0.08));
-  const fadeOut = progress > 0.82 ? Math.max(0, (0.96 - progress) / 0.14) : 1;
+  const fadeOut = progress > 0.86 ? Math.max(0, (0.98 - progress) / 0.12) : 1;
   const opacity = Math.max(0, Math.min(1, fadeIn * fadeOut));
   const lift = batterRunner ? gamecastSize(8) : gamecastSize(3);
   return {
@@ -8362,9 +8445,11 @@ function shortenGamecastPlayerName(name) {
 
 function baseOccupancyDuringMove(event, progress) {
   const advance = gamecastAdvanceCount(event.outcome);
-  if (progress < gamecastRunnerMoveStart(event) || advance <= 0) return event.basesBefore;
-  if (progress >= 0.58) return event.basesAfter;
-  return event.basesBefore.map((occupied, index) => occupied && progress < (0.44 + index * 0.03));
+  const moveStart = gamecastRunnerMoveStart(event);
+  const moveEnd = gamecastRunnerMoveEnd(event);
+  if (progress < moveStart || advance <= 0) return event.basesBefore;
+  if (progress >= moveEnd) return event.basesAfter;
+  return event.basesBefore.map((occupied, index) => occupied && progress < (moveStart + 0.05 + index * 0.04));
 }
 
 function scoreForGamecastFrame(seq, events, currentIndex, includeCurrent) {
@@ -8379,9 +8464,10 @@ function scoreForGamecastFrame(seq, events, currentIndex, includeCurrent) {
 }
 
 function displayOutsForEvent(event, progress) {
-  if (event.inningEnded && progress >= 0.72 && progress < 0.92) return 3;
+  const revealProgress = gamecastResultRevealProgress(event);
+  if (event.inningEnded && progress >= revealProgress && progress < 0.92) return 3;
   if (event.inningEnded && progress >= 0.92) return 0;
-  return outsInInning(progress >= 0.72 ? event.outsAfter : event.outsBefore);
+  return outsInInning(progress >= revealProgress ? event.outsAfter : event.outsBefore);
 }
 
 function outsInInning(value) {
@@ -8393,9 +8479,10 @@ function buildRunnerSprites(event, progress, palette) {
   const advance = gamecastAdvanceCount(event.outcome);
   if (event.outcome === "strikeout") return [];
   const moveStart = gamecastRunnerMoveStart(event);
-  if (progress < moveStart || progress >= 0.72) return [];
+  const moveEnd = gamecastRunnerMoveEnd(event);
+  if (progress < moveStart || progress >= moveEnd) return [];
 
-  const moveT = Math.max(0, Math.min(1, (progress - moveStart) / Math.max(0.01, 0.72 - moveStart)));
+  const moveT = Math.max(0, Math.min(1, (progress - moveStart) / Math.max(0.01, moveEnd - moveStart)));
   const walking = event.outcome === "walk";
   const eased = walking ? easeInOutCubic(moveT) : easeOutCubic(moveT);
   const runners = [];
@@ -8512,32 +8599,51 @@ function buildBallSprite(event, progress) {
       x: Math.round(lerp(bases.mound.x, target.x, easeOutCubic(previousT))),
       y: Math.round(lerp(bases.mound.y, target.y, easeOutCubic(previousT)))
     };
-    return withGamecastBallVector(current, previous, { kind: "pitch", size: 1, opacity: 1 });
+    return withGamecastBallVector(current, previous, { kind: "pitch", size: 1.7, opacity: 1 });
   }
-  if (event.outcome === "walk") return progress < pitchEnd + 0.12 ? pitchTargetForEvent(event, bases) : null;
-  if (event.outcome === "strikeout") return progress < pitchEnd + 0.18 ? pitchTargetForEvent(event, bases) : null;
-  if (!isBattedBallOutcome(event.outcome) || progress >= 0.82) return null;
-  const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, 0.82 - pitchEnd)));
+  if (event.outcome === "walk") return progress < gamecastResultRevealProgress(event) - 0.04 ? { ...pitchTargetForEvent(event, bases), kind: "pitch", size: 1.55, opacity: 1 } : null;
+  if (event.outcome === "strikeout") return progress < gamecastResultRevealProgress(event) - 0.04 ? { ...pitchTargetForEvent(event, bases), kind: "pitch", size: 1.55, opacity: 1 } : null;
+  const flightEnd = gamecastBallFlightEnd(event);
+  if (!isBattedBallOutcome(event.outcome) || progress >= flightEnd) return null;
+  const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, flightEnd - pitchEnd)));
   const current = battedBallPoint(event, t);
   const previous = battedBallPoint(event, Math.max(0, t - 0.06));
   return withGamecastBallVector(current, previous, {
     kind: "batted",
-    size: event.outcome === "homeRun" ? 2 : String(event.battedBallType ?? "") === "flyBall" ? 1.6 : 1.25,
+    size: event.outcome === "homeRun" ? 3 : String(event.battedBallType ?? "") === "flyBall" ? 2.2 : 1.8,
     opacity: 1
   });
 }
 
 function buildBallTrail(event, progress) {
   const pitchEnd = gamecastPitchEnd(event);
-  if (!isBattedBallOutcome(event.outcome) || progress < pitchEnd + 0.05 || progress >= 0.82) return [];
+  const bases = gamecastBasePositions();
+  if (progress < pitchEnd && progress > 0.06) {
+    const target = pitchTargetForEvent(event, bases);
+    const points = [];
+    const t = Math.max(0, Math.min(1, progress / pitchEnd));
+    for (const [index, offset] of [0.04, 0.09, 0.15].entries()) {
+      const p = Math.max(0, t - offset / Math.max(0.01, pitchEnd));
+      points.push({
+        x: Math.round(lerp(bases.mound.x, target.x, easeOutCubic(p))),
+        y: Math.round(lerp(bases.mound.y, target.y, easeOutCubic(p))),
+        size: Math.max(1.2, 2.2 - index * 0.28),
+        opacity: Math.max(0.2, 0.7 - index * 0.14),
+        color: index % 2 ? "#fff8d7" : "#fffefb"
+      });
+    }
+    return points;
+  }
+  const flightEnd = gamecastBallFlightEnd(event);
+  if (!isBattedBallOutcome(event.outcome) || progress < pitchEnd + 0.05 || progress >= flightEnd) return [];
   const points = [];
-  for (const [index, offset] of [0.045, 0.09, 0.145, 0.21].entries()) {
+  for (const [index, offset] of [0.045, 0.09, 0.145, 0.21, 0.28].entries()) {
     const p = Math.max(pitchEnd, progress - offset);
-    const t = Math.max(0, Math.min(1, (p - pitchEnd) / Math.max(0.01, 0.82 - pitchEnd)));
+    const t = Math.max(0, Math.min(1, (p - pitchEnd) / Math.max(0.01, flightEnd - pitchEnd)));
     const point = battedBallPoint(event, t);
     points.push({
       ...point,
-      size: Math.max(1, 2 - index * 0.25),
+      size: Math.max(1.2, 2.7 - index * 0.28),
       opacity: Math.max(0.18, 0.72 - index * 0.14),
       color: event.outcome === "homeRun" ? "#ffb3a6" : index % 2 ? "#fff8d7" : "#fffefb"
     });
@@ -8556,8 +8662,9 @@ function withGamecastBallVector(current, previous, extra = {}) {
 
 function buildGamecastBallShadow(event, progress) {
   const pitchEnd = gamecastPitchEnd(event);
-  if (!isBattedBallOutcome(event.outcome) || progress < pitchEnd || progress >= 0.82) return null;
-  const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, 0.82 - pitchEnd)));
+  const flightEnd = gamecastBallFlightEnd(event);
+  if (!isBattedBallOutcome(event.outcome) || progress < pitchEnd || progress >= flightEnd) return null;
+  const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, flightEnd - pitchEnd)));
   const ground = battedBallGroundPoint(event, t);
   const lift = Math.sin(t * Math.PI);
   return {
@@ -8583,7 +8690,7 @@ function buildGamecastContactBurst(event, progress) {
 function buildGamecastDefenseSprites(event, progress, palette) {
   const pitchEnd = gamecastPitchEnd(event);
   const sprites = [];
-  if (progress < pitchEnd + 0.04) {
+  if (progress < pitchEnd + 0.09) {
     const bases = gamecastBasePositions();
     const windT = Math.max(0, Math.min(1, progress / Math.max(0.01, pitchEnd)));
     sprites.push({
@@ -8602,19 +8709,20 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     });
   }
   if (!isBattedBallOutcome(event?.outcome)) return sprites;
-  if (progress < pitchEnd + 0.06 || progress > 0.9) return sprites;
+  const resultReveal = gamecastResultRevealProgress(event);
+  if (progress < pitchEnd + 0.06 || progress > Math.min(0.96, resultReveal + 0.08)) return sprites;
 
   const battedType = String(event.battedBallType ?? "");
   const target = battedBallGroundPoint(event, 1);
   const fieldingKey = gamecastFieldingKeyForTarget(event, target);
   const start = gamecastDefenderStartForTarget(target, event);
-  const catchProgress = battedType === "groundBall" ? 0.5 : battedType === "lineDrive" ? 0.54 : 0.6;
-  const runStart = Math.max(0.24, pitchEnd + 0.04);
+  const catchProgress = gamecastFieldingCatchProgress(event);
+  const runStart = Math.max(0.34, pitchEnd + 0.06);
   const fieldT = Math.max(0, Math.min(1, (progress - runStart) / Math.max(0.01, catchProgress - runStart)));
   const position = gamecastFielderRoutePoint(start, target, fieldT, fieldingKey, event);
   const hardPlay = gamecastDifficultFieldingPlay(event, fieldingKey, target, start);
-  const throwing = progress >= catchProgress + 0.08 && progress <= 0.8 && event.outcome !== "homeRun";
-  const impactPose = event.outcome === "homeRun" && progress > 0.62
+  const throwing = progress >= gamecastThrowStartProgress(event) && progress <= gamecastThrowEndProgress(event) && event.outcome !== "homeRun";
+  const impactPose = event.outcome === "homeRun" && progress > catchProgress
     ? "lookUp"
     : event.outcome === "error" && progress > catchProgress - 0.02
       ? "dive"
@@ -8649,7 +8757,7 @@ function buildGamecastDefenseSprites(event, progress, palette) {
 
   if (event.doublePlay) {
     sprites.push(...buildGamecastDoublePlaySprites(event, progress, palette, catchProgress));
-  } else if (["out", "single", "double", "error"].includes(event.outcome) && progress >= catchProgress + 0.04 && progress <= 0.84) {
+  } else if (["out", "single", "double", "error"].includes(event.outcome) && progress >= catchProgress + 0.04 && progress <= resultReveal) {
     const firstBase = gamecastBasePositions().first;
     const stretchT = Math.max(0, Math.min(1, (progress - catchProgress - 0.04) / 0.22));
     sprites.push(gamecastSupportFielderSprite(event, palette, "1B", {
@@ -8658,7 +8766,7 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     }, progress > catchProgress + 0.18 ? "catch" : "field", 1));
   }
 
-  if (event.outcome === "homeRun" && progress > 0.64) {
+  if (event.outcome === "homeRun" && progress > catchProgress) {
     const chaseKey = gamecastFieldingKeyForTarget(event, target);
     sprites.push({
       position: { x: Math.round(target.x), y: Math.round(target.y + gamecastSize(7)) },
@@ -8778,7 +8886,9 @@ function buildGamecastDoublePlaySprites(event, progress, palette, catchProgress)
 function buildGamecastThrowLines(event, progress) {
   if (!isBattedBallOutcome(event?.outcome)) return [];
   if (!["out", "error", "single", "double"].includes(event.outcome)) return [];
-  if (progress < 0.58 || progress > 0.78) return [];
+  const startProgress = gamecastThrowStartProgress(event);
+  const endProgress = gamecastThrowEndProgress(event);
+  if (progress < startProgress || progress > endProgress) return [];
 
   const target = battedBallGroundPoint(event, 1);
   const bases = gamecastBasePositions();
@@ -8787,7 +8897,7 @@ function buildGamecastThrowLines(event, progress) {
     : event.outcome === "double"
       ? bases.second
       : bases.home;
-  const t = Math.max(0, Math.min(1, (progress - 0.58) / 0.2));
+  const t = Math.max(0, Math.min(1, (progress - startProgress) / Math.max(0.01, endProgress - startProgress)));
   return [{
     from: target,
     to: throwTarget,
@@ -8797,14 +8907,99 @@ function buildGamecastThrowLines(event, progress) {
 }
 
 function gamecastPitchEnd(event) {
-  if (event?.outcome === "walk") return 0.34;
-  if (event?.outcome === "strikeout") return 0.26;
-  return 0.22;
+  if (event?.outcome === "walk") return 0.42;
+  if (event?.outcome === "strikeout") return 0.38;
+  return 0.3;
 }
 
 function gamecastRunnerMoveStart(event) {
-  if (event?.outcome === "walk") return 0.34;
-  return 0.25;
+  if (event?.outcome === "walk") return 0.48;
+  if (event?.outcome === "homeRun") return 0.58;
+  if (event?.outcome === "out" || event?.doublePlay) return 0.43;
+  return 0.46;
+}
+
+function gamecastRunnerMoveEnd(event) {
+  if (event?.outcome === "homeRun") return 0.94;
+  if (event?.outcome === "triple") return 0.9;
+  if (event?.outcome === "double") return 0.86;
+  if (event?.outcome === "single" || event?.outcome === "error") return 0.82;
+  if (event?.outcome === "walk") return 0.78;
+  if (event?.doublePlay) return 0.84;
+  if (event?.outcome === "out") return 0.82;
+  return 0.78;
+}
+
+function gamecastBallFlightEnd(event) {
+  if (event?.outcome === "homeRun") return 0.88;
+  if (event?.outcome === "triple") return 0.84;
+  if (event?.outcome === "double") return 0.82;
+  if (event?.outcome === "single" || event?.outcome === "error") return 0.76;
+  if (event?.outcome === "out") return String(event?.battedBallType ?? "") === "groundBall" ? 0.66 : 0.76;
+  return Math.min(0.68, gamecastPitchEnd(event) + 0.22);
+}
+
+function gamecastFieldingCatchProgress(event) {
+  const battedType = String(event?.battedBallType ?? "");
+  if (event?.outcome === "homeRun") return 0.78;
+  if (battedType === "groundBall") return 0.62;
+  if (battedType === "lineDrive") return 0.66;
+  if (battedType === "flyBall") return 0.72;
+  return event?.outcome === "out" ? 0.68 : 0.64;
+}
+
+function gamecastThrowStartProgress(event) {
+  if (event?.outcome === "homeRun") return 1;
+  return Math.min(0.84, gamecastFieldingCatchProgress(event) + 0.08);
+}
+
+function gamecastThrowEndProgress(event) {
+  return Math.max(gamecastThrowStartProgress(event) + 0.12, gamecastResultRevealProgress(event) - 0.04);
+}
+
+function gamecastResultRevealProgress(event) {
+  if (!event) return 0.82;
+  if (event.outcome === "homeRun") return 0.93;
+  if (event.outcome === "triple") return 0.9;
+  if (event.outcome === "double") return 0.86;
+  if (event.outcome === "single" || event.outcome === "error") return 0.82;
+  if (event.outcome === "walk") return 0.78;
+  if (event.outcome === "strikeout") return 0.64;
+  if (event.doublePlay) return 0.84;
+  if (event.outcome === "out") return 0.82;
+  return 0.82;
+}
+
+function gamecastScoreRevealProgress(event) {
+  if (!event || Number(event.runs ?? 0) <= 0) return gamecastResultRevealProgress(event);
+  if (event.outcome === "homeRun") return 0.94;
+  return Math.max(gamecastResultRevealProgress(event), gamecastRunnerMoveEnd(event));
+}
+
+function gamecastFrameResultRevealed(frame) {
+  if (!frame?.event) return false;
+  if (frame.done || frame.resultRevealed) return true;
+  return Number(frame.progress ?? 0) >= gamecastResultRevealProgress(frame.event);
+}
+
+function buildGamecastCamera(event, progress) {
+  if (event?.outcome !== "homeRun") return null;
+  const start = gamecastPitchEnd(event) + 0.08;
+  const end = gamecastScoreRevealProgress(event);
+  if (progress < start || progress > end) return null;
+  const t = Math.max(0, Math.min(1, (progress - start) / Math.max(0.01, end - start)));
+  const flightEnd = gamecastBallFlightEnd(event);
+  const ballT = Math.max(0, Math.min(1, (Math.min(progress, flightEnd) - gamecastPitchEnd(event)) / Math.max(0.01, flightEnd - gamecastPitchEnd(event))));
+  const ball = battedBallPoint(event, ballT);
+  const bases = gamecastBasePositions();
+  const runnerFocus = t > 0.72
+    ? { x: bases.home.x, y: bases.home.y - gamecastSize(7) }
+    : ball;
+  return {
+    x: runnerFocus.x,
+    y: runnerFocus.y,
+    zoom: 1 + Math.sin(t * Math.PI) * 0.1
+  };
 }
 
 function pitchTargetForEvent(event, bases) {
@@ -8845,6 +9040,11 @@ function battedBallTarget(event) {
   const xJitter = gamecastEventNoise(event, 2) * 7;
   const yJitter = gamecastEventNoise(event, 3) * 5;
   const fieldPoint = (x, y, options = {}) => gamecastPlayableFieldPoint(event, x, y, options);
+  if (event?.outcome === "homeRun") {
+    const logicalX = Math.max(14, Math.min(106, (pullSide > 0 ? 102 : 18) + xJitter));
+    const wallY = gamecastOutfieldWallY(gamecastBallparkProfileForEvent(event), logicalX);
+    return { x: gamecastX(logicalX), y: gamecastY(Math.max(8, wallY - 4 + yJitter * 0.2)) };
+  }
   const fieldingSpot = gamecastFieldingSpot(event);
   if (fieldingSpot) {
     const battedType = String(event?.battedBallType ?? "");
@@ -8853,7 +9053,6 @@ function battedBallTarget(event) {
       warningTrack: ["LF", "CF", "RF"].includes(normalizeFieldingPosition(event?.fieldingPosition))
     });
   }
-  if (event?.outcome === "homeRun") return fieldPoint((pullSide > 0 ? 102 : 18) + xJitter, 30 + yJitter * 0.5, { warningTrack: true });
   if (event?.outcome === "triple") return fieldPoint((pullSide > 0 ? 104 : 16) + xJitter, 39 + yJitter, { warningTrack: true });
   if (event?.outcome === "double") return fieldPoint((pullSide > 0 ? 94 : 26) + xJitter, 46 + yJitter, { warningTrack: true });
   if (event?.outcome === "single") return fieldPoint((pullSide > 0 ? 78 : 42) + xJitter, 58 + yJitter);
@@ -8987,9 +9186,9 @@ function syncGamecastDom(state, frame) {
   if (state.nowDetail) {
     state.nowDetail.textContent = frame.done
       ? `최종 스코어 ${formatNumber(frame.score?.away ?? state.sequence.finalAway ?? 0)}-${formatNumber(frame.score?.home ?? state.sequence.finalHome ?? 0)}`
-      : frame.event ? gamecastNowDetail(frame.event) : "타석 이벤트 대기";
+      : frame.event ? gamecastFrameNowDetail(frame) : "타석 이벤트 대기";
   }
-  syncGamecastMatchup(state.matchup, frame.event);
+  syncGamecastMatchup(state.matchup, frame.event, frame);
   syncGamecastPlayerLabel(state.playerLabel, frame.done ? null : frame.playerLabel);
   syncGamecastActionBurst(state.actionBurst, frame.done ? null : frame.actionBurst);
   syncGamecastHud(state.hud, frame);
@@ -9054,16 +9253,16 @@ function playGamecastSoundForFrame(state, frame) {
   if (isBattedBallOutcome(event.outcome) && progress >= pitchEnd + 0.015 && mark("contact")) {
     playGamecastContactSound(event);
   }
-  if (event.outcome === "strikeout" && progress >= 0.42 && mark("strikeout")) {
+  if (event.outcome === "strikeout" && progress >= gamecastResultRevealProgress(event) && mark("strikeout")) {
     playGamecastStrikeoutSound(event);
   }
-  if (event.outcome === "walk" && progress >= 0.54 && mark("walk")) {
+  if (event.outcome === "walk" && progress >= gamecastResultRevealProgress(event) && mark("walk")) {
     playGamecastWalkSound(event);
   }
-  if ((event.outcome === "out" || event.doublePlay) && progress >= 0.62 && mark("catch")) {
+  if ((event.outcome === "out" || event.doublePlay) && progress >= gamecastResultRevealProgress(event) && mark("catch")) {
     playGamecastCatchSound(event);
   }
-  if ((Number(event.runs ?? 0) > 0 || event.outcome === "homeRun") && progress >= 0.68 && mark("crowd")) {
+  if ((Number(event.runs ?? 0) > 0 || event.outcome === "homeRun") && progress >= gamecastScoreRevealProgress(event) && mark("crowd")) {
     playGamecastCrowdSwell(event);
   }
 }
@@ -9206,7 +9405,7 @@ function syncGamecastFeed(state, frame) {
   const events = state.sequence.events ?? [];
   if (!events.length) return;
   const rawIndex = Math.max(0, Math.min(events.length - 1, Number(frame.eventIndex ?? events.findIndex((event) => event.id === frame.event?.id))));
-  const revealCurrent = Boolean(frame.done || frame.bridge || Number(frame.gapProgress ?? 0) > 0 || Number(frame.progress ?? 0) >= 0.62);
+  const revealCurrent = Boolean(frame.done || frame.bridge || Number(frame.gapProgress ?? 0) > 0 || gamecastFrameResultRevealed(frame));
   const targetIndex = frame.done ? events.length - 1 : (revealCurrent ? rawIndex : rawIndex - 1);
   for (const item of [...(state.feedList.querySelectorAll?.("li[data-gamecast-event-id]") ?? [])]) {
     const itemIndex = Number(item.dataset.gamecastEventIndex ?? -1);
@@ -9313,9 +9512,9 @@ function syncGamecastHud(hud, frame) {
   if (!hud?.root) return;
   const event = frame.done ? null : frame.event;
   hud.root.classList.toggle("is-scoring", Boolean(frame.scoreFlash));
-  hud.root.classList.toggle("is-homer", event?.outcome === "homeRun");
+  hud.root.classList.toggle("is-homer", event?.outcome === "homeRun" && gamecastFrameResultRevealed(frame));
   if (hud.inning) hud.inning.textContent = event ? formatGamecastInningCompact(event) : "FINAL";
-  if (hud.result) hud.result.textContent = event ? gamecastJumbotronText(event) : "END";
+  if (hud.result) hud.result.textContent = event ? gamecastJumbotronTextForFrame(frame) : "END";
   if (hud.away) hud.away.textContent = formatNumber(frame.score?.away ?? 0);
   if (hud.home) hud.home.textContent = formatNumber(frame.score?.home ?? 0);
 
@@ -9329,9 +9528,9 @@ function syncGamecastHud(hud, frame) {
   });
 }
 
-function syncGamecastMatchup(node, event) {
+function syncGamecastMatchup(node, event, frame = null) {
   if (!node) return;
-  const summary = gamecastMatchupSummary(event);
+  const summary = gamecastMatchupSummary(event, frame);
   const stateNode = node.querySelector("[data-gamecast-matchup-state]");
   const hitterNode = node.querySelector("[data-gamecast-matchup-hitter]");
   const pitcherNode = node.querySelector("[data-gamecast-matchup-pitcher]");
@@ -9597,7 +9796,7 @@ function drawPixelBall(ctx, palette, position, color) {
   const previousAlpha = ctx.globalAlpha;
   ctx.globalAlpha = Math.max(0, Math.min(1, Number(position.opacity ?? 1)));
   drawPixelBallWake(ctx, palette, position, color);
-  const size = Math.max(1, Math.round(Number(position.size ?? 1)));
+  const size = Math.max(2, Math.round(Number(position.size ?? 1)));
   const r = size + 1;
   // bright halo (diamond, not a hard square) so the ball pops without a boxy dark border
   ctx.globalAlpha = Math.max(0, Math.min(1, Number(position.opacity ?? 1))) * 0.5;
