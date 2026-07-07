@@ -1386,45 +1386,89 @@ export function simulateDraft(state) {
   }
 
   const draft = state.draft;
-  for (let pickIndex = draft.picks.length; pickIndex < draft.totalPicks; pickIndex += 1) {
-    const round = Math.floor(pickIndex / DRAFT_PICKS_PER_ROUND) + 1;
-    const slot = pickIndex % DRAFT_PICKS_PER_ROUND;
-    const teamOrder = draft.order[slot];
-    const strategy = draft.strategies[teamOrder.teamId];
-    const prospect = selectDraftProspect(draft.prospects, strategy, round, pickIndex + 1);
-    if (!prospect) break;
-
-    prospect.picked = true;
-    prospect.pickNumber = pickIndex + 1;
-    prospect.round = round;
-    prospect.pickInRound = slot + 1;
-    prospect.selectedByTeamId = teamOrder.teamId;
-    prospect.selectedByTeamName = teamOrder.name;
-
-    draft.picks.push({
-      pickNumber: pickIndex + 1,
-      round,
-      pickInRound: slot + 1,
-      teamId: teamOrder.teamId,
-      teamName: teamOrder.name,
-      prospectId: prospect.id,
-      displayCode: prospect.displayCode,
-      role: prospect.role,
-      position: prospect.position,
-      classType: prospect.classType,
-      profile: prospect.profile,
-      presentGrade: prospect.presentGrade,
-      futureGrade: prospect.futureGrade,
-      certainty: prospect.certainty,
-      risk: prospect.risk
-    });
+  draft.pendingUserPick = null;
+  let guard = 0;
+  while (draft.status !== "complete" && guard < draft.totalPicks + 2) {
+    guard += 1;
+    const slot = getNextDraftSlot(draft);
+    if (!slot) break;
+    const result = commitAutomaticDraftPick(state, slot);
+    if (!result.ok) break;
   }
 
-  draft.status = "complete";
-  draft.completedDate = state.currentDate;
-  const rosterResult = applyDraftSelectionsToRosters(state);
-  addLog(state, `${state.currentDate} ${draft.year} 신인 드래프트 완료: ${draft.picks.length}명 지명, ${rosterResult.added}명 rookie 계약, ${draft.rightsLedger?.length ?? 0}명 보류권, 미지명 ${draft.prospects.length - draft.picks.length}명.`);
+  finalizeDraftIfComplete(state, draft);
   return state;
+}
+
+export function advanceDraftPick(state, options = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  initializeDraft(state);
+  const draft = state.draft;
+  if (draft?.status === "complete") {
+    applyDraftSelectionsToRosters(state);
+    return { ok: true, code: "complete", message: "신인 드래프트가 이미 완료됐습니다.", draft };
+  }
+
+  const slot = getNextDraftSlot(draft);
+  if (!slot) {
+    finalizeDraftIfComplete(state, draft, { force: true });
+    return { ok: true, code: "complete", message: "신인 드래프트가 완료됐습니다.", draft };
+  }
+
+  const userTeamId = String(options.teamId ?? state.selectedTeamId ?? "");
+  if (String(slot.teamOrder.teamId) === userTeamId && options.allowUserAuto !== true) {
+    draft.pendingUserPick = makeDraftPendingUserPick(draft, slot, userTeamId);
+    return {
+      ok: false,
+      code: "pending-user-pick",
+      message: `${slot.teamOrder.name} ${slot.round}라운드 지명 차례입니다.`,
+      pendingUserPick: draft.pendingUserPick
+    };
+  }
+
+  return commitAutomaticDraftPick(state, slot);
+}
+
+export function advanceDraftToUserPick(state, options = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  initializeDraft(state);
+  const draft = state.draft;
+  const results = [];
+  const maxPicks = Math.max(1, safeNumber(options.maxPicks, draft.totalPicks));
+  for (let guard = 0; guard < maxPicks; guard += 1) {
+    const result = advanceDraftPick(state, options);
+    results.push(result);
+    if (result.code === "pending-user-pick" || result.code === "complete" || !result.ok) {
+      return { ...result, advancedPicks: results.filter((entry) => entry.ok && entry.pick).length, results };
+    }
+  }
+  return { ok: true, code: "max-picks", message: `${results.length}픽 진행 후 멈췄습니다.`, advancedPicks: results.length, results };
+}
+
+export function commitUserDraftPick(state, input = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  initializeDraft(state);
+  const draft = state.draft;
+  if (draft?.status === "complete") return { ok: false, code: "draft-complete", message: "이미 완료된 드래프트입니다." };
+
+  const slot = getNextDraftSlot(draft);
+  const userTeamId = String(input.teamId ?? state.selectedTeamId ?? "");
+  if (!slot || String(slot.teamOrder.teamId) !== userTeamId) {
+    return { ok: false, code: "not-user-turn", message: "현재 유저 구단의 지명 차례가 아닙니다." };
+  }
+
+  const prospectId = String(input.prospectId ?? "");
+  const prospect = (draft.prospects ?? []).find((entry) => String(entry.id) === prospectId);
+  if (!prospect) return { ok: false, code: "invalid-prospect", message: "드래프트 후보를 찾지 못했습니다." };
+  if (prospect.picked || (draft.picks ?? []).some((pick) => String(pick.prospectId) === prospectId)) {
+    return { ok: false, code: "duplicate-prospect", message: "이미 지명된 후보입니다." };
+  }
+
+  const pick = appendDraftPick(draft, prospect, slot, "user-command");
+  draft.pendingUserPick = null;
+  finalizeDraftIfComplete(state, draft);
+  addLog(state, `${state.currentDate} ${slot.teamOrder.name} ${slot.round}라운드 ${prospect.displayCode} 직접 지명.`);
+  return { ok: true, code: "user-pick-committed", message: `${prospect.displayCode} 지명을 확정했습니다.`, pick };
 }
 
 export function initializeSecondaryDraft(state) {
@@ -1485,62 +1529,159 @@ export function simulateSecondaryDraft(state) {
   }
 
   const draft = state.secondaryDraft;
-  const originPickCounts = new Map();
-  for (const pick of draft.picks) {
-    originPickCounts.set(pick.fromTeamId, (originPickCounts.get(pick.fromTeamId) ?? 0) + 1);
+  draft.pendingUserPick = null;
+  let guard = 0;
+  while (draft.status !== "complete" && guard < draft.maxPicks + 2) {
+    guard += 1;
+    const slot = getNextSecondaryDraftSlot(draft);
+    if (!slot) break;
+    const result = commitAutomaticSecondaryDraftPick(state, slot);
+    if (!result.ok && result.code !== "secondary-pick-passed") break;
   }
 
-  for (const slot of buildSecondaryDraftSlots(draft)) {
-    if (draft.picks.some((pick) => pick.slotId === slot.slotId) || draft.passedSlots.some((entry) => entry.slotId === slot.slotId)) {
-      continue;
-    }
-
-    const team = findTeamById(state, slot.teamId);
-    const strategy = draft.strategies[slot.teamId];
-    const candidate = selectSecondaryDraftCandidate(draft.exposurePool, strategy, team, slot, originPickCounts);
-    if (!candidate) {
-      draft.passedSlots.push({
-        ...slot,
-        reason: "eligible-candidate-empty"
-      });
-      continue;
-    }
-
-    candidate.picked = true;
-    candidate.selectedByTeamId = slot.teamId;
-    candidate.selectedByTeamName = slot.teamName;
-    candidate.round = slot.round;
-    candidate.pickNumber = draft.picks.length + 1;
-
-    originPickCounts.set(candidate.teamId, (originPickCounts.get(candidate.teamId) ?? 0) + 1);
-    draft.picks.push({
-      slotId: slot.slotId,
-      pickNumber: draft.picks.length + 1,
-      round: slot.round,
-      pickInRound: slot.pickInRound,
-      teamId: slot.teamId,
-      teamName: slot.teamName,
-      fromTeamId: candidate.teamId,
-      fromTeamName: candidate.teamName,
-      playerId: candidate.playerId,
-      name: candidate.name,
-      role: candidate.role,
-      position: candidate.position,
-      age: candidate.age,
-      ovr: candidate.ovr,
-      pot: candidate.pot,
-      protectionScore: candidate.protectionScore,
-      acquisitionScore: candidate.acquisitionScore,
-      compensationKRW: SECONDARY_DRAFT_COMPENSATION_BY_ROUND[slot.round] ?? 0,
-      obligation: "next-season-registration-v1"
-    });
-  }
-
-  draft.status = "complete";
-  draft.completedDate = state.currentDate;
-  const rosterResult = applySecondaryDraftMoves(state);
-  addLog(state, `${state.currentDate} ${draft.year} 2차 드래프트 완료: ${draft.picks.length}명 지명, ${rosterResult.moved}명 소속 이동, 패스 ${draft.passedSlots.length}건.`);
+  finalizeSecondaryDraftIfComplete(state, draft);
   return state;
+}
+
+export function setSecondaryDraftProtection(state, input = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  initializeSecondaryDraft(state);
+  const draft = state.secondaryDraft;
+  if (draft?.status === "complete" || (draft?.picks ?? []).length > 0 || (draft?.passedSlots ?? []).length > 0) {
+    return { ok: false, code: "secondary-draft-started", message: "2차 드래프트 지명이 시작된 뒤에는 보호명단을 바꿀 수 없습니다." };
+  }
+
+  const teamId = String(input.teamId ?? state.selectedTeamId ?? "");
+  const team = findTeamById(state, teamId);
+  if (!team) return { ok: false, code: "team-not-found", message: "구단을 찾지 못했습니다." };
+
+  const playerIds = [...new Set((input.playerIds ?? []).map((id) => String(id)))];
+  if (playerIds.length !== SECONDARY_DRAFT_PROTECTED_COUNT) {
+    return { ok: false, code: "invalid-protected-count", message: `보호선수는 정확히 ${SECONDARY_DRAFT_PROTECTED_COUNT}명이어야 합니다.` };
+  }
+
+  const eligible = (team.roster ?? []).filter((player) => !secondaryHardExclusionReason(player));
+  const eligibleIds = new Set(eligible.map((player) => String(player.id)));
+  const invalidIds = playerIds.filter((id) => !eligibleIds.has(id));
+  if (invalidIds.length > 0) {
+    return { ok: false, code: "invalid-player", message: `보호 불가 선수가 포함됐습니다: ${invalidIds.slice(0, 3).join(", ")}` };
+  }
+
+  const protectedSet = new Set(playerIds);
+  const hardExcluded = [];
+  const protectedPlayers = [];
+  const exposedPlayers = [];
+  for (const player of team.roster ?? []) {
+    const hardReason = secondaryHardExclusionReason(player);
+    if (hardReason) {
+      hardExcluded.push(toSecondaryDraftPlayerCard(team, player, "hardExcluded", hardReason));
+      continue;
+    }
+    const score = Math.round(secondaryProtectionScore(player, team));
+    const card = {
+      ...toSecondaryDraftPlayerCard(team, player, protectedSet.has(String(player.id)) ? "protected" : "exposed", protectedSet.has(String(player.id)) ? "manager-protected-35" : "manager-exposed"),
+      protectionScore: score
+    };
+    if (protectedSet.has(String(player.id))) {
+      protectedPlayers.push(card);
+    } else {
+      exposedPlayers.push({ ...card, picked: false, selectedByTeamId: null });
+    }
+  }
+
+  draft.protections[team.id] = {
+    teamId: team.id,
+    teamName: team.name,
+    teamShortName: team.shortName ?? team.name,
+    protectedCount: protectedPlayers.length,
+    exposedCount: exposedPlayers.length,
+    hardExcludedCount: hardExcluded.length,
+    protected: protectedPlayers.sort((a, b) => safeNumber(b.protectionScore) - safeNumber(a.protectionScore) || compareText(a.name, b.name)),
+    exposed: exposedPlayers.sort((a, b) => safeNumber(b.protectionScore) - safeNumber(a.protectionScore) || compareText(a.name, b.name)),
+    hardExcluded,
+    source: "manager-protection-command-v1"
+  };
+  draft.exposurePool = Object.values(draft.protections).flatMap((entry) => entry.exposed ?? []);
+  addLog(state, `${state.currentDate} ${team.name} 2차 드래프트 보호명단 조정: ${protectedPlayers.length}명 보호, ${exposedPlayers.length}명 노출.`);
+  return { ok: true, code: "secondary-protection-updated", message: "2차 드래프트 보호명단을 저장했습니다.", protection: draft.protections[team.id] };
+}
+
+export function advanceSecondaryDraftPick(state, options = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  initializeSecondaryDraft(state);
+  const draft = state.secondaryDraft;
+  if (draft?.status === "complete") {
+    applySecondaryDraftMoves(state);
+    return { ok: true, code: "complete", message: "2차 드래프트가 이미 완료됐습니다.", draft };
+  }
+
+  const slot = getNextSecondaryDraftSlot(draft);
+  if (!slot) {
+    finalizeSecondaryDraftIfComplete(state, draft, { force: true });
+    return { ok: true, code: "complete", message: "2차 드래프트가 완료됐습니다.", draft };
+  }
+
+  const userTeamId = String(options.teamId ?? state.selectedTeamId ?? "");
+  if (String(slot.teamId) === userTeamId && options.allowUserAuto !== true) {
+    draft.pendingUserPick = makeSecondaryPendingUserPick(draft, slot, userTeamId);
+    return {
+      ok: false,
+      code: "pending-user-pick",
+      message: `${slot.teamName} 2차 드래프트 ${slot.round}라운드 지명 차례입니다.`,
+      pendingUserPick: draft.pendingUserPick
+    };
+  }
+
+  return commitAutomaticSecondaryDraftPick(state, slot);
+}
+
+export function advanceSecondaryDraftToUserPick(state, options = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  initializeSecondaryDraft(state);
+  const draft = state.secondaryDraft;
+  const results = [];
+  const maxPicks = Math.max(1, safeNumber(options.maxPicks, draft.maxPicks));
+  for (let guard = 0; guard < maxPicks; guard += 1) {
+    const result = advanceSecondaryDraftPick(state, options);
+    results.push(result);
+    if (result.code === "pending-user-pick" || result.code === "complete" || (!result.ok && result.code !== "secondary-pick-passed")) {
+      return { ...result, advancedPicks: results.filter((entry) => entry.ok && entry.pick).length, results };
+    }
+  }
+  return { ok: true, code: "max-picks", message: `${results.length}픽 진행 후 멈췄습니다.`, advancedPicks: results.length, results };
+}
+
+export function commitUserSecondaryDraftPick(state, input = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  initializeSecondaryDraft(state);
+  const draft = state.secondaryDraft;
+  if (draft?.status === "complete") return { ok: false, code: "secondary-draft-complete", message: "이미 완료된 2차 드래프트입니다." };
+
+  const slot = getNextSecondaryDraftSlot(draft);
+  const userTeamId = String(input.teamId ?? state.selectedTeamId ?? "");
+  if (!slot || String(slot.teamId) !== userTeamId) {
+    return { ok: false, code: "not-user-turn", message: "현재 유저 구단의 2차 드래프트 지명 차례가 아닙니다." };
+  }
+
+  const playerId = String(input.playerId ?? "");
+  const originPickCounts = secondaryOriginPickCounts(draft);
+  const candidate = (draft.exposurePool ?? []).find((entry) => String(entry.playerId) === playerId);
+  if (!candidate) return { ok: false, code: "invalid-player", message: "비보호 풀에서 선수를 찾지 못했습니다." };
+  if (candidate.picked || (draft.picks ?? []).some((pick) => String(pick.playerId) === playerId)) {
+    return { ok: false, code: "duplicate-player", message: "이미 지명된 선수입니다." };
+  }
+  if (String(candidate.teamId) === userTeamId) {
+    return { ok: false, code: "own-player", message: "자기 팀 선수는 지명할 수 없습니다." };
+  }
+  if (safeNumber(originPickCounts.get(candidate.teamId)) >= SECONDARY_DRAFT_ORIGIN_PICK_LIMIT) {
+    return { ok: false, code: "origin-limit", message: "해당 원소속팀의 피지명 제한을 넘습니다." };
+  }
+
+  const pick = appendSecondaryDraftPick(draft, candidate, slot, originPickCounts, "user-command");
+  draft.pendingUserPick = null;
+  finalizeSecondaryDraftIfComplete(state, draft);
+  addLog(state, `${state.currentDate} ${slot.teamName} 2차 드래프트 ${candidate.name} 직접 지명.`);
+  return { ok: true, code: "secondary-user-pick-committed", message: `${candidate.name} 지명을 확정했습니다.`, pick };
 }
 
 export function initializeFreeAgency(state) {
@@ -4910,6 +5051,200 @@ function formatPitchingAwardLine(stats = {}) {
 function formatAwardRate(value) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number.toFixed(3).replace(/^0/, "") : "-";
+}
+
+function getNextDraftSlot(draft) {
+  if (!draft || draft.status === "complete") return null;
+  const pickIndex = safeNumber(draft.picks?.length);
+  if (pickIndex >= safeNumber(draft.totalPicks)) return null;
+  const round = Math.floor(pickIndex / safeNumber(draft.picksPerRound, DRAFT_PICKS_PER_ROUND)) + 1;
+  const slotIndex = pickIndex % safeNumber(draft.picksPerRound, DRAFT_PICKS_PER_ROUND);
+  const teamOrder = draft.order?.[slotIndex];
+  if (!teamOrder) return null;
+  return {
+    pickIndex,
+    pickNumber: pickIndex + 1,
+    round,
+    pickInRound: slotIndex + 1,
+    teamOrder
+  };
+}
+
+function commitAutomaticDraftPick(state, slot) {
+  const draft = state?.draft;
+  if (!draft || !slot) return { ok: false, code: "missing-draft-slot", message: "드래프트 픽 정보를 찾지 못했습니다." };
+  const strategy = draft.strategies?.[slot.teamOrder.teamId];
+  const prospect = selectDraftProspect(draft.prospects, strategy, slot.round, slot.pickNumber);
+  if (!prospect) {
+    finalizeDraftIfComplete(state, draft, { force: true });
+    return { ok: true, code: "complete", message: "지명 가능한 후보가 없어 드래프트를 종료했습니다." };
+  }
+  const pick = appendDraftPick(draft, prospect, slot, "auto");
+  finalizeDraftIfComplete(state, draft);
+  return { ok: true, code: "draft-pick-advanced", message: `${slot.teamOrder.name} ${prospect.displayCode} 지명`, pick };
+}
+
+function appendDraftPick(draft, prospect, slot, source = "auto") {
+  prospect.picked = true;
+  prospect.pickNumber = slot.pickNumber;
+  prospect.round = slot.round;
+  prospect.pickInRound = slot.pickInRound;
+  prospect.selectedByTeamId = slot.teamOrder.teamId;
+  prospect.selectedByTeamName = slot.teamOrder.name;
+
+  const pick = {
+    pickNumber: slot.pickNumber,
+    round: slot.round,
+    pickInRound: slot.pickInRound,
+    teamId: slot.teamOrder.teamId,
+    teamName: slot.teamOrder.name,
+    prospectId: prospect.id,
+    displayCode: prospect.displayCode,
+    role: prospect.role,
+    position: prospect.position,
+    classType: prospect.classType,
+    profile: prospect.profile,
+    age: prospect.age,
+    presentGrade: prospect.presentGrade,
+    futureGrade: prospect.futureGrade,
+    certainty: prospect.certainty,
+    risk: prospect.risk,
+    source
+  };
+  draft.picks.push(pick);
+  return pick;
+}
+
+function makeDraftPendingUserPick(draft, slot, teamId) {
+  return {
+    type: "draft",
+    status: "open",
+    teamId,
+    pickNumber: slot.pickNumber,
+    round: slot.round,
+    pickInRound: slot.pickInRound,
+    teamName: slot.teamOrder.name,
+    openedAt: draft.year,
+    eligibleProspectIds: (draft.prospects ?? []).filter((prospect) => !prospect.picked).slice(0, 40).map((prospect) => prospect.id)
+  };
+}
+
+function finalizeDraftIfComplete(state, draft, options = {}) {
+  if (!draft || draft.status === "complete") return false;
+  const complete = options.force === true ||
+    safeNumber(draft.picks?.length) >= safeNumber(draft.totalPicks) ||
+    !(draft.prospects ?? []).some((prospect) => !prospect.picked);
+  if (!complete) return false;
+
+  draft.status = "complete";
+  draft.completedDate = state.currentDate;
+  draft.pendingUserPick = null;
+  const rosterResult = applyDraftSelectionsToRosters(state);
+  addLog(state, `${state.currentDate} ${draft.year} 신인 드래프트 완료: ${draft.picks.length}명 지명, ${rosterResult.added}명 rookie 계약, ${draft.rightsLedger?.length ?? 0}명 보류권, 미지명 ${draft.prospects.length - draft.picks.length}명.`);
+  return true;
+}
+
+function getNextSecondaryDraftSlot(draft) {
+  if (!draft || draft.status === "complete") return null;
+  return buildSecondaryDraftSlots(draft).find((slot) =>
+    !(draft.picks ?? []).some((pick) => pick.slotId === slot.slotId) &&
+    !(draft.passedSlots ?? []).some((entry) => entry.slotId === slot.slotId)
+  ) ?? null;
+}
+
+function secondaryOriginPickCounts(draft) {
+  const counts = new Map();
+  for (const pick of draft?.picks ?? []) {
+    counts.set(pick.fromTeamId, (counts.get(pick.fromTeamId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function commitAutomaticSecondaryDraftPick(state, slot) {
+  const draft = state?.secondaryDraft;
+  if (!draft || !slot) return { ok: false, code: "missing-secondary-slot", message: "2차 드래프트 픽 정보를 찾지 못했습니다." };
+  const originPickCounts = secondaryOriginPickCounts(draft);
+  const team = findTeamById(state, slot.teamId);
+  const strategy = draft.strategies?.[slot.teamId];
+  const candidate = selectSecondaryDraftCandidate(draft.exposurePool, strategy, team, slot, originPickCounts);
+  if (!candidate) {
+    draft.passedSlots.push({
+      ...slot,
+      reason: "eligible-candidate-empty"
+    });
+    finalizeSecondaryDraftIfComplete(state, draft);
+    return { ok: true, code: "secondary-pick-passed", message: `${slot.teamName} 지명 가능 후보 없음`, pass: draft.passedSlots.at(-1) };
+  }
+  const pick = appendSecondaryDraftPick(draft, candidate, slot, originPickCounts, "auto");
+  finalizeSecondaryDraftIfComplete(state, draft);
+  return { ok: true, code: "secondary-pick-advanced", message: `${slot.teamName} ${candidate.name} 지명`, pick };
+}
+
+function appendSecondaryDraftPick(draft, candidate, slot, originPickCounts, source = "auto") {
+  candidate.picked = true;
+  candidate.selectedByTeamId = slot.teamId;
+  candidate.selectedByTeamName = slot.teamName;
+  candidate.round = slot.round;
+  candidate.pickNumber = draft.picks.length + 1;
+  originPickCounts.set(candidate.teamId, (originPickCounts.get(candidate.teamId) ?? 0) + 1);
+
+  const pick = {
+    slotId: slot.slotId,
+    pickNumber: draft.picks.length + 1,
+    round: slot.round,
+    pickInRound: slot.pickInRound,
+    teamId: slot.teamId,
+    teamName: slot.teamName,
+    fromTeamId: candidate.teamId,
+    fromTeamName: candidate.teamName,
+    playerId: candidate.playerId,
+    name: candidate.name,
+    role: candidate.role,
+    position: candidate.position,
+    age: candidate.age,
+    ovr: candidate.ovr,
+    pot: candidate.pot,
+    protectionScore: candidate.protectionScore,
+    acquisitionScore: candidate.acquisitionScore,
+    compensationKRW: SECONDARY_DRAFT_COMPENSATION_BY_ROUND[slot.round] ?? 0,
+    obligation: "next-season-registration-v1",
+    source
+  };
+  draft.picks.push(pick);
+  return pick;
+}
+
+function makeSecondaryPendingUserPick(draft, slot, teamId) {
+  const originPickCounts = secondaryOriginPickCounts(draft);
+  return {
+    type: "secondaryDraft",
+    status: "open",
+    teamId,
+    slotId: slot.slotId,
+    round: slot.round,
+    pickInRound: slot.pickInRound,
+    teamName: slot.teamName,
+    openedAt: draft.year,
+    eligiblePlayerIds: (draft.exposurePool ?? [])
+      .filter((candidate) => !candidate.picked && String(candidate.teamId) !== String(teamId))
+      .filter((candidate) => safeNumber(originPickCounts.get(candidate.teamId)) < SECONDARY_DRAFT_ORIGIN_PICK_LIMIT)
+      .slice(0, 40)
+      .map((candidate) => candidate.playerId)
+  };
+}
+
+function finalizeSecondaryDraftIfComplete(state, draft, options = {}) {
+  if (!draft || draft.status === "complete") return false;
+  const nextSlot = getNextSecondaryDraftSlot(draft);
+  const complete = options.force === true || !nextSlot;
+  if (!complete) return false;
+
+  draft.status = "complete";
+  draft.completedDate = state.currentDate;
+  draft.pendingUserPick = null;
+  const rosterResult = applySecondaryDraftMoves(state);
+  addLog(state, `${state.currentDate} ${draft.year} 2차 드래프트 완료: ${draft.picks.length}명 지명, ${rosterResult.moved}명 소속 이동, 패스 ${draft.passedSlots.length}건.`);
+  return true;
 }
 
 function draftYearForState(state) {

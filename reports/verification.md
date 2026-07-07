@@ -1,10 +1,10 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-07T06:19:04.362Z
+- 실행 시각: 2026-07-07T07:18:59.962Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Program Files\nodejs\node.exe (v24.18.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
-- 종합 결과: 통과 (34/34 통과)
+- 종합 결과: 통과 (36/36 통과)
 
 ## 체크 결과
 
@@ -35,7 +35,9 @@
 | simulateRegularSeason 종료 상태 | PASS | 정규시즌 종료: 720/720경기, day=196, phase=complete | - |
 | 포스트시즌/시상식 자동 생성 | PASS | 삼성 라이온즈 우승, PS 17경기, MVP 올러, GG 10명 | - |
 | 신인 드래프트 v1 | PASS | 2027 드래프트 150명 풀, 110픽, 팀당 11명, 보류권 110명, 코드형 신인 56명 roster 반영 | - |
+| 신인 드래프트 유저 직접 지명 | PASS | 2027 유저팀 키움 11픽 직접 지명, reject 3종 통과 | - |
 | 2차 드래프트 v1 | PASS | 2027 2차 드래프트 보호 35명x10팀, 비보호 128명, 36/36픽, 36명 실제 이동 | - |
+| 2차 드래프트 보호명단/유저 지명 | PASS | 2027 보호명단 스왑 + 유저 2차 지명 5명, reject 3종 통과 | - |
 | 트레이드 v2 command | PASS | LG 트윈스 이용현 영입, KT 위즈 서영준 영입, 자산 player+cash+conditional+ptbnl, 자산타입 player/cash/draftPick/conditional/ptbnl, 조건부/현금/PTBNL ledger | - |
 | 트레이드 안전 게이트 23케이스 | PASS | 23개 reject 케이스 + 1개 성공 케이스 | - |
 | FA/외국인 시장 command | PASS | FA 30명/오퍼 30건, 외국인 코드 30명, roster 531명 유지 | - |

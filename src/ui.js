@@ -1,10 +1,14 @@
 import {
   advanceSeason,
+  advanceDraftToUserPick,
+  advanceSecondaryDraftToUserPick,
   buildLineup,
   buildPitchingSnapshot,
   commitGameInterventionPlan,
   commitPitchingPlan,
   commitScoutAssignment,
+  commitUserDraftPick,
+  commitUserSecondaryDraftPick,
   commitForeignPlayerSigning,
   commitFreeAgentSigning,
   commitTradeProposal,
@@ -31,6 +35,7 @@ import {
   simulateDraft,
   simulatePostseason,
   simulateSecondaryDraft,
+  setSecondaryDraftProtection,
   runAutonomousOffseason
 } from "./engine.js";
 
@@ -2943,11 +2948,10 @@ function bindActions(root, state) {
       setStatus(root, "드래프트는 한국시리즈 종료 후 진행할 수 있어요.");
       return;
     }
-    if (state.draft?.status === "ready") {
-      simulateDraft(state);
-      message = "신인 드래프트 11라운드를 완료했어요.";
-    } else if (state.draft?.status === "complete") {
+    if (state.draft?.status === "complete") {
       message = "드래프트 결과가 이미 확정되어 있어요.";
+    } else if (state.draft?.status === "ready") {
+      message = "드래프트 보드가 준비되어 있어요. 내 차례까지 진행하거나 전체 자동을 선택하세요.";
     } else {
       initializeDraft(state);
       message = "드래프트 보드 150명을 만들었어요.";
@@ -2955,6 +2959,51 @@ function bindActions(root, state) {
     state.ui = { ...(state.ui ?? {}), activeTab: "drafts" };
     render(root, state);
     setStatus(root, message);
+  });
+
+  root.querySelector("[data-action='draft-to-user-pick']")?.addEventListener("click", () => {
+    if (state.postseason?.status !== "complete") {
+      setStatus(root, "드래프트는 한국시리즈 종료 후 진행할 수 있어요.");
+      return;
+    }
+    const result = advanceDraftToUserPick(state, { teamId: state.selectedTeamId });
+    state.ui = { ...(state.ui ?? {}), activeTab: "drafts" };
+    render(root, state);
+    setStatus(root, result.message ?? "내 지명 차례까지 진행했습니다.");
+  });
+
+  root.querySelector("[data-action='draft-auto-complete']")?.addEventListener("click", () => {
+    if (state.postseason?.status !== "complete") {
+      setStatus(root, "드래프트는 한국시리즈 종료 후 진행할 수 있어요.");
+      return;
+    }
+    simulateDraft(state);
+    state.ui = { ...(state.ui ?? {}), activeTab: "drafts" };
+    render(root, state);
+    setStatus(root, "신인 드래프트 11라운드를 전체 자동으로 완료했어요.");
+  });
+
+  root.querySelectorAll("[data-action='draft-role-filter']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui = {
+        ...(state.ui ?? {}),
+        activeTab: "drafts",
+        draftRoleFilter: normalizeDraftRoleFilter(button.dataset.draftRole)
+      };
+      render(root, state);
+    });
+  });
+
+  root.querySelectorAll("[data-action='commit-draft-pick']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const result = commitUserDraftPick(state, {
+        teamId: state.selectedTeamId,
+        prospectId: button.dataset.prospectId || ""
+      });
+      state.ui = { ...(state.ui ?? {}), activeTab: "drafts" };
+      render(root, state);
+      setStatus(root, result.message ?? "지명 결과를 확인할 수 없습니다.");
+    });
   });
 
   root.querySelector("[data-action='commit-trade']")?.addEventListener("click", () => {
@@ -2999,11 +3048,10 @@ function bindActions(root, state) {
       setStatus(root, "2차 드래프트는 한국시리즈 종료 후 진행할 수 있어요.");
       return;
     }
-    if (state.secondaryDraft?.status === "ready") {
-      simulateSecondaryDraft(state);
-      message = "2차 드래프트 지명 결과를 확정했어요.";
-    } else if (state.secondaryDraft?.status === "complete") {
+    if (state.secondaryDraft?.status === "complete") {
       message = "2차 드래프트 결과가 이미 확정되어 있어요.";
+    } else if (state.secondaryDraft?.status === "ready") {
+      message = "2차 드래프트 보호명단이 준비되어 있어요. 보호명단을 조정하거나 내 차례까지 진행하세요.";
     } else {
       initializeSecondaryDraft(state);
       message = "2차 드래프트 보호명단과 비보호 풀을 만들었어요.";
@@ -3011,6 +3059,71 @@ function bindActions(root, state) {
     state.ui = { ...(state.ui ?? {}), activeTab: "drafts" };
     render(root, state);
     setStatus(root, message);
+  });
+
+  root.querySelector("[data-action='secondary-to-user-pick']")?.addEventListener("click", () => {
+    if (state.postseason?.status !== "complete") {
+      setStatus(root, "2차 드래프트는 한국시리즈 종료 후 진행할 수 있어요.");
+      return;
+    }
+    const result = advanceSecondaryDraftToUserPick(state, { teamId: state.selectedTeamId });
+    state.ui = { ...(state.ui ?? {}), activeTab: "drafts" };
+    render(root, state);
+    setStatus(root, result.message ?? "내 2차 드래프트 지명 차례까지 진행했습니다.");
+  });
+
+  root.querySelector("[data-action='secondary-auto-complete']")?.addEventListener("click", () => {
+    if (state.postseason?.status !== "complete") {
+      setStatus(root, "2차 드래프트는 한국시리즈 종료 후 진행할 수 있어요.");
+      return;
+    }
+    simulateSecondaryDraft(state);
+    state.ui = { ...(state.ui ?? {}), activeTab: "drafts" };
+    render(root, state);
+    setStatus(root, "2차 드래프트 지명 결과를 전체 자동으로 확정했어요.");
+  });
+
+  root.querySelectorAll("[data-action='commit-secondary-pick']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const result = commitUserSecondaryDraftPick(state, {
+        teamId: state.selectedTeamId,
+        playerId: button.dataset.playerId || ""
+      });
+      state.ui = { ...(state.ui ?? {}), activeTab: "drafts" };
+      render(root, state);
+      setStatus(root, result.message ?? "2차 드래프트 지명 결과를 확인할 수 없습니다.");
+    });
+  });
+
+  root.querySelectorAll("[data-action='toggle-secondary-protection']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const draft = state.secondaryDraft;
+      const protection = draft?.protections?.[state.selectedTeamId];
+      if (!protection) {
+        setStatus(root, "보호명단을 먼저 생성하세요.");
+        return;
+      }
+      const playerId = String(button.dataset.playerId || "");
+      const status = String(button.dataset.protectionStatus || "");
+      const protectedIds = (protection.protected ?? []).map((player) => String(player.playerId));
+      const exposedIds = (protection.exposed ?? []).map((player) => String(player.playerId));
+      let nextIds = protectedIds;
+      if (status === "exposed") {
+        const dropId = protectedIds.at(-1);
+        nextIds = protectedIds.filter((id) => id !== dropId).concat(playerId);
+      } else if (status === "protected") {
+        const addId = exposedIds[0];
+        nextIds = protectedIds.filter((id) => id !== playerId);
+        if (addId) nextIds.push(addId);
+      }
+      const result = setSecondaryDraftProtection(state, {
+        teamId: state.selectedTeamId,
+        playerIds: nextIds
+      });
+      state.ui = { ...(state.ui ?? {}), activeTab: "drafts" };
+      render(root, state);
+      setStatus(root, result.message ?? "보호명단 조정 결과를 확인할 수 없습니다.");
+    });
   });
 
   root.querySelector("[data-action='free-agency']")?.addEventListener("click", () => {
@@ -4348,6 +4461,13 @@ function renderDraftPanel(state) {
   const draft = state.draft;
   const board = draft?.prospects ?? buildDraftPreviewProspects();
   const selectedTeamId = state.selectedTeamId;
+  const roleFilter = normalizeDraftRoleFilter(state.ui?.draftRoleFilter);
+  const pendingPick = draft?.pendingUserPick?.status === "open" && String(draft.pendingUserPick.teamId) === String(selectedTeamId)
+    ? draft.pendingUserPick
+    : null;
+  const filteredBoard = board
+    .filter((prospect) => roleFilter === "all" || String(prospect.role) === roleFilter)
+    .filter((prospect) => !prospect.picked || String(prospect.selectedByTeamId ?? "") === String(selectedTeamId));
   const userPicks = (draft?.picks ?? []).filter((pick) => String(pick.teamId) === String(selectedTeamId));
   const orderText = draft?.order?.length
     ? draft.order.map((team) => team.shortName ?? team.name).join(" > ")
@@ -4372,6 +4492,19 @@ function renderDraftPanel(state) {
         <span>후보 풀 ${formatNumber(draft?.poolSize ?? 150)}명</span>
         <span>실명 검증 전 후보 코드만 사용</span>
       </div>
+      <div class="draft-command-row">
+        <button class="button button-soft" data-action="draft" type="button">${draft ? "보드 새로 보기" : "보드 생성"}</button>
+        <button class="button button-primary" data-action="draft-to-user-pick" type="button" ${draft?.status === "ready" ? "" : "disabled"}>내 차례까지 진행</button>
+        <button class="button button-soft" data-action="draft-auto-complete" type="button" ${draft?.status === "ready" ? "" : "disabled"}>전체 자동</button>
+        <div class="draft-filter-row" role="tablist" aria-label="드래프트 후보 필터">
+          ${["all", "pitcher", "hitter"].map((filter) => `
+            <button class="draft-filter ${roleFilter === filter ? "is-active" : ""}" data-action="draft-role-filter" data-draft-role="${escapeAttribute(filter)}" type="button">
+              ${escapeHtml(draftRoleFilterLabel(filter))}
+            </button>
+          `).join("")}
+        </div>
+      </div>
+      ${pendingPick ? renderDraftPendingPick(pendingPick) : ""}
       <div class="draft-strategy-grid">
         <article>
           <span class="mini-label">지명 순서</span>
@@ -4389,12 +4522,21 @@ function renderDraftPanel(state) {
         </article>
       </div>
       <div class="draft-board-grid">
-        ${board.slice(0, 8).map((prospect) => renderDraftCard(prospect, selectedTeamId)).join("")}
+        ${filteredBoard.slice(0, 20).map((prospect) => renderDraftCard(prospect, selectedTeamId, Boolean(pendingPick))).join("")}
       </div>
       <ol class="draft-pick-list">
         ${draft?.picks?.length ? draft.picks.slice(0, 14).map(renderDraftPick).join("") : renderEmptyListItem("드래프트 버튼을 누르면 1라운드부터 결과가 쌓입니다.")}
       </ol>
     </section>
+  `;
+}
+
+function renderDraftPendingPick(pendingPick) {
+  return `
+    <div class="draft-pending-banner">
+      <strong>${escapeHtml(pendingPick.teamName)} ${formatNumber(pendingPick.round)}R ${formatNumber(pendingPick.pickInRound)}번</strong>
+      <small>후보 카드의 지명 버튼으로 직접 선택하세요.</small>
+    </div>
   `;
 }
 
@@ -4430,7 +4572,7 @@ function renderDraftStrategy(state, draft) {
   `;
 }
 
-function renderDraftCard(prospect, selectedTeamId) {
+function renderDraftCard(prospect, selectedTeamId, canPick = false) {
   const classes = [
     "draft-card",
     prospect.picked ? "is-picked" : "",
@@ -4439,7 +4581,7 @@ function renderDraftCard(prospect, selectedTeamId) {
   return `
     <article class="${classes}">
       <div>
-        <span class="mini-label">${escapeHtml(prospect.classType)} · ${escapeHtml(prospect.position)}</span>
+        <span class="mini-label">${escapeHtml(prospect.classType)} · ${escapeHtml(prospect.position)} · ${formatNumber(prospect.age)}세</span>
         <h3>${escapeHtml(prospect.displayCode)}</h3>
       </div>
       <p>${escapeHtml(prospect.profile)} · ${escapeHtml(roleLabel(prospect.role))}</p>
@@ -4451,7 +4593,10 @@ function renderDraftCard(prospect, selectedTeamId) {
       <div class="draft-meter" aria-label="잠재력">
         <span class="draft-meter-fill" style="--draft-meter: ${clampPercent(prospect.futureGrade)}%"></span>
       </div>
-      <small>${prospect.picked ? `${formatNumber(prospect.pickNumber)}픽 · ${escapeHtml(prospect.selectedByTeamName)}` : "스카우트 코드 후보"}</small>
+      <div class="draft-card-actions">
+        <small>${prospect.picked ? `${formatNumber(prospect.pickNumber)}픽 · ${escapeHtml(prospect.selectedByTeamName)}` : "스카우트 코드 후보"}</small>
+        ${canPick && !prospect.picked ? `<button class="button button-primary" data-action="commit-draft-pick" data-prospect-id="${escapeAttribute(prospect.id)}" type="button">지명</button>` : ""}
+      </div>
     </article>
   `;
 }
@@ -4474,12 +4619,20 @@ function renderSecondaryDraftPanel(state) {
   const selectedTeam = getSelectedTeam(state);
   const selectedTeamId = selectedTeam?.id ?? state.selectedTeamId;
   const protection = draft?.protections?.[selectedTeamId] ?? buildSecondaryDraftPreview(selectedTeam);
+  const pendingPick = draft?.pendingUserPick?.status === "open" && String(draft.pendingUserPick.teamId) === String(selectedTeamId)
+    ? draft.pendingUserPick
+    : null;
   const selectedPicks = (draft?.picks ?? []).filter((pick) => String(pick.teamId) === String(selectedTeamId));
   const lostPlayers = (draft?.picks ?? []).filter((pick) => String(pick.fromTeamId) === String(selectedTeamId));
   const cards = [
     ...(protection.protected ?? []).slice(0, 4),
-    ...(protection.exposed ?? []).slice(0, 4)
+    ...(protection.exposed ?? []).slice(0, 8)
   ];
+  const originPickCounts = buildSecondaryOriginPickCounts(draft);
+  const candidatePool = (draft?.exposurePool ?? [])
+    .filter((player) => !player.picked && String(player.teamId) !== String(selectedTeamId))
+    .filter((player) => (originPickCounts.get(String(player.teamId)) ?? 0) < 4)
+    .slice(0, 20);
   const orderText = draft?.order?.length
     ? draft.order.map((team) => team.shortName ?? team.name).join(" > ")
     : "시즌 종료 후 확정";
@@ -4503,6 +4656,12 @@ function renderSecondaryDraftPanel(state) {
         <span>기본 3라운드 · 하위 3팀 추가</span>
         <span>원소속팀 피지명 최대 4명</span>
       </div>
+      <div class="draft-command-row">
+        <button class="button button-soft" data-action="secondary-draft" type="button">${draft ? "보호명단 보기" : "보호명단 생성"}</button>
+        <button class="button button-primary" data-action="secondary-to-user-pick" type="button" ${draft?.status === "ready" ? "" : "disabled"}>내 차례까지 진행</button>
+        <button class="button button-soft" data-action="secondary-auto-complete" type="button" ${draft?.status === "ready" ? "" : "disabled"}>전체 자동</button>
+      </div>
+      ${pendingPick ? renderSecondaryPendingPick(pendingPick) : ""}
       <div class="secondary-strategy-grid">
         <article>
           <span class="mini-label">지명 순서</span>
@@ -4524,13 +4683,36 @@ function renderSecondaryDraftPanel(state) {
         현재 MVP 로스터 531명 기준 v1입니다. 외국인/FA 시장 선수는 제외하고, 입단연차 자동 제외는 공식 원장 확장 후 엄격 적용합니다.
       </div>
       <div class="protection-grid">
-        ${cards.length ? cards.map(renderProtectionCard).join("") : `<div class="empty-card">보호명단을 기다리고 있어요.</div>`}
+        ${cards.length ? cards.map((player) => renderProtectionCard(player, draft?.status === "ready" && !(draft.picks?.length))).join("") : `<div class="empty-card">보호명단을 기다리고 있어요.</div>`}
       </div>
+      ${pendingPick ? `
+        <div class="protection-grid secondary-candidate-grid">
+          ${candidatePool.length ? candidatePool.map(renderSecondaryCandidateCard).join("") : `<div class="empty-card">지명 가능한 비보호 선수가 없습니다.</div>`}
+        </div>
+      ` : ""}
       <ol class="secondary-pick-list">
         ${draft?.picks?.length ? draft.picks.slice(0, 14).map(renderSecondaryPick).join("") : renderEmptyListItem("2차 드래프트 버튼을 누르면 지명 결과가 쌓입니다.")}
       </ol>
     </section>
   `;
+}
+
+function renderSecondaryPendingPick(pendingPick) {
+  return `
+    <div class="draft-pending-banner">
+      <strong>${escapeHtml(pendingPick.teamName)} 2차 ${formatNumber(pendingPick.round)}R ${formatNumber(pendingPick.pickInRound)}번</strong>
+      <small>비보호 후보 카드의 지명 버튼으로 직접 선택하세요.</small>
+    </div>
+  `;
+}
+
+function buildSecondaryOriginPickCounts(draft) {
+  const counts = new Map();
+  for (const pick of draft?.picks ?? []) {
+    const key = String(pick.fromTeamId ?? "");
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
 }
 
 function buildSecondaryDraftPreview(team) {
@@ -4562,7 +4744,7 @@ function buildSecondaryDraftPreview(team) {
   };
 }
 
-function renderProtectionCard(player) {
+function renderProtectionCard(player, editable = false) {
   const classes = [
     "protection-card",
     player.status === "protected" ? "is-protected" : "",
@@ -4585,6 +4767,26 @@ function renderProtectionCard(player) {
         <span class="protection-meter-fill" style="--protection-meter: ${scorePercent}%"></span>
       </div>
       <small>${escapeHtml(secondaryReasonLabel(player.reason))}</small>
+      ${editable && ["protected", "exposed"].includes(player.status)
+        ? `<button class="button button-soft" data-action="toggle-secondary-protection" data-player-id="${escapeAttribute(player.playerId)}" data-protection-status="${escapeAttribute(player.status)}" type="button">${player.status === "protected" ? "노출" : "보호"}</button>`
+        : ""}
+    </article>
+  `;
+}
+
+function renderSecondaryCandidateCard(player) {
+  return `
+    <article class="protection-card is-exposed">
+      <div>
+        <span class="mini-label">${escapeHtml(player.teamShortName ?? player.teamName)} · ${escapeHtml(player.position)}</span>
+        <h3>${escapeHtml(player.name)}</h3>
+      </div>
+      <p>${escapeHtml(roleLabel(player.role))} · ${formatNumber(player.age)}세 · OVR ${formatNumber(player.ovr)} / POT ${formatNumber(player.pot)}</p>
+      <div class="eligibility-chip-row">
+        <span>보호점 ${formatNumber(player.protectionScore)}</span>
+        <span>획득점 ${formatNumber(player.acquisitionScore)}</span>
+      </div>
+      <button class="button button-primary" data-action="commit-secondary-pick" data-player-id="${escapeAttribute(player.playerId)}" type="button">지명</button>
     </article>
   `;
 }
@@ -10094,6 +10296,16 @@ function riskLabel(risk) {
   if (risk === "medium") return "보통";
   if (risk === "low") return "낮음";
   return "미확인";
+}
+
+function normalizeDraftRoleFilter(value) {
+  return ["all", "pitcher", "hitter"].includes(String(value)) ? String(value) : "all";
+}
+
+function draftRoleFilterLabel(value) {
+  if (value === "pitcher") return "투수";
+  if (value === "hitter") return "야수";
+  return "전체";
 }
 
 function seriesStatusLabel(status) {

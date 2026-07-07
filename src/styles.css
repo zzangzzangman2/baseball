@@ -5293,6 +5293,59 @@ img {
   white-space: normal;
 }
 
+.draft-command-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  margin-bottom: 14px;
+}
+
+.draft-filter-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.draft-filter {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid rgba(216, 232, 226, 0.92);
+  border-radius: 999px;
+  background: rgba(255, 254, 251, 0.8);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.draft-filter.is-active {
+  border-color: color-mix(in srgb, var(--team-color, var(--coral)), #ffffff 45%);
+  background: color-mix(in srgb, var(--team-color, var(--coral)), #ffffff 86%);
+  color: var(--ink);
+}
+
+.draft-pending-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  margin-bottom: 12px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--team-color, var(--coral)), #ffffff 54%);
+  border-radius: 8px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--team-color, var(--coral)), #ffffff 88%), rgba(255, 254, 251, 0.94));
+}
+
+.draft-pending-banner strong,
+.draft-pending-banner small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .draft-board-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
@@ -5367,6 +5420,20 @@ img {
 
 .draft-card.is-user-fit::before {
   background: linear-gradient(90deg, color-mix(in srgb, var(--team-color, var(--coral)), #ffffff 18%), var(--coral), var(--butter));
+}
+
+.draft-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.draft-card-actions .button {
+  min-height: 32px;
+  padding: 6px 10px;
 }
 
 .draft-pick-list {
@@ -5530,6 +5597,11 @@ img {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 214px), 1fr));
   gap: 12px;
   min-width: 0;
+}
+
+.secondary-candidate-grid {
+  margin-top: 12px;
+  margin-bottom: 12px;
 }
 
 .protection-card {

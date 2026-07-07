@@ -280,7 +280,9 @@ async function main() {
   await runCheck("simulateRegularSeason 종료 상태", checkSimulateRegularSeason);
   await runCheck("포스트시즌/시상식 자동 생성", checkPostseasonAwards);
   await runCheck("신인 드래프트 v1", checkDraftSystem);
+  await runCheck("신인 드래프트 유저 직접 지명", checkManualDraftCommands);
   await runCheck("2차 드래프트 v1", checkSecondaryDraftSystem);
+  await runCheck("2차 드래프트 보호명단/유저 지명", checkManualSecondaryDraftCommands);
   await runCheck("트레이드 v2 command", checkTradeCommand);
   await runCheck("트레이드 안전 게이트 23케이스", checkTradeSafetyGate);
   await runCheck("FA/외국인 시장 command", checkFreeAgencyMarket);
@@ -348,8 +350,13 @@ async function checkModuleImports() {
   assertExport(engineModule, "initializePostseason", MODULE_PATHS.engine);
   assertExport(engineModule, "simulatePostseason", MODULE_PATHS.engine);
   assertExport(engineModule, "initializeDraft", MODULE_PATHS.engine);
+  assertExport(engineModule, "advanceDraftToUserPick", MODULE_PATHS.engine);
+  assertExport(engineModule, "commitUserDraftPick", MODULE_PATHS.engine);
   assertExport(engineModule, "simulateDraft", MODULE_PATHS.engine);
   assertExport(engineModule, "initializeSecondaryDraft", MODULE_PATHS.engine);
+  assertExport(engineModule, "setSecondaryDraftProtection", MODULE_PATHS.engine);
+  assertExport(engineModule, "advanceSecondaryDraftToUserPick", MODULE_PATHS.engine);
+  assertExport(engineModule, "commitUserSecondaryDraftPick", MODULE_PATHS.engine);
   assertExport(engineModule, "simulateSecondaryDraft", MODULE_PATHS.engine);
   assertExport(engineModule, "initializeFreeAgency", MODULE_PATHS.engine);
   assertExport(engineModule, "commitFreeAgentSigning", MODULE_PATHS.engine);
@@ -1555,6 +1562,61 @@ function checkDraftSystem() {
   return `${draft.year} 드래프트 ${draft.prospects.length}명 풀, ${draft.picks.length}픽, 팀당 ${teamPickCounts[0]}명, 보류권 ${rightsLedgerCount}명, 코드형 신인 ${rookiePlayers.length}명 roster 반영`;
 }
 
+function checkManualDraftCommands() {
+  ensureImportsReady();
+  const state = dataModule.createInitialState();
+  engineModule.initializeDraft(state);
+  const draft = state.draft;
+  const currentTeamId = draft.order[0].teamId;
+  const nonCurrentTeam = draft.order.find((entry) => String(entry.teamId) !== String(currentTeamId));
+  const invalidTurn = engineModule.commitUserDraftPick(state, {
+    teamId: nonCurrentTeam.teamId,
+    prospectId: draft.prospects.find((prospect) => !prospect.picked)?.id
+  });
+  assert(invalidTurn.ok === false && invalidTurn.code === "not-user-turn", `유저픽 차례 검증 실패: ${invalidTurn.code}`, MODULE_PATHS.engine);
+
+  state.selectedTeamId = nonCurrentTeam.teamId;
+  let guard = 0;
+  while (state.draft.status !== "complete" && guard < 160) {
+    guard += 1;
+    const advance = engineModule.advanceDraftToUserPick(state, { teamId: state.selectedTeamId });
+    if (advance.code === "complete") break;
+    assert(advance.code === "pending-user-pick", `내 차례까지 진행 결과 ${advance.code}`, MODULE_PATHS.engine);
+
+    const invalid = engineModule.commitUserDraftPick(state, { teamId: state.selectedTeamId, prospectId: "missing-prospect" });
+    assert(invalid.ok === false && invalid.code === "invalid-prospect", `무효 후보 reject 실패: ${invalid.code}`, MODULE_PATHS.engine);
+
+    const alreadyPickedId = state.draft.picks[0]?.prospectId;
+    if (alreadyPickedId) {
+      const duplicate = engineModule.commitUserDraftPick(state, { teamId: state.selectedTeamId, prospectId: alreadyPickedId });
+      assert(duplicate.ok === false && duplicate.code === "duplicate-prospect", `중복 후보 reject 실패: ${duplicate.code}`, MODULE_PATHS.engine);
+    }
+
+    const prospect = chooseManualDraftProspect(state.draft);
+    const committed = engineModule.commitUserDraftPick(state, {
+      teamId: state.selectedTeamId,
+      prospectId: prospect.id
+    });
+    assert(committed.ok === true, `유저픽 실패: ${committed.code}`, MODULE_PATHS.engine);
+  }
+
+  const userPicks = state.draft.picks.filter((pick) => String(pick.teamId) === String(state.selectedTeamId));
+  const pickedIds = new Set(state.draft.picks.map((pick) => String(pick.prospectId)));
+  assert(state.draft.status === "complete", `수동 드래프트 status=${state.draft.status}`, MODULE_PATHS.engine);
+  assert(state.draft.picks.length === 110, `수동 드래프트 픽 ${state.draft.picks.length}/110`, MODULE_PATHS.engine);
+  assert(userPicks.length === 11, `유저팀 수동 지명 ${userPicks.length}/11`, MODULE_PATHS.engine);
+  assert(pickedIds.size === 110, `수동 드래프트 중복 후보 ${pickedIds.size}/110`, MODULE_PATHS.engine);
+  assert((state.draft.rosterLedger ?? []).length > 0 && (state.draft.rightsLedger ?? []).length === 110, "수동 드래프트 roster/right ledger가 없습니다.", MODULE_PATHS.engine);
+
+  return `${state.draft.year} 유저팀 ${nonCurrentTeam.shortName ?? nonCurrentTeam.name} 11픽 직접 지명, reject 3종 통과`;
+}
+
+function chooseManualDraftProspect(draft) {
+  return [...(draft?.prospects ?? [])]
+    .filter((prospect) => !prospect.picked)
+    .sort((a, b) => Number(b.futureGrade ?? 0) - Number(a.futureGrade ?? 0) || Number(a.rank ?? 0) - Number(b.rank ?? 0))[0];
+}
+
 function checkSecondaryDraftSystem() {
   ensureImportsReady();
   const state = dataModule.createInitialState();
@@ -1622,6 +1684,92 @@ function checkSecondaryDraftSystem() {
   assert(problems.length === 0, `2차 드래프트 오류 ${problems.length}건. 예: ${problems.slice(0, 6).join(" / ")}`, MODULE_PATHS.engine);
 
   return `${draft.year} 2차 드래프트 보호 35명x10팀, 비보호 ${draft.exposurePool.length}명, ${draft.picks.length}/${draft.maxPicks}픽, ${draft.transferLedger.length}명 실제 이동`;
+}
+
+function checkManualSecondaryDraftCommands() {
+  ensureImportsReady();
+  const state = dataModule.createInitialState();
+  const initialRosterCount = allPlayers(state).length;
+  const beforeOwnerByPlayerId = new Map(allPlayers(state).map(({ team, player }) => [String(player.id), team.id]));
+
+  engineModule.initializeSecondaryDraft(state);
+  const draft = state.secondaryDraft;
+  const userTeamId = draft.order[1]?.teamId ?? draft.order[0].teamId;
+  state.selectedTeamId = userTeamId;
+  const protection = draft.protections[userTeamId];
+  const protectedIds = protection.protected.map((player) => player.playerId);
+  const exposedIds = protection.exposed.map((player) => player.playerId);
+
+  const badCount = engineModule.setSecondaryDraftProtection(state, {
+    teamId: userTeamId,
+    playerIds: protectedIds.slice(0, 34)
+  });
+  assert(badCount.ok === false && badCount.code === "invalid-protected-count", `보호명단 34명 reject 실패: ${badCount.code}`, MODULE_PATHS.engine);
+
+  const swappedIds = protectedIds.slice(0, 34).concat(exposedIds[0]);
+  const swapResult = engineModule.setSecondaryDraftProtection(state, {
+    teamId: userTeamId,
+    playerIds: swappedIds
+  });
+  assert(swapResult.ok === true, `보호명단 스왑 실패: ${swapResult.code}`, MODULE_PATHS.engine);
+  assert(swapResult.protection.protected.some((player) => String(player.playerId) === String(exposedIds[0])), "노출 선수 1명 보호 스왑이 반영되지 않았습니다.", MODULE_PATHS.engine);
+
+  const invalidTurn = engineModule.commitUserSecondaryDraftPick(state, {
+    teamId: draft.order[2]?.teamId ?? userTeamId,
+    playerId: draft.exposurePool.find((player) => String(player.teamId) !== String(userTeamId))?.playerId
+  });
+  assert(invalidTurn.ok === false && invalidTurn.code === "not-user-turn", `2차 유저픽 차례 reject 실패: ${invalidTurn.code}`, MODULE_PATHS.engine);
+
+  let guard = 0;
+  while (state.secondaryDraft.status !== "complete" && guard < 80) {
+    guard += 1;
+    const advance = engineModule.advanceSecondaryDraftToUserPick(state, { teamId: userTeamId });
+    if (advance.code === "complete") break;
+    assert(advance.code === "pending-user-pick", `2차 내 차례까지 진행 결과 ${advance.code}`, MODULE_PATHS.engine);
+
+    const invalid = engineModule.commitUserSecondaryDraftPick(state, {
+      teamId: userTeamId,
+      playerId: "missing-player"
+    });
+    assert(invalid.ok === false && invalid.code === "invalid-player", `2차 무효 선수 reject 실패: ${invalid.code}`, MODULE_PATHS.engine);
+
+    const candidate = chooseManualSecondaryCandidate(state.secondaryDraft, userTeamId);
+    const committed = engineModule.commitUserSecondaryDraftPick(state, {
+      teamId: userTeamId,
+      playerId: candidate.playerId
+    });
+    assert(committed.ok === true, `2차 유저픽 실패: ${committed.code}`, MODULE_PATHS.engine);
+  }
+
+  const userPicks = state.secondaryDraft.picks.filter((pick) => String(pick.teamId) === String(userTeamId));
+  const pickedIds = new Set(state.secondaryDraft.picks.map((pick) => String(pick.playerId)));
+  const movedProblems = [];
+  for (const pick of state.secondaryDraft.picks) {
+    const currentEntry = allPlayers(state).find(({ player }) => String(player.id) === String(pick.playerId));
+    if (beforeOwnerByPlayerId.get(String(pick.playerId)) !== pick.fromTeamId) movedProblems.push(`${pick.pickNumber}: 이전 소속`);
+    if (currentEntry?.team.id !== pick.teamId) movedProblems.push(`${pick.pickNumber}: 현재 소속`);
+  }
+
+  assert(state.secondaryDraft.status === "complete", `수동 2차 드래프트 status=${state.secondaryDraft.status}`, MODULE_PATHS.engine);
+  assert(state.secondaryDraft.picks.length === 36, `수동 2차 드래프트 픽 ${state.secondaryDraft.picks.length}/36`, MODULE_PATHS.engine);
+  assert(userPicks.length >= 3, `유저팀 2차 지명 ${userPicks.length}/3 이상`, MODULE_PATHS.engine);
+  assert(pickedIds.size === state.secondaryDraft.picks.length, "수동 2차 드래프트 중복 지명이 있습니다.", MODULE_PATHS.engine);
+  assert((state.secondaryDraft.transferLedger ?? []).length === state.secondaryDraft.picks.length, "수동 2차 드래프트 transferLedger가 픽 수와 다릅니다.", MODULE_PATHS.engine);
+  assert(allPlayers(state).length === initialRosterCount, `수동 2차 드래프트 총원 ${allPlayers(state).length}/${initialRosterCount}`, MODULE_PATHS.engine);
+  assert(movedProblems.length === 0, `수동 2차 이동 오류: ${movedProblems.slice(0, 4).join(" / ")}`, MODULE_PATHS.engine);
+
+  return `${state.secondaryDraft.year} 보호명단 스왑 + 유저 2차 지명 ${userPicks.length}명, reject 3종 통과`;
+}
+
+function chooseManualSecondaryCandidate(draft, userTeamId) {
+  const originCounts = new Map();
+  for (const pick of draft?.picks ?? []) {
+    originCounts.set(String(pick.fromTeamId), (originCounts.get(String(pick.fromTeamId)) ?? 0) + 1);
+  }
+  return [...(draft?.exposurePool ?? [])]
+    .filter((candidate) => !candidate.picked && String(candidate.teamId) !== String(userTeamId))
+    .filter((candidate) => (originCounts.get(String(candidate.teamId)) ?? 0) < 4)
+    .sort((a, b) => Number(b.acquisitionScore ?? 0) - Number(a.acquisitionScore ?? 0) || Number(b.ovr ?? 0) - Number(a.ovr ?? 0))[0];
 }
 
 function checkTradeCommand() {
