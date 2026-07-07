@@ -1036,12 +1036,17 @@ async function checkGamecastLab() {
       ].filter((sprite) => sprite?.fieldingKey || sprite?.key);
       const counts = new Map();
       const coordsByKey = new Map();
+      const pointByKey = new Map();
       for (const sprite of defenders) {
         const key = String(sprite.fieldingKey ?? sprite.key ?? "");
         if (!key) continue;
         counts.set(key, (counts.get(key) ?? 0) + 1);
         const pos = sprite.position ?? {};
         coordsByKey.set(key, \`\${Math.round(Number(pos.x ?? 0))},\${Math.round(Number(pos.y ?? 0))}\`);
+        pointByKey.set(key, {
+          x: Math.round(Number(pos.x ?? 0)),
+          y: Math.round(Number(pos.y ?? 0))
+        });
       }
       const keys = [...coordsByKey.keys()].sort();
       const required = ["1B", "2B", "3B", "C", "CF", "LF", "P", "RF", "SS"];
@@ -1050,6 +1055,7 @@ async function checkGamecastLab() {
         missing: required.filter((key) => !coordsByKey.has(key)),
         duplicateKeys: [...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key),
         uniqueCoordCount: new Set(coordsByKey.values()).size,
+        coords: Object.fromEntries(pointByKey),
         rawCount: defenders.length
       };
     })()
@@ -1057,6 +1063,10 @@ async function checkGamecastLab() {
   assert(defenseProbe.missing.length === 0, `수비 포지션이 빠졌습니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
   assert(defenseProbe.duplicateKeys.length === 0, `수비 포지션 중복이 있습니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
   assert(defenseProbe.uniqueCoordCount >= 9, `수비 좌표가 중복됩니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
+  assert(defenseProbe.coords?.P?.y < defenseProbe.coords?.["1B"]?.y && defenseProbe.coords?.P?.y < defenseProbe.coords?.["3B"]?.y, `마운드가 내야 코너보다 앞에 서지 않습니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
+  assert(defenseProbe.coords?.C?.y > defenseProbe.coords?.P?.y && defenseProbe.coords?.C?.y > defenseProbe.coords?.["1B"]?.y, `포수가 홈 뒤에 읽히지 않습니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
+  assert(defenseProbe.coords?.CF?.y < defenseProbe.coords?.LF?.y && defenseProbe.coords?.CF?.y < defenseProbe.coords?.RF?.y, `외야 삼각 배치가 어색합니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
+  assert(defenseProbe.coords?.SS?.y < defenseProbe.coords?.["3B"]?.y && defenseProbe.coords?.["2B"]?.y < defenseProbe.coords?.["1B"]?.y, `내야 깊이 배치가 어색합니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
 
   const playFeelSamples = [];
   for (let index = 0; index < 60; index += 1) {
@@ -1077,7 +1087,7 @@ async function checkGamecastLab() {
           if (image?.data) {
             const sx = canvas.width / 400;
             const sy = canvas.height / 360;
-            const from = { x: Math.round(200 * sx), y: Math.round(253 * sy) };
+            const from = { x: Math.round(200 * sx), y: Math.round(240 * sy) };
             const to = { x: Math.round(207 * sx), y: Math.round(300 * sy) };
             for (let step = 0; step <= 18; step += 1) {
               const t = step / 18;

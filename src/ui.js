@@ -6865,6 +6865,7 @@ function drawBallparkOutfield(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neu
     }
   }
 
+  drawBallparkWallDetails(ctx, palette, profile);
   drawPixelCrowd(ctx, palette, profile);
   drawBallparkArchitecture(ctx, palette, profile);
 
@@ -6874,6 +6875,24 @@ function drawBallparkOutfield(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neu
   for (let y = gamecastY(30); y < foul.left.y; y += 1) {
     drawPixel(ctx, foul.left.x, y, profile.monsterSide === "right" ? palette.spark : palette.pole);
     drawPixel(ctx, foul.right.x, y, palette.pole);
+  }
+}
+
+function drawBallparkWallDetails(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
+  const seamColor = "rgba(255, 254, 251, 0.16)";
+  const ledgeColor = "rgba(255, 254, 251, 0.22)";
+  for (let logicalX = 8; logicalX <= 112; logicalX += 4) {
+    const wallY = gamecastOutfieldWallY(profile, logicalX);
+    const x = gamecastX(logicalX);
+    const top = gamecastY(wallY + 0.8);
+    const bottom = gamecastY(wallY + 4.2);
+    ctx.fillStyle = logicalX % 12 === 0 ? ledgeColor : seamColor;
+    ctx.fillRect(x, top, 1, Math.max(1, bottom - top));
+  }
+  ctx.fillStyle = "rgba(18, 23, 33, 0.24)";
+  for (let logicalX = 12; logicalX <= 108; logicalX += 12) {
+    const wallY = gamecastOutfieldWallY(profile, logicalX);
+    ctx.fillRect(gamecastX(logicalX - 3), gamecastY(wallY + 5.6), gamecastSize(5), 1);
   }
 }
 
@@ -6900,6 +6919,7 @@ function drawPixelStadiumScoreboard(ctx, palette, profile = KBO_GAMECAST_BALLPAR
   for (let px = x + gamecastSize(3); px < x + w - gamecastSize(3); px += gamecastSize(6)) {
     ctx.fillRect(px, y + gamecastSize(5), gamecastSize(2), gamecastSize(1));
   }
+  drawMiniPixelText(ctx, palette, "KBO", x + gamecastSize(3), y + gamecastSize(4), profile.roofed ? "#ddecff" : palette.sparkL, 3);
 }
 
 function drawBallparkArchitecture(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
@@ -6928,6 +6948,8 @@ function drawBallparkArchitecture(ctx, palette, profile = KBO_GAMECAST_BALLPARKS
     drawPixelLightTower(ctx, palette, gamecastX(111), gamecastY(4), 1);
   }
 
+  drawPixelSeatingTiers(ctx, palette, profile);
+
   ctx.fillStyle = palette.outline;
   ctx.fillRect(gamecastX(17), gamecastY(17), gamecastSize(24), gamecastSize(4));
   ctx.fillRect(gamecastX(79), gamecastY(17), gamecastSize(24), gamecastSize(4));
@@ -6952,6 +6974,33 @@ function drawBallparkArchitecture(ctx, palette, profile = KBO_GAMECAST_BALLPARKS
     ctx.fillRect(x, gamecastY(22), gamecastSize(8), gamecastSize(3));
     ctx.fillStyle = adColors[index % adColors.length];
     ctx.fillRect(x + gamecastSize(1), gamecastY(23), gamecastSize(6), gamecastSize(1));
+  }
+  drawPixelBullpen(ctx, palette, gamecastX(14), gamecastY(39), 1);
+  drawPixelBullpen(ctx, palette, gamecastX(91), gamecastY(39), -1);
+}
+
+function drawPixelSeatingTiers(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
+  ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+  for (let y = gamecastY(23); y <= gamecastY(39); y += gamecastSize(5)) {
+    ctx.fillRect(gamecastX(4), y, gamecastSize(20), 1);
+    ctx.fillRect(gamecastX(96), y, gamecastSize(20), 1);
+    if (profile.roofed) ctx.fillRect(gamecastX(43), y - gamecastSize(1), gamecastSize(34), 1);
+  }
+  ctx.fillStyle = "rgba(255, 254, 251, 0.08)";
+  ctx.fillRect(0, gamecastY(25), GAMECAST_PIXEL_W, 1);
+  ctx.fillRect(0, gamecastY(35), GAMECAST_PIXEL_W, 1);
+}
+
+function drawPixelBullpen(ctx, palette, x, y, direction) {
+  const w = gamecastSize(15);
+  const h = gamecastSize(4);
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = "rgba(18, 23, 33, 0.72)";
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), w - gamecastSize(2), h - gamecastSize(2));
+  ctx.fillStyle = direction > 0 ? palette.runnerL : palette.defenderL;
+  for (let slot = 0; slot < 3; slot += 1) {
+    ctx.fillRect(x + gamecastSize(2 + slot * 4), y + gamecastSize(2), gamecastSize(1), gamecastSize(1));
   }
 }
 
@@ -7027,18 +7076,26 @@ function drawPixelFanSign(ctx, palette, x, y, color) {
 
 function drawBallparkInfield(ctx, palette) {
   const bases = gamecastBasePositions();
-  drawPixelLine(ctx, bases.home.x, bases.home.y, bases.first.x, bases.first.y, palette.dirtM, gamecastSize(2));
-  drawPixelLine(ctx, bases.first.x, bases.first.y, bases.second.x, bases.second.y, palette.dirtM, gamecastSize(2));
-  drawPixelLine(ctx, bases.second.x, bases.second.y, bases.third.x, bases.third.y, palette.dirtM, gamecastSize(2));
-  drawPixelLine(ctx, bases.third.x, bases.third.y, bases.home.x, bases.home.y, palette.dirtM, gamecastSize(2));
+  fillPixelCircle(ctx, gamecastX(60), gamecastY(78), gamecastSize(18), palette.grassLo);
+  fillPixelCircle(ctx, gamecastX(60), gamecastY(78), gamecastSize(12), palette.grassHi);
+  fillPixelDiamond(ctx, gamecastX(60), gamecastY(78), gamecastSize(31), gamecastSize(25), palette.dirtM);
+  fillPixelDiamond(ctx, gamecastX(60), gamecastY(80), gamecastSize(16), gamecastSize(12), palette.grassHi);
 
-  for (const base of [bases.first, bases.second, bases.third]) fillPixelCircle(ctx, base.x, base.y, gamecastSize(5), palette.dirtM);
+  drawPixelLine(ctx, bases.home.x, bases.home.y, bases.first.x, bases.first.y, palette.dirtD, gamecastSize(2));
+  drawPixelLine(ctx, bases.first.x, bases.first.y, bases.second.x, bases.second.y, palette.dirtD, gamecastSize(2));
+  drawPixelLine(ctx, bases.second.x, bases.second.y, bases.third.x, bases.third.y, palette.dirtD, gamecastSize(2));
+  drawPixelLine(ctx, bases.third.x, bases.third.y, bases.home.x, bases.home.y, palette.dirtD, gamecastSize(2));
+
+  for (const base of [bases.first, bases.second, bases.third]) {
+    fillPixelCircle(ctx, base.x, base.y, gamecastSize(5), palette.dirtM);
+    fillPixelCircle(ctx, base.x, base.y, gamecastSize(3), palette.dirtL);
+  }
   fillPixelCircle(ctx, bases.home.x, bases.home.y, gamecastSize(6), palette.dirtM);
   fillPixelCircle(ctx, bases.mound.x, bases.mound.y, gamecastSize(6), palette.dirtL);
   fillPixelCircle(ctx, bases.mound.x, bases.mound.y, gamecastSize(4), palette.dirtM);
 
   ctx.fillStyle = palette.base;
-  ctx.fillRect(bases.mound.x - gamecastSize(1), bases.mound.y - gamecastSize(1), gamecastSize(3), gamecastSize(1));
+  ctx.fillRect(bases.mound.x - gamecastSize(2), bases.mound.y - gamecastSize(1), gamecastSize(4), gamecastSize(1));
   drawPixelHomePlateDetail(ctx, palette, bases.home);
 
   drawPixelBaseCoach(ctx, palette, { x: bases.first.x + gamecastSize(13), y: bases.first.y + gamecastSize(7) });
@@ -7872,14 +7929,14 @@ function gamecastDefensiveAlignment() {
   const bases = gamecastBasePositions();
   const plate = gamecastHomePlateCluster();
   return [
-    { key: "LF", position: { x: gamecastX(31), y: gamecastY(50) }, frame: 1 },
-    { key: "CF", position: { x: gamecastX(60), y: gamecastY(38) }, frame: 2 },
-    { key: "RF", position: { x: gamecastX(89), y: gamecastY(50) }, frame: 0 },
-    { key: "SS", position: { x: gamecastX(42), y: gamecastY(66) }, frame: 1 },
-    { key: "2B", position: { x: gamecastX(78), y: gamecastY(65) }, frame: 0 },
-    { key: "3B", position: { x: gamecastX(26), y: gamecastY(77) }, frame: 2 },
-    { key: "1B", position: { x: gamecastX(94), y: gamecastY(77) }, frame: 2 },
-    { key: "P", position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(2) }, frame: 2 },
+    { key: "LF", position: { x: gamecastX(31), y: gamecastY(47) }, frame: 1 },
+    { key: "CF", position: { x: gamecastX(60), y: gamecastY(34) }, frame: 2 },
+    { key: "RF", position: { x: gamecastX(89), y: gamecastY(47) }, frame: 0 },
+    { key: "SS", position: { x: gamecastX(46), y: gamecastY(63) }, frame: 1 },
+    { key: "2B", position: { x: gamecastX(73), y: gamecastY(62) }, frame: 0 },
+    { key: "3B", position: { x: gamecastX(29), y: gamecastY(74) }, frame: 2 },
+    { key: "1B", position: { x: gamecastX(91), y: gamecastY(74) }, frame: 2 },
+    { key: "P", position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(1) }, frame: 2 },
     { key: "C", position: { ...plate.catcher }, frame: 2 }
   ];
 }
@@ -7940,18 +7997,18 @@ function normalizeFieldingPosition(position) {
 function gamecastBasePositions() {
   return {
     home: { x: gamecastX(60), y: gamecastY(96) },
-    first: { x: gamecastX(86), y: gamecastY(76) },
-    second: { x: gamecastX(60), y: gamecastY(56) },
-    third: { x: gamecastX(34), y: gamecastY(76) },
-    mound: { x: gamecastX(60), y: gamecastY(76) }
+    first: { x: gamecastX(87), y: gamecastY(75) },
+    second: { x: gamecastX(60), y: gamecastY(53) },
+    third: { x: gamecastX(33), y: gamecastY(75) },
+    mound: { x: gamecastX(60), y: gamecastY(72) }
   };
 }
 
 function gamecastFoulLinePositions() {
-  const endY = 58;
+  const endY = 55;
   const home = { x: 60, y: 96 };
-  const first = { x: 86, y: 76 };
-  const third = { x: 34, y: 76 };
+  const first = { x: 87, y: 75 };
+  const third = { x: 33, y: 75 };
   const t = (endY - home.y) / (third.y - home.y);
   return {
     left: { x: gamecastX(home.x + (third.x - home.x) * t), y: gamecastY(endY) },
@@ -7962,9 +8019,9 @@ function gamecastFoulLinePositions() {
 function gamecastHomePlateCluster() {
   const bases = gamecastBasePositions();
   return {
-    batter: { x: bases.home.x + gamecastSize(8), y: bases.home.y - gamecastSize(1) },
-    catcher: { x: bases.home.x, y: bases.home.y + gamecastSize(4) },
-    umpire: { x: bases.home.x - gamecastSize(3), y: bases.home.y + gamecastSize(7) }
+    batter: { x: bases.home.x + gamecastSize(8), y: bases.home.y - gamecastSize(2) },
+    catcher: { x: bases.home.x, y: bases.home.y + gamecastSize(3) },
+    umpire: { x: bases.home.x - gamecastSize(3), y: bases.home.y + gamecastSize(6) }
   };
 }
 
@@ -8694,7 +8751,7 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     const bases = gamecastBasePositions();
     const windT = Math.max(0, Math.min(1, progress / Math.max(0.01, pitchEnd)));
     sprites.push({
-      position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(2) - (windT > 0.48 && windT < 0.72 ? 1 : 0) },
+      position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(1) - (windT > 0.48 && windT < 0.72 ? 1 : 0) },
       color: event.defenseColor ?? palette.defender,
       jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
       jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
@@ -8761,8 +8818,8 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     const firstBase = gamecastBasePositions().first;
     const stretchT = Math.max(0, Math.min(1, (progress - catchProgress - 0.04) / 0.22));
     sprites.push(gamecastSupportFielderSprite(event, palette, "1B", {
-      x: Math.round(lerp(gamecastX(94), firstBase.x + gamecastSize(2), easeOutCubic(stretchT))),
-      y: Math.round(lerp(gamecastY(77), firstBase.y + gamecastSize(1), easeOutCubic(stretchT)))
+      x: Math.round(lerp(gamecastX(91), firstBase.x + gamecastSize(2), easeOutCubic(stretchT))),
+      y: Math.round(lerp(gamecastY(74), firstBase.y + gamecastSize(1), easeOutCubic(stretchT)))
     }, progress > catchProgress + 0.18 ? "catch" : "field", 1));
   }
 
@@ -8877,8 +8934,8 @@ function buildGamecastDoublePlaySprites(event, progress, palette, catchProgress)
   return [
     gamecastSupportFielderSprite(event, palette, pivotKey, pivotPosition, progress > catchProgress + 0.12 ? "throw" : "catch", Math.floor(pivotT * 4) % 4),
     gamecastSupportFielderSprite(event, palette, "1B", {
-      x: Math.round(lerp(gamecastX(94), bases.first.x + gamecastSize(2), easeOutCubic(firstT))),
-      y: Math.round(lerp(gamecastY(77), bases.first.y + gamecastSize(1), easeOutCubic(firstT)))
+      x: Math.round(lerp(gamecastX(91), bases.first.x + gamecastSize(2), easeOutCubic(firstT))),
+      y: Math.round(lerp(gamecastY(74), bases.first.y + gamecastSize(1), easeOutCubic(firstT)))
     }, progress > catchProgress + 0.28 ? "catch" : "field", 1)
   ];
 }
@@ -9078,13 +9135,13 @@ function gamecastDefenderStartForTarget(target, event) {
   const alignment = gamecastDefensiveAlignment().find((fielder) => fielder.key === key);
   if (alignment) return { ...alignment.position };
   const leftSide = target.x < gamecastX(60);
-  const deep = target.y < gamecastY(52);
-  const infield = target.y > gamecastY(68);
-  if (infield) return { x: leftSide ? gamecastX(42) : gamecastX(78), y: gamecastY(72) };
-  if (event?.outcome === "homeRun") return { x: leftSide ? gamecastX(31) : gamecastX(89), y: gamecastY(50) };
+  const deep = target.y < gamecastY(55);
+  const infield = target.y > gamecastY(67);
+  if (infield) return { x: leftSide ? gamecastX(46) : gamecastX(73), y: gamecastY(65) };
+  if (event?.outcome === "homeRun") return { x: leftSide ? gamecastX(31) : gamecastX(89), y: gamecastY(47) };
   return {
-    x: leftSide ? gamecastX(deep ? 31 : 39) : gamecastX(deep ? 89 : 81),
-    y: gamecastY(deep ? 50 : 58)
+    x: leftSide ? gamecastX(deep ? 31 : 42) : gamecastX(deep ? 89 : 78),
+    y: gamecastY(deep ? 47 : 58)
   };
 }
 
@@ -9112,15 +9169,15 @@ function gamecastFieldingKeyForTarget(event, target) {
 function gamecastFieldingSpot(event) {
   const key = normalizeFieldingPosition(event?.fieldingPosition);
   const spots = {
-    P: { x: 60, y: 74 },
-    C: { x: 58, y: 92 },
-    "1B": { x: 94, y: 74 },
-    "2B": { x: 78, y: 63 },
-    "3B": { x: 26, y: 74 },
-    SS: { x: 42, y: 64 },
-    LF: { x: 31, y: 50 },
-    CF: { x: 60, y: 38 },
-    RF: { x: 89, y: 50 }
+    P: { x: 60, y: 72 },
+    C: { x: 60, y: 98 },
+    "1B": { x: 91, y: 74 },
+    "2B": { x: 73, y: 62 },
+    "3B": { x: 29, y: 74 },
+    SS: { x: 46, y: 63 },
+    LF: { x: 31, y: 47 },
+    CF: { x: 60, y: 34 },
+    RF: { x: 89, y: 47 }
   };
   return spots[key] ?? null;
 }

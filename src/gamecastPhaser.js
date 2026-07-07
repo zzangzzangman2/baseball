@@ -588,40 +588,86 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
     }
   }
 
+  drawCanvasWallDetails(ctx, palette, sx, sy, profile, scale);
   drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale);
   drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile);
+  drawCanvasInfieldCut(ctx, palette, sx, sy, scale);
+}
 
-  fillCircleCanvas(ctx, sx(60), sy(79), sx(15), palette.grassLo);
-  fillCircleCanvas(ctx, sx(60), sy(79), sx(10), palette.grassHi);
+function drawCanvasInfieldCut(ctx, palette, sx, sy, scale) {
+  fillCircleCanvas(ctx, sx(60), sy(78), sx(18), palette.grassLo);
+  fillCircleCanvas(ctx, sx(60), sy(78), sx(12), palette.grassHi);
   fillDiamond(ctx, palette.dirtM, [
-    [sx(60), sy(62)],
-    [sx(86), sy(77)],
-    [sx(60), sy(98)],
-    [sx(34), sy(77)]
+    [sx(60), sy(58)],
+    [sx(91), sy(76)],
+    [sx(60), sy(101)],
+    [sx(29), sy(76)]
   ]);
   fillDiamond(ctx, palette.grassHi, [
-    [sx(60), sy(70)],
-    [sx(74), sy(81)],
+    [sx(60), sy(66)],
+    [sx(76), sy(80)],
     [sx(60), sy(92)],
-    [sx(46), sy(81)]
+    [sx(44), sy(80)]
   ]);
+
+  const bases = {
+    home: { x: 60, y: 96 },
+    first: { x: 87, y: 75 },
+    second: { x: 60, y: 53 },
+    third: { x: 33, y: 75 },
+    mound: { x: 60, y: 72 }
+  };
+  const pathWidth = Math.max(2, Math.round(scale * 0.7));
+  const baseDirt = palette.dirtD ?? palette.dirtM;
+  drawLineCanvas(ctx, sx(bases.home.x), sy(bases.home.y), sx(bases.first.x), sy(bases.first.y), baseDirt, pathWidth);
+  drawLineCanvas(ctx, sx(bases.first.x), sy(bases.first.y), sx(bases.second.x), sy(bases.second.y), baseDirt, pathWidth);
+  drawLineCanvas(ctx, sx(bases.second.x), sy(bases.second.y), sx(bases.third.x), sy(bases.third.y), baseDirt, pathWidth);
+  drawLineCanvas(ctx, sx(bases.third.x), sy(bases.third.y), sx(bases.home.x), sy(bases.home.y), baseDirt, pathWidth);
+  for (const base of [bases.first, bases.second, bases.third]) {
+    fillCircleCanvas(ctx, sx(base.x), sy(base.y), Math.max(3, sx(4.4)), palette.dirtM);
+    fillCircleCanvas(ctx, sx(base.x), sy(base.y), Math.max(2, sx(2.7)), palette.dirtL);
+    drawCanvasBaseAnchor(ctx, palette, sx, sy, base.x, base.y);
+  }
+  fillCircleCanvas(ctx, sx(bases.home.x), sy(bases.home.y), Math.max(4, sx(6)), palette.dirtM);
+  fillCircleCanvas(ctx, sx(bases.mound.x), sy(bases.mound.y), Math.max(4, sx(6.4)), palette.dirtL);
+  fillCircleCanvas(ctx, sx(bases.mound.x), sy(bases.mound.y), Math.max(3, sx(4.2)), palette.dirtM);
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(sx(57.7), sy(71.2), Math.max(3, sx(4.6)), Math.max(1, Math.round(scale * 0.45)));
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(sx(58.4), sy(71.4), Math.max(2, sx(3.2)), Math.max(1, Math.round(scale * 0.24)));
+
   const foul = gamecastFoulLineGeometry();
-  const foulLine = "rgba(255, 254, 251, 0.72)";
-  const foulWidth = Math.max(1, Math.round(scale * 0.22));
+  const foulLine = "rgba(255, 254, 251, 0.76)";
+  const foulWidth = Math.max(1, Math.round(scale * 0.24));
   drawLineCanvas(ctx, sx(foul.home.x), sy(foul.home.y), sx(foul.left.x), sy(foul.left.y), foulLine, foulWidth);
   drawLineCanvas(ctx, sx(foul.home.x), sy(foul.home.y), sx(foul.right.x), sy(foul.right.y), foulLine, foulWidth);
-
-  for (const [x, y] of [[60, 96], [86, 76], [60, 56], [34, 76]]) {
-    ctx.fillStyle = palette.outline;
-    ctx.fillRect(sx(x) - 2, sy(y) - 1, 5, 3);
-    ctx.fillStyle = palette.base;
-    ctx.fillRect(sx(x) - 1, sy(y), 3, 2);
-  }
-  ctx.fillStyle = palette.dirtL;
-  ctx.fillRect(sx(55), sy(73), sx(10), sy(5));
-  ctx.fillStyle = palette.outline;
-  ctx.fillRect(sx(58), sy(75), sx(4), sy(2));
   drawCanvasHomePlateDetails(ctx, palette, sx, sy, scale);
+}
+
+function drawCanvasBaseAnchor(ctx, palette, sx, sy, x, y) {
+  const u = Math.max(1, sx(0.55));
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(sx(x) - u, sy(y) - u, u * 2 + 1, u * 2 + 1);
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(sx(x) - Math.max(1, u - 1), sy(y) - Math.max(1, u - 1), Math.max(2, u * 2 - 1), Math.max(2, u * 2 - 1));
+}
+
+function drawCanvasWallDetails(ctx, palette, sx, sy, profile, scale) {
+  const seamColor = "rgba(255, 254, 251, 0.16)";
+  const capColor = "rgba(255, 254, 251, 0.24)";
+  for (let logicalX = 8; logicalX <= 112; logicalX += 4) {
+    const wallY = phaserOutfieldWallY(profile, logicalX);
+    const x = sx(logicalX);
+    const top = sy(wallY + 0.8);
+    const bottom = sy(wallY + 4.2);
+    ctx.fillStyle = logicalX % 12 === 0 ? capColor : seamColor;
+    ctx.fillRect(x, top, Math.max(1, Math.round(scale * 0.24)), Math.max(1, bottom - top));
+  }
+  ctx.fillStyle = "rgba(18, 23, 33, 0.24)";
+  for (let logicalX = 12; logicalX <= 108; logicalX += 12) {
+    const wallY = phaserOutfieldWallY(profile, logicalX);
+    ctx.fillRect(sx(logicalX - 3), sy(wallY + 5.6), Math.max(1, sx(5.4)), Math.max(1, Math.round(scale * 0.32)));
+  }
 }
 
 function drawCanvasHomePlateDetails(ctx, palette, sx, sy, scale) {
@@ -642,9 +688,9 @@ function drawCanvasHomePlateDetails(ctx, palette, sx, sy, scale) {
 
 function gamecastFoulLineGeometry() {
   const home = { x: 60, y: 96 };
-  const first = { x: 86, y: 76 };
-  const third = { x: 34, y: 76 };
-  const endY = 58;
+  const first = { x: 87, y: 75 };
+  const third = { x: 33, y: 75 };
+  const endY = 55;
   const t = (endY - home.y) / (third.y - home.y);
   return {
     home,
@@ -782,6 +828,14 @@ function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile) {
     ctx.fillRect(sx(28), sy(8), sx(12), scale);
     ctx.fillRect(sx(80), sy(8), sx(12), scale);
   }
+  ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+  for (let y = sy(23); y <= sy(39); y += Math.max(1, sy(5))) {
+    ctx.fillRect(sx(4), y, sx(20), Math.max(1, Math.round(scale * 0.3)));
+    ctx.fillRect(sx(96), y, sx(20), Math.max(1, Math.round(scale * 0.3)));
+  }
+  ctx.fillStyle = "rgba(255, 254, 251, 0.08)";
+  ctx.fillRect(sx(0), sy(25), width, Math.max(1, Math.round(scale * 0.24)));
+  ctx.fillRect(sx(0), sy(35), width, Math.max(1, Math.round(scale * 0.2)));
   const adColors = [palette.ribbon, palette.defender, palette.spark, palette.runner, palette.wallCap];
   for (let index = 0; index < 10; index += 1) {
     const x = sx(7 + index * 11);
@@ -800,6 +854,18 @@ function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile) {
   ctx.fillRect(boardX + scale, boardY + scale, boardW - scale * 2, sy(7) - scale * 2);
   ctx.fillStyle = palette.sparkL;
   ctx.fillRect(boardX + scale * 2, boardY + scale * 2, Math.max(scale, boardW - scale * 4), scale);
+  drawTinyCanvasText(ctx, profile.label || "KBO", boardX + scale * 2, boardY + scale * 4, profile.roofed ? "#ddecff" : palette.sparkL, Math.max(1, Math.round(scale * 0.55)));
+
+  for (const [x, y, dir] of [[14, 39, 1], [91, 39, -1]]) {
+    ctx.fillStyle = palette.outline;
+    ctx.fillRect(sx(x), sy(y), sx(15), sy(4));
+    ctx.fillStyle = "rgba(18, 23, 33, 0.72)";
+    ctx.fillRect(sx(x) + scale, sy(y) + scale, Math.max(scale, sx(15) - scale * 2), Math.max(scale, sy(4) - scale * 2));
+    ctx.fillStyle = dir > 0 ? palette.runnerL : palette.defenderL;
+    for (let slot = 0; slot < 3; slot += 1) {
+      ctx.fillRect(sx(x + 2 + slot * 4), sy(y + 2), Math.max(1, sx(1.2)), Math.max(1, sy(1.2)));
+    }
+  }
 
   ctx.fillStyle = palette.pole;
   const foul = gamecastFoulLineGeometry();
@@ -880,8 +946,8 @@ function fieldSize(runtime, value) {
 function phaserHomePlateCluster(runtime) {
   const home = runtime.basePositions?.home ?? { x: fieldX(runtime, 60), y: fieldY(runtime, 96) };
   return {
-    catcher: { x: home.x, y: home.y + fieldSize(runtime, 4) },
-    umpire: { x: home.x - fieldSize(runtime, 3), y: home.y + fieldSize(runtime, 7) }
+    catcher: { x: home.x, y: home.y + fieldSize(runtime, 3.4) },
+    umpire: { x: home.x - fieldSize(runtime, 3.2), y: home.y + fieldSize(runtime, 6.6) }
   };
 }
 
@@ -913,14 +979,14 @@ function buildStaticDefenseSprites(runtime, frame) {
   const accentColor = frame.defenseAccentColor ?? color;
   const positions = [
     { key: "C", x: plate.catcher.x, y: plate.catcher.y },
-    { key: "1B", x: fieldX(runtime, 94), y: fieldY(runtime, 77) },
-    { key: "2B", x: fieldX(runtime, 78), y: fieldY(runtime, 65) },
-    { key: "3B", x: fieldX(runtime, 26), y: fieldY(runtime, 77) },
-    { key: "SS", x: fieldX(runtime, 42), y: fieldY(runtime, 66) },
-    { key: "P", x: fieldX(runtime, 60), y: fieldY(runtime, 78) },
-    { key: "LF", x: fieldX(runtime, 31), y: fieldY(runtime, 50) },
-    { key: "CF", x: fieldX(runtime, 60), y: fieldY(runtime, 38) },
-    { key: "RF", x: fieldX(runtime, 89), y: fieldY(runtime, 50) }
+    { key: "1B", x: fieldX(runtime, 91), y: fieldY(runtime, 74) },
+    { key: "2B", x: fieldX(runtime, 73), y: fieldY(runtime, 62) },
+    { key: "3B", x: fieldX(runtime, 29), y: fieldY(runtime, 74) },
+    { key: "SS", x: fieldX(runtime, 46), y: fieldY(runtime, 63) },
+    { key: "P", x: fieldX(runtime, 60), y: fieldY(runtime, 72.8) },
+    { key: "LF", x: fieldX(runtime, 31), y: fieldY(runtime, 47) },
+    { key: "CF", x: fieldX(runtime, 60), y: fieldY(runtime, 34) },
+    { key: "RF", x: fieldX(runtime, 89), y: fieldY(runtime, 47) }
   ];
   const sprites = [];
   for (const item of positions) {
@@ -940,7 +1006,7 @@ function buildStaticDefenseSprites(runtime, frame) {
       runFrame: transition ? Math.floor(transition.t * 8) % 4 : 0,
       fieldingKey: item.key,
       facing: transition ? transition.facing : item.key === "C" ? 1 : undefined,
-      renderScale: item.key === "C" ? 0.58 : item.key === "P" ? 0.56 : undefined
+      renderScale: item.key === "C" ? 0.62 : item.key === "P" ? 0.58 : undefined
     });
   }
   return sprites;

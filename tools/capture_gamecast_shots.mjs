@@ -1,6 +1,8 @@
 // 게임캐스트 QA 캡처: 헤드리스 크롬으로 랩을 열고 주요 순간을 PNG로 저장
 import { spawn } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { createReadStream, writeFileSync, mkdirSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import { createServer } from "node:http";
 import path from "node:path";
 
 // 사용:
@@ -35,6 +37,69 @@ const proc = spawn(chrome, [
 ], { stdio: "ignore" });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const MIME_TYPES = new Map([
+  [".html", "text/html; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".mjs", "text/javascript; charset=utf-8"],
+  [".css", "text/css; charset=utf-8"],
+  [".json", "application/json; charset=utf-8"],
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".svg", "image/svg+xml; charset=utf-8"],
+  [".webp", "image/webp"]
+]);
+
+async function urlReachable(url) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(800) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function startStaticServerIfNeeded(baseUrl) {
+  const url = new URL(baseUrl);
+  if (!["127.0.0.1", "localhost"].includes(url.hostname)) return null;
+  if (await urlReachable(baseUrl)) return null;
+  const rootDir = process.cwd();
+  const server = createServer(async (req, res) => {
+    try {
+      const requestUrl = new URL(req.url ?? "/", "http://" + (req.headers.host ?? "127.0.0.1"));
+      const pathname = decodeURIComponent(requestUrl.pathname);
+      const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+      let resolved = path.resolve(rootDir, relative);
+      if (!resolved.startsWith(rootDir + path.sep) && resolved !== rootDir) {
+        res.writeHead(403);
+        res.end("Forbidden");
+        return;
+      }
+      let info = await stat(resolved).catch(() => null);
+      if (info?.isDirectory()) {
+        resolved = path.join(resolved, "index.html");
+        info = await stat(resolved).catch(() => null);
+      }
+      if (!info?.isFile()) {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+      res.writeHead(200, { "Content-Type": MIME_TYPES.get(path.extname(resolved).toLowerCase()) ?? "application/octet-stream" });
+      createReadStream(resolved).pipe(res);
+    } catch (error) {
+      res.writeHead(500);
+      res.end(String(error?.message ?? error));
+    }
+  });
+  const port = Number(url.port || 80);
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, url.hostname, resolve);
+  });
+  return server;
+}
 
 let target = null;
 for (let i = 0; i < 40 && !target; i += 1) {
@@ -111,9 +176,15 @@ await send("Runtime.enable");
 await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
 const go = async (url, waitMs) => { await send("Page.navigate", { url }); await sleep(waitMs); };
+const managedServer = await startStaticServerIfNeeded(BASE);
+const assertGamecastReady = async () => {
+  const ready = await evalJs(scopedEval("return Boolean(root.querySelector('[data-gamecast-screen]') && root.querySelector('[data-gamecast-canvas]'));"));
+  if (!ready) throw new Error(`Gamecast canvas not found at ${BASE}. Check that the static server loaded gamecast-lab.html.`);
+};
 
 if (MODE === "burst") {
   await go(BASE, 2600);
+  await assertGamecastReady();
   await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));
   const samples = [];
   for (let index = 0; index < 16; index += 1) {
@@ -135,11 +206,13 @@ if (MODE === "burst") {
   console.log("checklist", JSON.stringify(checklist));
   ws.close();
   proc.kill();
+  managedServer?.close();
   console.log("done");
   process.exit(0);
 }
 
 await go(BASE, 5000);
+await assertGamecastReady();
 await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));
 await shot("01-early.png");
 await sleep(2600); await shot("02-pa-mid.png");
@@ -163,4 +236,5 @@ await shot("07-kiwoom-dome.png");
 
 ws.close();
 proc.kill();
+managedServer?.close();
 console.log("done");
