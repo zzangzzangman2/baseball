@@ -142,6 +142,7 @@ const burstProbe = () => scopedEval(`
     ...((frame?.defenseSprites ?? []).map((sprite) => ({ source: "dynamic", ...sprite })))
   ];
   const pitcherVisible = defenders.some((sprite) => String(sprite.fieldingKey ?? sprite.key ?? "") === "P");
+  const homerBadDefense = frame?.event?.outcome === "homeRun" && (frame?.defenseSprites ?? []).some((sprite) => ["catch", "dive", "throw", "lookUp"].includes(String(sprite.pose ?? "")));
   const movingDefense = (frame?.defenseSprites ?? []).some((sprite) => String(sprite.fieldingKey ?? "") !== "P");
   const burst = root.querySelector("[data-gamecast-action-burst]");
   const burstVisible = Boolean(burst?.classList.contains("is-visible"));
@@ -161,6 +162,7 @@ const burstProbe = () => scopedEval(`
     ballTrailCount: frame?.ballTrail?.length ?? 0,
     pitcherVisible,
     movingDefense,
+    homerBadDefense,
     runnerCount: frame?.runners?.length ?? 0,
     burstVisible,
     burstText: burst?.textContent?.trim() ?? "",
@@ -199,6 +201,7 @@ if (MODE === "burst") {
     ballFrames: samples.filter((sample) => sample.ballVisible).length,
     battedBallFrames: samples.filter((sample) => sample.ballKind === "batted").length,
     movingDefenseFrames: samples.filter((sample) => sample.movingDefense).length,
+    homeRunBadDefenseFrames: samples.filter((sample) => sample.homerBadDefense).length,
     runnerFrames: samples.filter((sample) => sample.runnerCount > 0).length,
     burstBeforeRevealFrames: samples.filter((sample) => sample.burstVisible && !sample.resultRevealed).length
   };

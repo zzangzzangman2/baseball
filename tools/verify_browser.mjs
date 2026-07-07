@@ -1113,6 +1113,7 @@ async function checkGamecastLab() {
           progress: Number(frame?.progress ?? 0),
           resultRevealed: Boolean(frame?.resultRevealed),
           pitcherVisible,
+          homeRunBadDefense: frame?.event?.outcome === "homeRun" && (frame?.defenseSprites ?? []).some((sprite) => ["catch", "dive", "throw", "lookUp"].includes(String(sprite.pose ?? ""))),
           ballVisible: Boolean(frame?.ball),
           ballKind: frame?.ball?.kind ?? "",
           pitchPathWhitePixels,
@@ -1136,6 +1137,7 @@ async function checkGamecastLab() {
     pitchPixelFrames: playFeelSamples.filter((sample) => sample.pitchPathWhitePixels > 0).length,
     battedBallFrames: playFeelSamples.filter((sample) => sample.ballKind === "batted").length,
     movingDefenseFrames: playFeelSamples.filter((sample) => sample.movingDefense).length,
+    homeRunBadDefenseFrames: playFeelSamples.filter((sample) => sample.homeRunBadDefense).length,
     runnerFrames: playFeelSamples.filter((sample) => sample.runnerCount > 0).length,
     burstBeforeRevealFrames: playFeelSamples.filter((sample) => sample.burstVisible && !sample.resultRevealed).length
   };
@@ -1143,6 +1145,7 @@ async function checkGamecastLab() {
   assert(playFeelProbe.ballFrames >= 3 && playFeelProbe.pitchPixelFrames >= 1, `버스트 샘플에서 공/투구 픽셀이 부족합니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
   assert(playFeelProbe.battedBallFrames >= 1, `버스트 샘플에서 타구 비행이 잡히지 않습니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
   assert(playFeelProbe.movingDefenseFrames >= 1 || playFeelProbe.runnerFrames >= 1, `버스트 샘플에서 수비/주자 움직임이 없습니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
+  assert(playFeelProbe.homeRunBadDefenseFrames === 0, `홈런인데 외야수가 잡는 포즈를 취합니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
   assert(playFeelProbe.burstBeforeRevealFrames === 0, `결과 배지가 연기 전에 표시됩니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
 
   const viewportSweep = [];

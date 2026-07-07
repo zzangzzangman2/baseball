@@ -6858,15 +6858,13 @@ function drawBallparkOutfield(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neu
             : profile.mow === "stripes"
               ? Math.floor((lx + ly * 0.25) / 9)
               : Math.floor(radial / 13);
-        const grain = (x * 17 + y * 31) % 113 === 0;
-        const softMow = (profile.mow === "checker" || profile.mow === "stripes") && (ring + stripe) % 2 && (x + y) % 11 === 0;
-        drawPixel(ctx, x, y, grain ? palette.grassL : softMow ? palette.grassLo : palette.grassHi);
+        const mowStripe = (ring + stripe) % 2 === 1;
+        drawPixel(ctx, x, y, mowStripe ? palette.grassLo : palette.grassHi);
       }
     }
   }
 
   drawBallparkWallDetails(ctx, palette, profile);
-  drawPixelCrowd(ctx, palette, profile);
   drawBallparkArchitecture(ctx, palette, profile);
 
   drawPixelStadiumScoreboard(ctx, palette, profile);
@@ -8770,17 +8768,20 @@ function buildGamecastDefenseSprites(event, progress, palette) {
   if (progress < pitchEnd + 0.06 || progress > Math.min(0.96, resultReveal + 0.08)) return sprites;
 
   const battedType = String(event.battedBallType ?? "");
-  const target = battedBallGroundPoint(event, 1);
-  const fieldingKey = gamecastFieldingKeyForTarget(event, target);
-  const start = gamecastDefenderStartForTarget(target, event);
+  const ballTarget = battedBallGroundPoint(event, 1);
+  const fieldingKey = gamecastFieldingKeyForTarget(event, ballTarget);
+  const start = gamecastDefenderStartForTarget(ballTarget, event);
   const catchProgress = gamecastFieldingCatchProgress(event);
   const runStart = Math.max(0.34, pitchEnd + 0.06);
-  const fieldT = Math.max(0, Math.min(1, (progress - runStart) / Math.max(0.01, catchProgress - runStart)));
+  const isHomeRun = event.outcome === "homeRun";
+  const target = isHomeRun ? gamecastHomeRunFielderSpot(event, ballTarget, fieldingKey) : ballTarget;
+  const routeEnd = isHomeRun ? Math.min(catchProgress, gamecastBallFlightEnd(event) - 0.03) : catchProgress;
+  const fieldT = Math.max(0, Math.min(1, (progress - runStart) / Math.max(0.01, routeEnd - runStart)));
   const position = gamecastFielderRoutePoint(start, target, fieldT, fieldingKey, event);
-  const hardPlay = gamecastDifficultFieldingPlay(event, fieldingKey, target, start);
-  const throwing = progress >= gamecastThrowStartProgress(event) && progress <= gamecastThrowEndProgress(event) && event.outcome !== "homeRun";
-  const impactPose = event.outcome === "homeRun" && progress > catchProgress
-    ? "lookUp"
+  const hardPlay = !isHomeRun && gamecastDifficultFieldingPlay(event, fieldingKey, target, start);
+  const throwing = progress >= gamecastThrowStartProgress(event) && progress <= gamecastThrowEndProgress(event) && !isHomeRun;
+  const impactPose = isHomeRun
+    ? progress < routeEnd - 0.02 ? "run" : "watch"
     : event.outcome === "error" && progress > catchProgress - 0.02
       ? "dive"
       : hardPlay && progress > catchProgress - 0.06 && progress < catchProgress + 0.06
@@ -8790,9 +8791,9 @@ function buildGamecastDefenseSprites(event, progress, palette) {
           : progress > catchProgress - 0.04
             ? "catch"
             : "run";
-  const catchBurst = (event.outcome === "out" && progress > catchProgress - 0.02 && progress < catchProgress + 0.12)
-    || (event.outcome === "error" && progress > catchProgress - 0.02 && progress < catchProgress + 0.14);
-  const defenseAnimation = gamecastDefenseAnimationForPose(impactPose, progress, runStart, catchProgress, fieldT);
+  const catchBurst = !isHomeRun && ((event.outcome === "out" && progress > catchProgress - 0.02 && progress < catchProgress + 0.12)
+    || (event.outcome === "error" && progress > catchProgress - 0.02 && progress < catchProgress + 0.14));
+  const defenseAnimation = gamecastDefenseAnimationForPose(impactPose, progress, runStart, routeEnd, fieldT);
 
   sprites.push({
     position,
@@ -8821,24 +8822,6 @@ function buildGamecastDefenseSprites(event, progress, palette) {
       x: Math.round(lerp(gamecastX(91), firstBase.x + gamecastSize(2), easeOutCubic(stretchT))),
       y: Math.round(lerp(gamecastY(74), firstBase.y + gamecastSize(1), easeOutCubic(stretchT)))
     }, progress > catchProgress + 0.18 ? "catch" : "field", 1));
-  }
-
-  if (event.outcome === "homeRun" && progress > catchProgress) {
-    const chaseKey = gamecastFieldingKeyForTarget(event, target);
-    sprites.push({
-      position: { x: Math.round(target.x), y: Math.round(target.y + gamecastSize(7)) },
-      color: event.defenseColor ?? palette.defenderSh,
-      jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
-      jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
-      accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
-      fieldingKey: chaseKey,
-      uniformNumber: gamecastUniformNumber(event.defenderName, event.fieldingPosition),
-    runFrame: 2,
-    squash: false,
-    pose: "lookUp",
-    animationKey: null,
-    animationT: 0
-    });
   }
 
   return sprites;
@@ -8870,18 +8853,30 @@ function gamecastDefenseAnimationForPose(pose, progress, runStart, catchProgress
   return { key: null, t: 0, loop: false };
 }
 
+function gamecastHomeRunFielderSpot(event, ballTarget, key) {
+  const logicalX = Math.max(16, Math.min(104, (Number(ballTarget?.x ?? gamecastX(60)) / GAMECAST_PIXEL_W) * 120));
+  const sideLean = key === "LF" ? -2.6 : key === "RF" ? 2.6 : 0;
+  const wallY = gamecastOutfieldWallY(gamecastBallparkProfileForEvent(event), logicalX);
+  return gamecastPlayableFieldPoint(event, logicalX + sideLean, wallY + 8.2 + Math.abs(gamecastEventNoise(event, 82)) * 2.4, { warningTrack: true });
+}
+
 function gamecastFielderRoutePoint(start, target, t, key, event) {
   const eased = easeInOutCubic(Math.max(0, Math.min(1, t)));
   const outfield = ["LF", "CF", "RF"].includes(key);
-  const control = outfield
+  const control = event?.outcome === "homeRun" && outfield
     ? {
-        x: (start.x + target.x) / 2 + gamecastSize(gamecastEventNoise(event, 71) * 8),
-        y: Math.min(start.y, target.y) - gamecastSize(5 + Math.abs(gamecastEventNoise(event, 72)) * 6)
+        x: (start.x + target.x) / 2 + gamecastSize(gamecastEventNoise(event, 71) * 2),
+        y: (start.y + target.y) / 2 - gamecastSize(1)
       }
-    : {
-        x: (start.x + target.x) / 2,
-        y: (start.y + target.y) / 2 + gamecastSize(String(event?.battedBallType ?? "") === "groundBall" ? 3 : -3)
-      };
+    : outfield
+      ? {
+          x: (start.x + target.x) / 2 + gamecastSize(gamecastEventNoise(event, 71) * 8),
+          y: Math.min(start.y, target.y) - gamecastSize(5 + Math.abs(gamecastEventNoise(event, 72)) * 6)
+        }
+      : {
+          x: (start.x + target.x) / 2,
+          y: (start.y + target.y) / 2 + gamecastSize(String(event?.battedBallType ?? "") === "groundBall" ? 3 : -3)
+        };
   return {
     x: Math.round(quadBezier(start.x, control.x, target.x, eased)),
     y: Math.round(quadBezier(start.y, control.y, target.y, eased))
@@ -9757,6 +9752,8 @@ function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, op
     cells.push([0, 4, palette.glove], [1, 4, S], [7, 5, S], [8, 5, palette.glove], [1, 10, L], [2, 10, L], [6, 10, L], [7, 10, L], [0, 11, L], [8, 11, L], [0, 12, L], [8, 12, L]);
   } else if (pose === "lookUp") {
     cells.push([0, 4, S], [1, 4, S], [6, 4, S], [7, 4, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
+  } else if (pose === "watch") {
+    cells.push([1, 5, S], [6, 5, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
   } else if (pose === "coach") {
     cells.push([0, 3, S], [1, 4, S], [7, 3, S], [8, 2, S], [2, 10, L], [5, 10, L], [2, 11, L], [6, 11, L], [1, 12, L], [6, 12, L]);
   } else if (runFrame === 2) {

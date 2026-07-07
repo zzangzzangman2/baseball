@@ -579,9 +579,8 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
               : profile.mow === "stripes"
                 ? Math.floor((lx + ly * 0.25) / 9)
                 : Math.floor(radial / 13);
-          const grain = (x * 17 + y * 31) % 113 === 0;
-          const softMow = (profile.mow === "checker" || profile.mow === "stripes") && (ring + stripe) % 2 && (x + y) % 11 === 0;
-          ctx.fillStyle = grain ? (palette.grassL ?? palette.grassHi) : (softMow ? palette.grassLo : palette.grassHi);
+          const mowStripe = (ring + stripe) % 2 === 1;
+          ctx.fillStyle = mowStripe ? palette.grassLo : palette.grassHi;
         }
         ctx.fillRect(x, y, 1, 1);
       }
@@ -589,7 +588,6 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
   }
 
   drawCanvasWallDetails(ctx, palette, sx, sy, profile, scale);
-  drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale);
   drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile);
   drawCanvasInfieldCut(ctx, palette, sx, sy, scale);
 }
@@ -1372,6 +1370,9 @@ function drawPlayer(graphics, runtime, sprite, role) {
     const batColor = pose === "miss" ? palette.throw : palette.bat;
     rect(graphics, runtime, x + facing * 4, y - 13, facing * 8, 2, batColor);
     if (pose === "swing" || pose === "follow") rect(graphics, runtime, x - 8, y - 14, 18, 1, palette.sparkL, 0.8);
+  } else if (pose === "watch") {
+    rect(graphics, runtime, x - 6, y - 8, 2, 4, skin);
+    rect(graphics, runtime, x + 4, y - 8, 2, 4, skin);
   } else if (role?.startsWith("defender")) {
     rect(graphics, runtime, x + 4, y - 7, 4, 3, palette.glove);
   }
