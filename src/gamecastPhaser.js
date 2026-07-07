@@ -527,8 +527,11 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
   ctx.fillStyle = roofed ? "#202b3a" : "#34303d";
   ctx.fillRect(0, 0, width, height);
   for (let y = 0; y < sy(roofed ? 18 : 22); y += Math.max(2, sy(3))) {
+    const bgSegments = roofed
+      ? [[sx(3), sx(35)], [sx(42), sx(78)], [sx(85), sx(117)]]
+      : [[sx(3), sx(40)], [sx(80), sx(117)]];
     ctx.fillStyle = y % Math.max(4, sy(8)) === 0 ? (roofed ? "#2b3b4d" : "#4a4654") : palette.standD;
-    ctx.fillRect(0, y, width, Math.max(1, sy(1)));
+    for (const [x1, x2] of bgSegments) ctx.fillRect(x1, y, Math.max(1, x2 - x1), Math.max(1, sy(1)));
   }
 
   for (let y = 0; y < height; y += 1) {
@@ -569,21 +572,22 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
   fillCircleCanvas(ctx, sx(60), sy(79), sx(15), palette.grassLo);
   fillCircleCanvas(ctx, sx(60), sy(79), sx(10), palette.grassHi);
   fillDiamond(ctx, palette.dirtM, [
-    [sx(60), sy(55)],
-    [sx(88), sy(77)],
-    [sx(60), sy(100)],
-    [sx(32), sy(77)]
+    [sx(60), sy(62)],
+    [sx(86), sy(77)],
+    [sx(60), sy(98)],
+    [sx(34), sy(77)]
   ]);
   fillDiamond(ctx, palette.grassHi, [
-    [sx(60), sy(68)],
-    [sx(76), sy(80)],
-    [sx(60), sy(93)],
-    [sx(44), sy(80)]
+    [sx(60), sy(70)],
+    [sx(74), sy(81)],
+    [sx(60), sy(92)],
+    [sx(46), sy(81)]
   ]);
-  drawLineCanvas(ctx, sx(60), sy(96), sx(16), sy(42), palette.chalkSh, scale);
-  drawLineCanvas(ctx, sx(60), sy(96), sx(104), sy(42), palette.chalkSh, scale);
-  drawLineCanvas(ctx, sx(60), sy(96), sx(33), sy(76), palette.chalkSh, 1);
-  drawLineCanvas(ctx, sx(60), sy(96), sx(87), sy(76), palette.chalkSh, 1);
+  const foul = gamecastFoulLineGeometry();
+  const foulLine = "rgba(255, 254, 251, 0.72)";
+  const foulWidth = Math.max(1, Math.round(scale * 0.22));
+  drawLineCanvas(ctx, sx(foul.home.x), sy(foul.home.y), sx(foul.left.x), sy(foul.left.y), foulLine, foulWidth);
+  drawLineCanvas(ctx, sx(foul.home.x), sy(foul.home.y), sx(foul.right.x), sy(foul.right.y), foulLine, foulWidth);
 
   for (const [x, y] of [[60, 96], [86, 76], [60, 56], [34, 76]]) {
     ctx.fillStyle = palette.outline;
@@ -595,9 +599,43 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
   ctx.fillRect(sx(55), sy(73), sx(10), sy(5));
   ctx.fillStyle = palette.outline;
   ctx.fillRect(sx(58), sy(75), sx(4), sy(2));
-  ctx.fillStyle = palette.chalkSh;
-  ctx.fillRect(sx(50), sy(91), sx(5), scale);
-  ctx.fillRect(sx(66), sy(91), sx(5), scale);
+  drawCanvasHomePlateDetails(ctx, palette, sx, sy, scale);
+}
+
+function drawCanvasHomePlateDetails(ctx, palette, sx, sy, scale) {
+  const stroke = Math.max(1, scale);
+  const boxTop = sy(90);
+  const boxH = sy(10);
+  const boxW = sx(4);
+  const leftX = sx(48);
+  const rightX = sx(68);
+  ctx.fillStyle = "rgba(255, 254, 251, 0.68)";
+  strokeRectCanvas(ctx, leftX, boxTop, boxW, boxH, stroke);
+  strokeRectCanvas(ctx, rightX, boxTop, boxW, boxH, stroke);
+  strokeRectCanvas(ctx, sx(55), sy(97), sx(10), sy(5), stroke);
+  ctx.fillStyle = palette.base;
+  ctx.fillRect(sx(58), sy(95), sx(4), stroke);
+  ctx.fillRect(sx(59), sy(96), sx(2), stroke);
+}
+
+function gamecastFoulLineGeometry() {
+  const home = { x: 60, y: 96 };
+  const first = { x: 86, y: 76 };
+  const third = { x: 34, y: 76 };
+  const endY = 58;
+  const t = (endY - home.y) / (third.y - home.y);
+  return {
+    home,
+    left: { x: home.x + (third.x - home.x) * t, y: endY },
+    right: { x: home.x + (first.x - home.x) * t, y: endY }
+  };
+}
+
+function strokeRectCanvas(ctx, x, y, width, height, stroke) {
+  ctx.fillRect(x, y, width, stroke);
+  ctx.fillRect(x, y + height - stroke, width, stroke);
+  ctx.fillRect(x, y, stroke, height);
+  ctx.fillRect(x + width - stroke, y, stroke, height);
 }
 
 function normalizePhaserFieldProfile(profile) {
@@ -657,10 +695,13 @@ function drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale) {
   for (let y = startY; y < endY; y += stepY) {
     const row = Math.floor((y - startY) / Math.max(1, stepY));
     if (y < sy(profile.roofed ? 20 : 24)) {
+      const rowSegments = profile.roofed
+        ? [[sx(3), sx(35)], [sx(42), sx(78)], [sx(85), sx(117)]]
+        : [[sx(3), sx(40)], [sx(80), sx(117)]];
       ctx.fillStyle = row % 2 ? "rgba(18, 23, 33, 0.58)" : "rgba(39, 45, 58, 0.58)";
-      ctx.fillRect(0, y + Math.floor(stepY * 0.28), width, seatBack);
+      for (const [x1, x2] of rowSegments) ctx.fillRect(x1, y + Math.floor(stepY * 0.28), Math.max(1, x2 - x1), seatBack);
       ctx.fillStyle = row % 2 ? "rgba(255, 254, 251, 0.08)" : "rgba(0, 0, 0, 0.12)";
-      ctx.fillRect(0, y + stepY - rail, width, rail);
+      for (const [x1, x2] of rowSegments) ctx.fillRect(x1, y + stepY - rail, Math.max(1, x2 - x1), rail);
     }
     for (let x = sx(2) + (row % 2 ? Math.floor(stepX / 2) : 0); x < width - sx(3); x += stepX) {
       const lx = (x / width) * 120;
@@ -703,16 +744,21 @@ function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile) {
     ctx.fillRect(0, 0, width, sy(8));
     ctx.fillStyle = "#314456";
     for (let y = sy(2); y < sy(12); y += Math.max(scale, sy(5))) {
-      ctx.fillRect(sx(6), y, sx(108), scale);
+      ctx.fillRect(sx(8), y, sx(18), scale);
+      ctx.fillRect(sx(47), y, sx(26), scale);
+      ctx.fillRect(sx(94), y, sx(18), scale);
     }
     ctx.fillStyle = "#33475a";
     for (let x = sx(10); x < sx(112); x += sx(18)) {
       ctx.fillRect(x, sy(1), scale, sy(13));
     }
     ctx.fillStyle = "rgba(221, 236, 255, 0.28)";
-    ctx.fillRect(sx(12), sy(13), sx(96), scale);
+    ctx.fillRect(sx(18), sy(13), sx(10), scale);
+    ctx.fillRect(sx(46), sy(13), sx(28), scale);
+    ctx.fillRect(sx(92), sy(13), sx(10), scale);
     ctx.fillStyle = "rgba(255, 246, 199, 0.34)";
-    ctx.fillRect(sx(18), sy(8), sx(84), scale);
+    ctx.fillRect(sx(28), sy(8), sx(12), scale);
+    ctx.fillRect(sx(80), sy(8), sx(12), scale);
   }
   const adColors = [palette.ribbon, palette.defender, palette.spark, palette.runner, palette.wallCap];
   for (let index = 0; index < 10; index += 1) {
@@ -734,10 +780,9 @@ function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile) {
   ctx.fillRect(boardX + scale * 2, boardY + scale * 2, Math.max(scale, boardW - scale * 4), scale);
 
   ctx.fillStyle = palette.pole;
-  ctx.fillRect(sx(15), sy(30), scale, sy(25));
-  ctx.fillRect(sx(105), sy(30), scale, sy(25));
-  ctx.fillStyle = "rgba(255, 246, 199, 0.45)";
-  ctx.fillRect(0, sy(26), width, scale);
+  const foul = gamecastFoulLineGeometry();
+  ctx.fillRect(sx(foul.left.x), sy(30), scale, Math.max(scale, sy(foul.left.y - 30)));
+  ctx.fillRect(sx(foul.right.x), sy(30), scale, Math.max(scale, sy(foul.right.y - 30)));
 }
 
 function drawTinyCanvasText(ctx, text, x, y, color, scale) {
@@ -810,6 +855,14 @@ function fieldSize(runtime, value) {
   return Math.max(1, Math.round((Number(value) / 120) * runtime.width));
 }
 
+function phaserHomePlateCluster(runtime) {
+  const home = runtime.basePositions?.home ?? { x: fieldX(runtime, 60), y: fieldY(runtime, 96) };
+  return {
+    catcher: { x: home.x, y: home.y + fieldSize(runtime, 4) },
+    umpire: { x: home.x - fieldSize(runtime, 3), y: home.y + fieldSize(runtime, 7) }
+  };
+}
+
 function fillDiamond(ctx, color, points) {
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -831,20 +884,21 @@ function drawLineCanvas(ctx, x1, y1, x2, y2, color, width = 1) {
 function buildStaticDefenseSprites(runtime, frame) {
   if (!frame.event) return [];
   const movingFielders = new Set(frame.activeFielders ?? []);
+  const plate = phaserHomePlateCluster(runtime);
   const color = frame.defenseColor ?? runtime.palette.defender;
   const jerseyColor = frame.defenseJerseyColor ?? runtime.palette.defenderL;
   const jerseyShadow = frame.defenseJerseyShadow ?? runtime.palette.uniformSh;
   const accentColor = frame.defenseAccentColor ?? color;
   const positions = [
-    { key: "C", x: fieldX(runtime, 60), y: fieldY(runtime, 99) },
+    { key: "C", x: plate.catcher.x, y: plate.catcher.y },
     { key: "1B", x: fieldX(runtime, 94), y: fieldY(runtime, 77) },
     { key: "2B", x: fieldX(runtime, 78), y: fieldY(runtime, 65) },
     { key: "3B", x: fieldX(runtime, 26), y: fieldY(runtime, 77) },
     { key: "SS", x: fieldX(runtime, 42), y: fieldY(runtime, 66) },
     { key: "P", x: fieldX(runtime, 60), y: fieldY(runtime, 78) },
-    { key: "LF", x: fieldX(runtime, 25), y: fieldY(runtime, 55) },
-    { key: "CF", x: fieldX(runtime, 60), y: fieldY(runtime, 36) },
-    { key: "RF", x: fieldX(runtime, 95), y: fieldY(runtime, 55) }
+    { key: "LF", x: fieldX(runtime, 31), y: fieldY(runtime, 50) },
+    { key: "CF", x: fieldX(runtime, 60), y: fieldY(runtime, 38) },
+    { key: "RF", x: fieldX(runtime, 89), y: fieldY(runtime, 50) }
   ];
   const sprites = [];
   for (const item of positions) {
@@ -1237,14 +1291,14 @@ function drawPlayer(graphics, runtime, sprite, role) {
 
 function buildUmpireSprite(runtime, frame) {
   if (!frame.event) return null;
-  const bases = runtime.basePositions;
+  const plate = phaserHomePlateCluster(runtime);
   return {
-    position: { x: bases.home.x - fieldSize(runtime, 8), y: bases.home.y + fieldSize(runtime, 8) },
+    position: { ...plate.umpire },
     jerseyColor: "#25232c",
     jerseyShadow: "#15131a",
     accentColor: "#5f5b67",
     pose: "idle",
-    renderScale: 0.58
+    renderScale: 0.6
   };
 }
 
