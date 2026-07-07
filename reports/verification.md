@@ -1,10 +1,10 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-07T02:05:01.373Z
+- 실행 시각: 2026-07-07T06:19:04.362Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Program Files\nodejs\node.exe (v24.18.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
-- 종합 결과: 통과 (33/33 통과)
+- 종합 결과: 통과 (34/34 통과)
 
 ## 체크 결과
 
@@ -40,6 +40,7 @@
 | 트레이드 안전 게이트 23케이스 | PASS | 23개 reject 케이스 + 1개 성공 케이스 | - |
 | FA/외국인 시장 command | PASS | FA 30명/오퍼 30건, 외국인 코드 30명, roster 531명 유지 | - |
 | 자동 오프시즌/시즌 롤오버 | PASS | 자동 스토브 roster +56, 신인입단 56/보류권 110, FA 30건, CPU 트레이드 4건, 2027 프리시즌 롤오버 | - |
+| 롤오버 기록실 히스토리 보존 | PASS | 2026 leagueHistory 10팀, HR 박승규, ERA 전용주, player.history 보존 | - |
 | 프런트오피스 selector 실행 | PASS | LG 트윈스 요약 55명, 스카우트 후보 24명 | - |
 | GM 데스크 데이터 실행 | PASS | LG 트윈스 시장 후보 42명, 제안 10건, 업무 6개, 알림 6건 | - |
 | JSON 저장 roundtrip | PASS | roundtrip 10팀/531명, kbo-gm-2026-03-01-day1-lg.json | - |

@@ -154,6 +154,23 @@ const FA_COMPENSATION_RULES = {
   C: { protectedListSize: 0, playerPlusCashMultiplier: 0, cashOnlyMultiplier: 1.5 },
   none: { protectedListSize: 0, playerPlusCashMultiplier: 0, cashOnlyMultiplier: 0 }
 };
+const RECORD_BOOK_LIMIT = 10;
+const PLAYER_HISTORY_LIMIT = 24;
+const LEAGUE_HISTORY_LIMIT = 24;
+const BATTING_LEADERBOARDS = [
+  { key: "avg", label: "AVG", statGroup: "batting", qualification: "batting", direction: "desc" },
+  { key: "homeRuns", label: "HR", statGroup: "batting", statKey: "homeRuns", qualification: "batting", direction: "desc" },
+  { key: "rbi", label: "RBI", statGroup: "batting", statKey: "rbi", qualification: "batting", direction: "desc" },
+  { key: "stolenBases", label: "SB", statGroup: "batting", statKey: "stolenBases", qualification: "batting", direction: "desc" },
+  { key: "ops", label: "OPS", statGroup: "batting", qualification: "batting", direction: "desc" }
+];
+const PITCHING_LEADERBOARDS = [
+  { key: "era", label: "ERA", statGroup: "pitching", qualification: "pitching", direction: "asc" },
+  { key: "wins", label: "W", statGroup: "pitching", statKey: "wins", qualification: "pitching", direction: "desc" },
+  { key: "saves", label: "SV", statGroup: "pitching", statKey: "saves", qualification: "pitching", direction: "desc" },
+  { key: "holds", label: "HLD", statGroup: "pitching", statKey: "holds", qualification: "pitching", direction: "desc" },
+  { key: "strikeouts", label: "K", statGroup: "pitching", statKey: "strikeouts", qualification: "pitching", direction: "desc" }
+];
 
 const POSTSEASON_SERIES = [
   {
@@ -221,6 +238,21 @@ export function getStandings(state) {
     if (runDiffB !== runDiffA) return runDiffB - runDiffA;
     return String(a.name ?? a.id).localeCompare(String(b.name ?? b.id));
   });
+}
+
+export function getRecordBook(state, options = {}) {
+  const season = safeNumber(options.season, inferSeasonFromState(state));
+  const includeUnqualified = Boolean(options.includeUnqualified);
+  const limit = Math.max(1, Math.floor(safeNumber(options.limit, RECORD_BOOK_LIMIT)));
+  return {
+    season,
+    qualification: buildRecordQualification(state),
+    leaders: buildLeagueLeaders(state, { includeUnqualified, limit }),
+    leadersIncludingUnqualified: includeUnqualified ? null : buildLeagueLeaders(state, { includeUnqualified: true, limit }),
+    teamRecords: buildTeamRecords(state),
+    leagueHistory: Array.isArray(state?.leagueHistory) ? state.leagueHistory : [],
+    seasonHistory: Array.isArray(state?.seasonHistory) ? state.seasonHistory : []
+  };
 }
 
 export function getSelectedTeam(state) {
@@ -1845,6 +1877,7 @@ export function advanceSeason(state) {
   const historyEntry = buildSeasonHistoryEntry(state, previousSeason, nextYear);
 
   state.seasonHistory = [historyEntry, ...((state.seasonHistory ?? []))].slice(0, 12);
+  archiveCompletedSeason(state, previousSeason, historyEntry);
   for (const team of state.teams ?? []) {
     resetTeamForNextSeason(team, nextYear, state);
   }
@@ -2567,6 +2600,315 @@ function buildSeasonHistoryEntry(state, previousSeason, nextYear) {
   };
 }
 
+function archiveCompletedSeason(state, previousSeason, seasonHistoryEntry = null) {
+  if (!state || !Array.isArray(state.teams)) return null;
+
+  const leagueEntry = buildLeagueHistoryEntry(state, previousSeason, seasonHistoryEntry);
+  state.leagueHistory = [
+    leagueEntry,
+    ...((Array.isArray(state.leagueHistory) ? state.leagueHistory : [])
+      .filter((entry) => safeNumber(entry?.season ?? entry?.year) !== safeNumber(previousSeason)))
+  ].slice(0, LEAGUE_HISTORY_LIMIT);
+  state.statsBySeason = state.statsBySeason && typeof state.statsBySeason === "object" ? state.statsBySeason : {};
+
+  for (const { team, player } of allPlayerEntries(state)) {
+    const seasonStats = cloneSeasonStats(player.seasonStats);
+    const playerEntry = buildPlayerHistoryEntry(player, team, previousSeason, seasonStats, state.awards);
+    player.history = [
+      playerEntry,
+      ...((Array.isArray(player.history) ? player.history : [])
+        .filter((entry) => safeNumber(entry?.season ?? entry?.year) !== safeNumber(previousSeason)))
+    ].slice(0, PLAYER_HISTORY_LIMIT);
+    state.statsBySeason[player.id] = {
+      ...(state.statsBySeason[player.id] ?? {}),
+      [previousSeason]: seasonStats
+    };
+  }
+
+  return leagueEntry;
+}
+
+function buildLeagueHistoryEntry(state, season, seasonHistoryEntry = null) {
+  return {
+    id: `league-season-${season}`,
+    season,
+    year: season,
+    closedAt: state.currentDate,
+    gamesPlayed: safeNumber(state.gamesPlayed),
+    championTeamId: state.postseason?.championTeamId ?? seasonHistoryEntry?.championTeamId ?? "",
+    championName: state.postseason?.championName ?? seasonHistoryEntry?.championName ?? "",
+    standings: seasonHistoryEntry?.standings ?? buildStandingsSnapshot(state),
+    awards: clonePlain(state.awards),
+    leaders: buildLeagueLeaders(state, { includeUnqualified: false, limit: RECORD_BOOK_LIMIT }),
+    leadersIncludingUnqualified: buildLeagueLeaders(state, { includeUnqualified: true, limit: RECORD_BOOK_LIMIT }),
+    teamRecords: buildTeamRecords(state),
+    qualification: buildRecordQualification(state),
+    source: "season-rollover-v1"
+  };
+}
+
+function buildPlayerHistoryEntry(player, team, season, seasonStats, awards) {
+  return {
+    id: `${player.id}-${season}`,
+    season,
+    year: season,
+    teamId: team?.id ?? player?.teamId ?? "",
+    teamName: team?.name ?? "",
+    teamShortName: team?.shortName ?? team?.name ?? "",
+    playerId: player?.id ?? "",
+    name: player?.name ?? "",
+    role: player?.role ?? "",
+    position: player?.position ?? "",
+    age: safeNumber(player?.age),
+    ovr: safeNumber(player?.ovr),
+    pot: safeNumber(player?.pot),
+    batting: seasonStats.batting,
+    pitching: seasonStats.pitching,
+    fielding: seasonStats.fielding,
+    awards: playerAwardTags(awards, player?.id),
+    source: "season-rollover-v1"
+  };
+}
+
+function buildStandingsSnapshot(state) {
+  return getStandings(state).map((team, index) => ({
+    rank: index + 1,
+    teamId: team.id,
+    name: team.name,
+    shortName: team.shortName ?? team.name,
+    wins: safeNumber(team.wins),
+    losses: safeNumber(team.losses),
+    ties: safeNumber(team.ties),
+    pct: winningPct(team),
+    runsFor: safeNumber(team.runsFor),
+    runsAgainst: safeNumber(team.runsAgainst),
+    runDiff: safeNumber(team.runsFor) - safeNumber(team.runsAgainst)
+  }));
+}
+
+function buildRecordQualification(state) {
+  const byTeam = Object.fromEntries((state?.teams ?? []).map((team) => {
+    const games = teamGamesPlayed(team);
+    return [team.id, {
+      games,
+      battingPlateAppearances: Math.ceil(games * 3.1),
+      pitchingInnings: games,
+      pitchingOuts: games * 3
+    }];
+  }));
+  return {
+    battingPlateAppearancesPerTeamGame: 3.1,
+    pitchingInningsPerTeamGame: 1,
+    byTeam
+  };
+}
+
+function buildLeagueLeaders(state, options = {}) {
+  const includeUnqualified = Boolean(options.includeUnqualified);
+  const limit = Math.max(1, Math.floor(safeNumber(options.limit, RECORD_BOOK_LIMIT)));
+  const players = allPlayerEntries(state);
+  return {
+    batting: Object.fromEntries(BATTING_LEADERBOARDS.map((board) => [
+      board.key,
+      buildLeaderboard(players, board, { includeUnqualified, limit })
+    ])),
+    pitching: Object.fromEntries(PITCHING_LEADERBOARDS.map((board) => [
+      board.key,
+      buildLeaderboard(players, board, { includeUnqualified, limit })
+    ]))
+  };
+}
+
+function buildLeaderboard(players, board, options) {
+  return [...(players ?? [])]
+    .filter((entry) => leaderRoleMatches(entry.player, board))
+    .map((entry) => toLeaderEntry(entry, board))
+    .filter((entry) => entry.active && (options.includeUnqualified || entry.qualified))
+    .filter((entry) => Number.isFinite(entry.value))
+    .sort((a, b) => compareLeaderEntries(a, b, board))
+    .slice(0, options.limit);
+}
+
+function leaderRoleMatches(player, board) {
+  if (board.statGroup === "pitching") return player?.role === "pitcher";
+  return player?.role !== "pitcher";
+}
+
+function toLeaderEntry({ team, player }, board) {
+  const stats = cloneSeasonStats(player?.seasonStats);
+  const groupStats = stats[board.statGroup] ?? {};
+  const qualification = playerQualification(player, team, board);
+  const value = leaderValue(groupStats, board);
+  return {
+    playerId: player?.id ?? "",
+    name: player?.name ?? "",
+    teamId: team?.id ?? player?.teamId ?? "",
+    teamName: team?.name ?? "",
+    teamShortName: team?.shortName ?? team?.name ?? "",
+    role: player?.role ?? "",
+    position: player?.position ?? "",
+    age: safeNumber(player?.age),
+    ovr: safeNumber(player?.ovr),
+    stat: board.key,
+    label: board.label,
+    value,
+    active: isActiveLeaderLine(groupStats, board),
+    qualified: qualification.qualified,
+    qualifyingValue: qualification.value,
+    qualifyingTarget: qualification.target,
+    batting: stats.batting,
+    pitching: stats.pitching,
+    fielding: stats.fielding
+  };
+}
+
+function playerQualification(player, team, board) {
+  const games = teamGamesPlayed(team);
+  if (board.qualification === "pitching") {
+    const value = safeNumber(player?.seasonStats?.pitching?.inningsOuts);
+    const target = games * 3;
+    return { value, target, qualified: target <= 0 ? value > 0 : value >= target };
+  }
+  const value = safeNumber(player?.seasonStats?.batting?.plateAppearances);
+  const target = Math.ceil(games * 3.1);
+  return { value, target, qualified: target <= 0 ? value > 0 : value >= target };
+}
+
+function isActiveLeaderLine(stats, board) {
+  if (board.statGroup === "pitching") return safeNumber(stats.inningsOuts) > 0;
+  return safeNumber(stats.plateAppearances) > 0 || safeNumber(stats.atBats) > 0;
+}
+
+function leaderValue(stats, board) {
+  if (board.key === "avg") return rate(stats.hits, stats.atBats);
+  if (board.key === "ops") return rate(safeNumber(stats.hits) + safeNumber(stats.walks), stats.plateAppearances) + rate(stats.totalBases, stats.atBats);
+  if (board.key === "era") {
+    const inningsOuts = safeNumber(stats.inningsOuts);
+    return inningsOuts > 0 ? safeNumber(stats.earnedRuns) * 27 / inningsOuts : Number.POSITIVE_INFINITY;
+  }
+  return safeNumber(stats[board.statKey ?? board.key]);
+}
+
+function compareLeaderEntries(a, b, board) {
+  const valueDiff = board.direction === "asc" ? a.value - b.value : b.value - a.value;
+  if (valueDiff !== 0) return valueDiff;
+  const volumeDiff = board.statGroup === "pitching"
+    ? safeNumber(b.pitching?.inningsOuts) - safeNumber(a.pitching?.inningsOuts)
+    : safeNumber(b.batting?.plateAppearances) - safeNumber(a.batting?.plateAppearances);
+  if (volumeDiff !== 0) return volumeDiff;
+  const ovrDiff = safeNumber(b.ovr) - safeNumber(a.ovr);
+  if (ovrDiff !== 0) return ovrDiff;
+  return compareText(a.name, b.name);
+}
+
+function buildTeamRecords(state) {
+  return getStandings(state).map((team, index) => {
+    const batting = sumTeamBatting(team);
+    const pitching = sumTeamPitching(team);
+    return {
+      rank: index + 1,
+      teamId: team.id,
+      name: team.name,
+      shortName: team.shortName ?? team.name,
+      wins: safeNumber(team.wins),
+      losses: safeNumber(team.losses),
+      ties: safeNumber(team.ties),
+      games: teamGamesPlayed(team),
+      pct: winningPct(team),
+      runsFor: safeNumber(team.runsFor),
+      runsAgainst: safeNumber(team.runsAgainst),
+      runDiff: safeNumber(team.runsFor) - safeNumber(team.runsAgainst),
+      battingAverage: rate(batting.hits, batting.atBats),
+      onBasePercentage: rate(safeNumber(batting.hits) + safeNumber(batting.walks), batting.plateAppearances),
+      sluggingPercentage: rate(batting.totalBases, batting.atBats),
+      ops: rate(safeNumber(batting.hits) + safeNumber(batting.walks), batting.plateAppearances) + rate(batting.totalBases, batting.atBats),
+      homeRuns: safeNumber(batting.homeRuns),
+      era: pitching.inningsOuts > 0 ? safeNumber(pitching.earnedRuns) * 27 / safeNumber(pitching.inningsOuts) : Number.POSITIVE_INFINITY,
+      strikeouts: safeNumber(pitching.strikeouts),
+      batting,
+      pitching
+    };
+  });
+}
+
+function sumTeamBatting(team) {
+  const total = cloneSeasonStats().batting;
+  for (const player of team?.roster ?? []) {
+    addStatGroup(total, player?.seasonStats?.batting);
+  }
+  return total;
+}
+
+function sumTeamPitching(team) {
+  const total = cloneSeasonStats().pitching;
+  for (const player of team?.roster ?? []) {
+    addStatGroup(total, player?.seasonStats?.pitching);
+  }
+  return total;
+}
+
+function addStatGroup(total, source) {
+  for (const [key, value] of Object.entries(source ?? {})) {
+    total[key] = safeNumber(total[key]) + safeNumber(value);
+  }
+  return total;
+}
+
+function playerAwardTags(awards, playerId) {
+  const key = String(playerId ?? "");
+  if (!key) return [];
+  const tags = [];
+  const regular = awards?.regularSeason ?? {};
+  addAwardTag(tags, regular.mvp, key, "regular-mvp");
+  addAwardTag(tags, regular.rookieOfYear, key, "rookie-of-year");
+  for (const award of regular.goldenGloves ?? []) {
+    addAwardTag(tags, award, key, "golden-glove");
+  }
+  addAwardTag(tags, awards?.postseason?.koreanSeriesMvp, key, "korean-series-mvp");
+  return tags;
+}
+
+function addAwardTag(tags, award, playerId, type) {
+  if (!award || String(award.playerId ?? "") !== playerId) return;
+  tags.push({
+    type,
+    slotLabel: award.slotLabel ?? "",
+    label: award.slotLabel ?? award.name ?? type,
+    line: award.line ?? ""
+  });
+}
+
+function cloneSeasonStats(source = {}) {
+  const defaults = createEmptySeasonStats();
+  return {
+    batting: cloneStatGroup(source?.batting, defaults.batting),
+    pitching: cloneStatGroup(source?.pitching, defaults.pitching),
+    fielding: cloneStatGroup(source?.fielding, defaults.fielding)
+  };
+}
+
+function cloneStatGroup(source = {}, defaults = {}) {
+  const result = { ...defaults };
+  for (const [key, value] of Object.entries(source ?? {})) {
+    result[key] = safeNumber(value);
+  }
+  return result;
+}
+
+function clonePlain(value) {
+  if (value == null) return null;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function teamGamesPlayed(team) {
+  return safeNumber(team?.wins) + safeNumber(team?.losses) + safeNumber(team?.ties);
+}
+
+function inferSeasonFromState(state) {
+  const year = Number(String(state?.currentDate ?? "").slice(0, 4));
+  return Number.isFinite(year) ? year : 2026;
+}
+
 function resetTeamForNextSeason(team, season, state = null) {
   team.wins = 0;
   team.losses = 0;
@@ -2988,6 +3330,8 @@ function createEmptySeasonStats() {
       rbi: 0,
       walks: 0,
       strikeouts: 0,
+      reachedOnErrors: 0,
+      groundedDoublePlays: 0,
       stolenBases: 0,
       caughtStealing: 0,
       totalBases: 0
@@ -6513,6 +6857,8 @@ function normalizeState(state) {
   state.lastGames = Array.isArray(state.lastGames) ? state.lastGames : [];
   state.eventLog = Array.isArray(state.eventLog) ? state.eventLog : [];
   state.logs = Array.isArray(state.logs) ? state.logs : [];
+  state.seasonHistory = Array.isArray(state.seasonHistory) ? state.seasonHistory : [];
+  state.leagueHistory = Array.isArray(state.leagueHistory) ? state.leagueHistory : [];
   normalizeNarratives(state);
   state.gameInterventions = normalizeGameInterventions(state.gameInterventions);
   state.scoutingQueue = Array.isArray(state.scoutingQueue) ? state.scoutingQueue.slice(0, 40) : [];

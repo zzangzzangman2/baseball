@@ -271,6 +271,8 @@ export function createInitialState() {
     lastGames: [],
     postseason: null,
     awards: null,
+    seasonHistory: [],
+    leagueHistory: [],
     draft: null,
     secondaryDraft: null,
     trades: { completed: [] },

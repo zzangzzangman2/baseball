@@ -13,6 +13,7 @@ import {
   getMailboxItems,
   getMailboxSummary,
   getOpenMailDecisions,
+  getRecordBook,
   getSelectedTeam,
   getNextGamePreview,
   getTeamMonthlySchedule,
@@ -117,6 +118,7 @@ const DASHBOARD_TABS = [
   { id: "lineup", label: "라인업", detail: "타순·투수 운용" },
   { id: "players", label: "선수단", detail: "상세·기록·계약" },
   { id: "standings", label: "순위", detail: "리그와 스코어" },
+  { id: "records", label: "기록실", detail: "리더·역대 시즌" },
   { id: "front-office", label: "프런트", detail: "업무·스카우트" },
   { id: "market", label: "시장", detail: "트레이드·FA" },
   { id: "drafts", label: "드래프트", detail: "신인·2차" },
@@ -214,6 +216,10 @@ function render(root, state) {
   const lineup = buildLineup(selectedTeam);
   const roster = getRoster(selectedTeam);
   const seasonLeaders = buildSeasonLeaders(selectedTeam);
+  const recordBook = getRecordBook(state, {
+    includeUnqualified: Boolean(state?.ui?.recordBookIncludeUnqualified),
+    limit: 10
+  });
   const pitchingSnapshot = buildPitchingSnapshot(selectedTeam);
   const injuries = roster.filter((player) => Number(player.injuredDays) > 0);
   const teamColor = getTeamColor(selectedTeam);
@@ -298,6 +304,7 @@ function render(root, state) {
           monthlySchedule,
           selectedPlayerEntry,
           seasonLeaders,
+          recordBook,
           roster,
           lineup,
           pitchingSnapshot,
@@ -344,6 +351,7 @@ function renderActiveTabContent(activeTab, context) {
     monthlySchedule,
     selectedPlayerEntry,
     seasonLeaders,
+    recordBook,
     roster,
     lineup,
     pitchingSnapshot,
@@ -391,6 +399,12 @@ function renderActiveTabContent(activeTab, context) {
         ${renderGamesPanel(state)}
         ${renderGamecastPanel(state)}
       </section>
+    `);
+  }
+
+  if (activeTab === "records") {
+    return renderTabSurface("records", "기록실", `
+      ${renderRecordBookPanel(state, recordBook)}
     `);
   }
 
@@ -660,6 +674,175 @@ function renderGamesPanel(state) {
         ${renderGames(state)}
       </div>
     </article>
+  `;
+}
+
+function renderRecordBookPanel(state, recordBook) {
+  const includeUnqualified = Boolean(state?.ui?.recordBookIncludeUnqualified);
+  return `
+    <section class="content-grid record-book-grid" aria-label="기록실">
+      <article class="panel record-leaders-panel">
+        <div class="panel-head">
+          <div>
+            <span class="mini-label">${formatNumber(recordBook?.season)} 시즌</span>
+            <h2>리그 리더보드</h2>
+          </div>
+          <button class="button ${includeUnqualified ? "button-primary" : "button-soft"}" data-action="toggle-record-book-qualification" type="button">
+            ${includeUnqualified ? "전체 기록" : "규정 기록"}
+          </button>
+        </div>
+        <div class="record-board-grid">
+          ${renderRecordBoardGroup("타자", recordBook?.leaders?.batting, ["avg", "homeRuns", "rbi", "stolenBases", "ops"])}
+          ${renderRecordBoardGroup("투수", recordBook?.leaders?.pitching, ["era", "wins", "saves", "holds", "strikeouts"])}
+        </div>
+      </article>
+      ${renderTeamRecordPanel(recordBook?.teamRecords ?? [])}
+      ${renderLeagueHistoryPanel(recordBook?.leagueHistory ?? [])}
+    </section>
+  `;
+}
+
+function renderRecordBoardGroup(title, boards = {}, keys = []) {
+  return `
+    <section class="record-board-group">
+      <h3>${escapeHtml(title)}</h3>
+      <div class="record-board-list">
+        ${keys.map((key) => renderRecordBoard(recordBoardLabel(key), boards?.[key] ?? [])).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderRecordBoard(label, entries) {
+  return `
+    <article class="record-board">
+      <div class="record-board-head">
+        <strong>${escapeHtml(label)}</strong>
+        <span>${formatNumber(entries.length)}명</span>
+      </div>
+      <ol class="player-list compact stat-list">
+        ${entries.length ? entries.map(renderRecordLeader).join("") : renderEmptyListItem("기록 대기 중")}
+      </ol>
+    </article>
+  `;
+}
+
+function renderRecordLeader(entry, index) {
+  return `
+    <li class="is-clickable" data-action="open-player-detail" data-player-id="${escapeAttribute(entry.playerId ?? "")}" data-team-id="${escapeAttribute(entry.teamId ?? "")}" tabindex="0" role="button">
+      <span class="order">${index + 1}</span>
+      <span>
+        <strong>${escapeHtml(entry.name)}</strong>
+        <small>${escapeHtml(entry.teamShortName ?? entry.teamName ?? "")} · ${escapeHtml(entry.position ?? "")} · ${escapeHtml(recordQualificationText(entry))}</small>
+      </span>
+      <b>${escapeHtml(formatRecordLeaderValue(entry))}</b>
+    </li>
+  `;
+}
+
+function renderTeamRecordPanel(records) {
+  return `
+    <article class="panel team-record-panel">
+      <div class="panel-head">
+        <div>
+          <span class="mini-label">팀 기록</span>
+          <h2>타율 / ERA / 득실</h2>
+        </div>
+        <span class="pill">${formatNumber(records.length)}팀</span>
+      </div>
+      <div class="table-wrap">
+        <table class="standings-table record-table">
+          <thead>
+            <tr>
+              <th>Rk</th>
+              <th>Team</th>
+              <th>AVG</th>
+              <th>OPS</th>
+              <th>HR</th>
+              <th>ERA</th>
+              <th>RF</th>
+              <th>RA</th>
+              <th>Diff</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${records.length ? records.map(renderTeamRecordRow).join("") : renderEmptyTableRow("팀 기록 대기 중", 9)}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  `;
+}
+
+function renderTeamRecordRow(record) {
+  return `
+    <tr>
+      <td>${formatNumber(record.rank)}</td>
+      <td>
+        <span class="team-cell">
+          ${renderTeamLogo(record, "team-logo table-logo")}
+          <span>
+            <strong>${escapeHtml(record.shortName ?? record.name)}</strong>
+            <small>${formatNumber(record.wins)}승 ${formatNumber(record.losses)}패 ${formatNumber(record.ties)}무</small>
+          </span>
+        </span>
+      </td>
+      <td>${formatRateStat(record.battingAverage)}</td>
+      <td>${formatRateStat(record.ops)}</td>
+      <td>${formatNumber(record.homeRuns)}</td>
+      <td>${formatEraValue(record.era)}</td>
+      <td>${formatNumber(record.runsFor)}</td>
+      <td>${formatNumber(record.runsAgainst)}</td>
+      <td>${record.runDiff > 0 ? "+" : ""}${formatNumber(record.runDiff)}</td>
+    </tr>
+  `;
+}
+
+function renderLeagueHistoryPanel(history) {
+  return `
+    <article class="panel league-history-panel">
+      <div class="panel-head">
+        <div>
+          <span class="mini-label">역대 시즌</span>
+          <h2>우승 / 시상 / 리더</h2>
+        </div>
+        <span class="pill">${formatNumber(history.length)}년</span>
+      </div>
+      <div class="table-wrap">
+        <table class="standings-table record-table history-table">
+          <thead>
+            <tr>
+              <th>Year</th>
+              <th>Champion</th>
+              <th>MVP</th>
+              <th>ROY</th>
+              <th>HR</th>
+              <th>ERA</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${history.length ? history.map(renderLeagueHistoryRow).join("") : renderEmptyTableRow("완료된 시즌이 아직 없습니다.", 6)}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  `;
+}
+
+function renderLeagueHistoryRow(entry) {
+  const mvp = entry.awards?.regularSeason?.mvp;
+  const rookie = entry.awards?.regularSeason?.rookieOfYear;
+  const homer = entry.leadersIncludingUnqualified?.batting?.homeRuns?.[0] ?? entry.leaders?.batting?.homeRuns?.[0];
+  const eraLeader = entry.leaders?.pitching?.era?.[0] ?? entry.leadersIncludingUnqualified?.pitching?.era?.[0];
+  return `
+    <tr>
+      <td>${formatNumber(entry.season ?? entry.year)}</td>
+      <td>${escapeHtml(entry.championName || "-")}</td>
+      <td>${escapeHtml(mvp?.name ?? "-")}</td>
+      <td>${escapeHtml(rookie?.name ?? "-")}</td>
+      <td>${homer ? `${escapeHtml(homer.name)} ${formatNumber(homer.value)}` : "-"}</td>
+      <td>${eraLeader ? `${escapeHtml(eraLeader.name)} ${formatEraValue(eraLeader.value)}` : "-"}</td>
+    </tr>
   `;
 }
 
@@ -2513,6 +2696,15 @@ function bindActions(root, state) {
     });
   });
 
+  root.querySelector("[data-action='toggle-record-book-qualification']")?.addEventListener("click", () => {
+    state.ui = {
+      ...(state.ui ?? {}),
+      recordBookIncludeUnqualified: !Boolean(state.ui?.recordBookIncludeUnqualified),
+      activeTab: "records"
+    };
+    render(root, state);
+  });
+
   root.querySelectorAll("[data-action='mail-link']").forEach((button) => {
     button.addEventListener("click", () => {
       openMailTarget(root, state, button.dataset.mailTarget || "");
@@ -3634,11 +3826,13 @@ function renderPlayerDetailPanel(state, entry) {
         </article>
 
         <article class="player-detail-card player-stat-card">
-          <span class="mini-label">2026 시즌 기록</span>
+          <span class="mini-label">${escapeHtml(currentSeasonLabel(state))} 시즌 기록</span>
           <div class="player-stat-grid">
             ${pitcher ? renderPitcherDetailStats(stats) : renderBatterDetailStats(stats)}
           </div>
         </article>
+
+        ${renderPlayerCareerCard(state, player, pitcher)}
       </div>
     </section>
   `;
@@ -3829,6 +4023,95 @@ function renderPitcherDetailStats(stats) {
     ["P", formatNumber(stats.pitches)],
     ["BF", formatNumber(stats.battersFaced)]
   ].map(renderPlayerStat).join("");
+}
+
+function renderPlayerCareerCard(state, player, pitcher) {
+  const rows = buildPlayerCareerRows(state, player);
+  return `
+    <article class="player-detail-card player-career-card">
+      <div class="player-detail-card-head">
+        <span class="mini-label">커리어</span>
+        <small>${formatNumber(rows.length)}시즌</small>
+      </div>
+      <div class="table-wrap">
+        <table class="standings-table record-table career-table">
+          <thead>
+            ${pitcher
+              ? `<tr><th>Year</th><th>Team</th><th>ERA</th><th>IP</th><th>W</th><th>SV</th><th>HLD</th><th>K</th><th>Awards</th></tr>`
+              : `<tr><th>Year</th><th>Team</th><th>AVG</th><th>OPS</th><th>HR</th><th>RBI</th><th>SB</th><th>H</th><th>Awards</th></tr>`}
+          </thead>
+          <tbody>
+            ${rows.length ? rows.map((row) => pitcher ? renderPitcherCareerRow(row) : renderBatterCareerRow(row)).join("") : renderEmptyTableRow("저장된 시즌 기록이 아직 없습니다.", 9)}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  `;
+}
+
+function buildPlayerCareerRows(state, player) {
+  const currentSeason = Number(String(state?.currentDate ?? "").slice(0, 4)) || 2026;
+  const current = {
+    season: currentSeason,
+    year: currentSeason,
+    teamId: player?.teamId ?? "",
+    teamShortName: currentSeasonLabel(state),
+    batting: player?.seasonStats?.batting ?? {},
+    pitching: player?.seasonStats?.pitching ?? {},
+    fielding: player?.seasonStats?.fielding ?? {},
+    awards: [],
+    current: true
+  };
+  const history = Array.isArray(player?.history) ? player.history : [];
+  return [current, ...history]
+    .filter((row, index, rows) => rows.findIndex((candidate) => safeSeason(candidate) === safeSeason(row)) === index)
+    .sort((a, b) => safeSeason(b) - safeSeason(a));
+}
+
+function renderBatterCareerRow(row) {
+  const batting = row.batting ?? {};
+  return `
+    <tr>
+      <td>${formatNumber(row.season ?? row.year)}</td>
+      <td>${escapeHtml(row.current ? "현재" : row.teamShortName ?? row.teamName ?? row.teamId ?? "")}</td>
+      <td>${formatRateStat(battingAverage(batting))}</td>
+      <td>${formatRateStat(ops(batting))}</td>
+      <td>${formatNumber(batting.homeRuns)}</td>
+      <td>${formatNumber(batting.rbi)}</td>
+      <td>${formatNumber(batting.stolenBases)}</td>
+      <td>${formatNumber(batting.hits)}</td>
+      <td>${escapeHtml(formatCareerAwards(row.awards))}</td>
+    </tr>
+  `;
+}
+
+function renderPitcherCareerRow(row) {
+  const pitching = row.pitching ?? {};
+  return `
+    <tr>
+      <td>${formatNumber(row.season ?? row.year)}</td>
+      <td>${escapeHtml(row.current ? "현재" : row.teamShortName ?? row.teamName ?? row.teamId ?? "")}</td>
+      <td>${formatEra(pitching)}</td>
+      <td>${formatInnings(pitching.inningsOuts)}</td>
+      <td>${formatNumber(pitching.wins)}</td>
+      <td>${formatNumber(pitching.saves)}</td>
+      <td>${formatNumber(pitching.holds)}</td>
+      <td>${formatNumber(pitching.strikeouts)}</td>
+      <td>${escapeHtml(formatCareerAwards(row.awards))}</td>
+    </tr>
+  `;
+}
+
+function formatCareerAwards(awards = []) {
+  const labels = (Array.isArray(awards) ? awards : [])
+    .map((award) => award.slotLabel ?? award.label ?? "")
+    .filter(Boolean);
+  return labels.length ? labels.join(", ") : "-";
+}
+
+function safeSeason(row) {
+  const season = Number(row?.season ?? row?.year ?? 0);
+  return Number.isFinite(season) ? season : 0;
 }
 
 function renderPlayerStat([label, value]) {
@@ -9895,6 +10178,48 @@ function outcomeLabel(outcome) {
   if (outcome === "error") return "실책 출루";
   if (outcome === "strikeout") return "삼진";
   return "타구";
+}
+
+function recordBoardLabel(key) {
+  const labels = {
+    avg: "AVG",
+    homeRuns: "HR",
+    rbi: "RBI",
+    stolenBases: "SB",
+    ops: "OPS",
+    era: "ERA",
+    wins: "W",
+    saves: "SV",
+    holds: "HLD",
+    strikeouts: "K"
+  };
+  return labels[key] ?? String(key ?? "");
+}
+
+function recordQualificationText(entry) {
+  const label = entry?.qualified ? "규정" : "미달";
+  const value = Number(entry?.qualifyingValue ?? 0);
+  const target = Number(entry?.qualifyingTarget ?? 0);
+  if (entry?.role === "pitcher") {
+    return `${label} IP ${formatInnings(value)}/${formatInnings(target)}`;
+  }
+  return `${label} PA ${formatNumber(value)}/${formatNumber(target)}`;
+}
+
+function formatRecordLeaderValue(entry) {
+  if (entry?.stat === "avg" || entry?.stat === "ops") return formatRateStat(entry.value);
+  if (entry?.stat === "era") return formatEraValue(entry.value);
+  return formatNumber(entry?.value);
+}
+
+function formatEraValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : "-";
+}
+
+function currentSeasonLabel(state) {
+  const year = Number(String(state?.currentDate ?? "").slice(0, 4));
+  return Number.isFinite(year) ? `${year}` : "현재";
 }
 
 function formatSignedNumber(value) {

@@ -4280,6 +4280,96 @@ img {
     var(--panel);
 }
 
+.record-book-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.record-leaders-panel,
+.team-record-panel,
+.league-history-panel {
+  grid-column: 1 / -1;
+}
+
+.record-leaders-panel {
+  border-top: 4px solid var(--sky);
+  background:
+    linear-gradient(120deg, rgba(255, 254, 251, 0.98), rgba(247, 251, 255, 0.95) 52%, rgba(241, 250, 246, 0.93)),
+    var(--panel);
+}
+
+.record-board-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  min-width: 0;
+}
+
+.record-board-group {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.record-board-group h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.94rem;
+}
+
+.record-board-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.record-board {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e3ddd4;
+  border-radius: 8px;
+  background: rgba(255, 254, 250, 0.96);
+}
+
+.record-board-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.record-board-head strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 950;
+}
+
+.record-board-head span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.record-table {
+  min-width: 760px;
+}
+
+.history-table {
+  min-width: 680px;
+}
+
+.player-career-card {
+  grid-column: 1 / -1;
+}
+
+.career-table {
+  min-width: 780px;
+}
+
 .lineup-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -5736,6 +5826,7 @@ img {
   .gamecast-layout,
   .lineup-control-grid,
   .lineup-grid,
+  .record-board-grid,
   .simulation-progress-steps,
   .stat-split {
     grid-template-columns: 1fr;

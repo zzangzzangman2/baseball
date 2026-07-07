@@ -285,6 +285,7 @@ async function main() {
   await runCheck("트레이드 안전 게이트 23케이스", checkTradeSafetyGate);
   await runCheck("FA/외국인 시장 command", checkFreeAgencyMarket);
   await runCheck("자동 오프시즌/시즌 롤오버", checkAutonomousOffseasonRollover);
+  await runCheck("롤오버 기록실 히스토리 보존", checkRecordBookHistoryRollover);
   await runCheck("프런트오피스 selector 실행", checkSystemsSelectors);
   await runCheck("GM 데스크 데이터 실행", checkFrontOfficeData);
   await runCheck("JSON 저장 roundtrip", checkSaveRoundtrip);
@@ -341,6 +342,7 @@ async function checkModuleImports() {
   assertExport(engineModule, "getMailboxSummary", MODULE_PATHS.engine);
   assertExport(engineModule, "getMailboxItems", MODULE_PATHS.engine);
   assertExport(engineModule, "getOpenMailDecisions", MODULE_PATHS.engine);
+  assertExport(engineModule, "getRecordBook", MODULE_PATHS.engine);
   assertExport(engineModule, "resolveMailDecision", MODULE_PATHS.engine);
   assertExport(engineModule, "simulateRegularSeason", MODULE_PATHS.engine);
   assertExport(engineModule, "initializePostseason", MODULE_PATHS.engine);
@@ -1909,6 +1911,47 @@ function checkAutonomousOffseasonRollover() {
   assert(state.gamesPlayed === 0, `2027 개막 전 gamesPlayed=${state.gamesPlayed}`, MODULE_PATHS.engine);
 
   return `자동 스토브 roster +${afterOffseasonRosterCount - initialRosterCount}, 신인입단 ${rosterLedgerCount}/보류권 ${rightsLedgerCount}, FA ${offseason.summary.faSignings}건, CPU 트레이드 ${offseason.summary.aiTrades}건, 2027 프리시즌 롤오버`;
+}
+
+function checkRecordBookHistoryRollover() {
+  ensureImportsReady();
+  assert(saveModule, "save.js import가 선행되지 않았습니다.", MODULE_PATHS.save);
+
+  const state = cloneForTest(initialState);
+  engineModule.simulateRegularSeason(state);
+  engineModule.initializePostseason(state);
+  engineModule.simulatePostseason(state);
+  engineModule.runAutonomousOffseason(state);
+
+  const beforeBook = engineModule.getRecordBook(state, { includeUnqualified: true, limit: 10 });
+  const beforeHomeRunLeader = beforeBook.leaders?.batting?.homeRuns?.[0];
+  const beforeEraLeader = beforeBook.leaders?.pitching?.era?.[0];
+  const beforeTeamRecords = beforeBook.teamRecords ?? [];
+
+  const rollover = engineModule.advanceSeason(state);
+  const leagueEntry = state.leagueHistory?.[0];
+  const archivedPlayer = allPlayers(state)
+    .map(({ player }) => player)
+    .find((player) => (player.history ?? []).some((entry) => Number(entry.season ?? entry.year) === 2026));
+  const archivedSeason = archivedPlayer?.history?.find((entry) => Number(entry.season ?? entry.year) === 2026);
+  const imported = saveModule.importGameState(saveModule.exportGameState(state));
+  const importedArchivedPlayer = allPlayers(imported)
+    .map(({ player }) => player)
+    .find((player) => (player.history ?? []).some((entry) => Number(entry.season ?? entry.year) === 2026));
+
+  assert(rollover.ok === true, `기록실 테스트 롤오버 실패: ${rollover.message}`, MODULE_PATHS.engine);
+  assert(leagueEntry?.season === 2026, `leagueHistory 최신 시즌 ${leagueEntry?.season}/2026`, MODULE_PATHS.engine);
+  assert((leagueEntry?.standings ?? []).length === 10, `leagueHistory standings ${leagueEntry?.standings?.length ?? 0}/10`, MODULE_PATHS.engine);
+  assert((leagueEntry?.teamRecords ?? []).length === beforeTeamRecords.length, "leagueHistory 팀 기록 수가 롤오버 전 recordBook과 다릅니다.", MODULE_PATHS.engine);
+  assert(leagueEntry?.awards?.regularSeason?.mvp?.name, "leagueHistory 정규시즌 MVP가 없습니다.", MODULE_PATHS.engine);
+  assert(leagueEntry?.leadersIncludingUnqualified?.batting?.homeRuns?.[0]?.playerId === beforeHomeRunLeader?.playerId, "홈런 리더 스냅샷이 롤오버 전과 다릅니다.", MODULE_PATHS.engine);
+  assert(!beforeEraLeader || leagueEntry?.leadersIncludingUnqualified?.pitching?.era?.[0]?.playerId === beforeEraLeader.playerId, "ERA 리더 스냅샷이 롤오버 전과 다릅니다.", MODULE_PATHS.engine);
+  assert(archivedSeason?.batting && archivedSeason?.pitching && archivedSeason?.fielding, "선수 history에 시즌 기록 3종이 없습니다.", MODULE_PATHS.engine);
+  assert((state.statsBySeason?.[archivedPlayer.id]?.[2026] ?? null) !== null, "statsBySeason에 2026 선수 기록이 없습니다.", MODULE_PATHS.engine);
+  assert(imported.leagueHistory?.[0]?.season === 2026, "저장 roundtrip 후 leagueHistory가 사라졌습니다.", MODULE_PATHS.save);
+  assert(importedArchivedPlayer, "저장 roundtrip 후 player.history가 사라졌습니다.", MODULE_PATHS.save);
+
+  return `2026 leagueHistory ${leagueEntry.standings.length}팀, HR ${beforeHomeRunLeader?.name}, ERA ${beforeEraLeader?.name}, player.history 보존`;
 }
 
 function cloneForTest(value) {
