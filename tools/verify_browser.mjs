@@ -1026,6 +1026,38 @@ async function checkGamecastLab() {
   assert(/FPS\s+\d+/i.test(desktopProbe.fpsText), `FPS 오버레이가 갱신되지 않았습니다: ${desktopProbe.fpsText}`, "src/ui.js");
   assert(/켜짐|꺼짐/.test(desktopProbe.soundText), `게임캐스트 소리 토글을 찾지 못했습니다: ${desktopProbe.soundText}`, "src/ui.js");
 
+  const defenseProbe = await evaluateInBrowser(`
+    (() => {
+      const screen = document.querySelector("[data-gamecast-modal] [data-gamecast-screen]");
+      const frame = screen?.__gamecastDebugFrame ?? null;
+      const defenders = [
+        ...((frame?.staticDefense ?? []).map((sprite) => ({ source: "static", ...sprite }))),
+        ...((frame?.defenseSprites ?? []).map((sprite) => ({ source: "dynamic", ...sprite })))
+      ].filter((sprite) => sprite?.fieldingKey || sprite?.key);
+      const counts = new Map();
+      const coordsByKey = new Map();
+      for (const sprite of defenders) {
+        const key = String(sprite.fieldingKey ?? sprite.key ?? "");
+        if (!key) continue;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        const pos = sprite.position ?? {};
+        coordsByKey.set(key, \`\${Math.round(Number(pos.x ?? 0))},\${Math.round(Number(pos.y ?? 0))}\`);
+      }
+      const keys = [...coordsByKey.keys()].sort();
+      const required = ["1B", "2B", "3B", "C", "CF", "LF", "P", "RF", "SS"];
+      return {
+        keys,
+        missing: required.filter((key) => !coordsByKey.has(key)),
+        duplicateKeys: [...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key),
+        uniqueCoordCount: new Set(coordsByKey.values()).size,
+        rawCount: defenders.length
+      };
+    })()
+  `);
+  assert(defenseProbe.missing.length === 0, `수비 포지션이 빠졌습니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
+  assert(defenseProbe.duplicateKeys.length === 0, `수비 포지션 중복이 있습니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
+  assert(defenseProbe.uniqueCoordCount >= 9, `수비 좌표가 중복됩니다: ${JSON.stringify(defenseProbe)}`, "src/ui.js");
+
   await evaluateInBrowser(`document.querySelector("[data-gamecast-modal] [data-gamecast-pause]")?.click(); true`);
   await delay(1200);
   const pauseProbe = await evaluateInBrowser(`
@@ -1081,6 +1113,47 @@ async function checkGamecastLab() {
   assert(afterToggle.feedCount >= beforeToggle.feedCount, `엔진 토글 후 피드가 되감겼습니다: before=${beforeToggle.feedCount}, after=${afterToggle.feedCount}`, "src/ui.js");
   assert(afterToggle.screenCount === 1, `엔진 토글 후 스크린이 ${afterToggle.screenCount}개입니다.`, "src/ui.js");
   assert(afterToggle.engine === "canvas", `엔진 토글 후 Canvas가 아닙니다: ${afterToggle.engine}`, "src/ui.js");
+
+  loadEvent = cdp.once("Page.loadEventFired");
+  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fullscreen=1&speed=4&qa=lab-fast-${Date.now()}` });
+  await loadEvent;
+  await waitForGamecastLabModal();
+  await delay(9000);
+  const fastProbe = await evaluateInBrowser(`
+    (() => {
+      const modal = document.querySelector("[data-gamecast-modal]");
+      const overlay = modal?.querySelector("[data-gamecast-pause-overlay]");
+      return {
+        feedCount: modal?.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")?.length ?? 0,
+        overlayVisible: Boolean(overlay?.classList.contains("is-visible")),
+        holdType: overlay?.dataset?.holdType ?? "",
+        activeSpeed: modal?.querySelector("[data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? "",
+        totalEvents: window.__labState?.lastGames?.[0]?.plateAppearanceEvents?.length ?? 0
+      };
+    })()
+  `);
+  assert(fastProbe.activeSpeed === "4", `x4 배속이 반영되지 않았습니다: ${JSON.stringify(fastProbe)}`, "src/gamecastLab.js");
+  assert(!(fastProbe.overlayVisible && ["inning", "leverage"].includes(fastProbe.holdType)), `x4에서 자동 홀드가 멈췄습니다: ${JSON.stringify(fastProbe)}`, "src/ui.js");
+  assert(fastProbe.feedCount > 3, `x4 진행 중 피드가 충분히 진행되지 않았습니다: ${JSON.stringify(fastProbe)}`, "src/ui.js");
+
+  await evaluateInBrowser(`document.querySelector("[data-gamecast-modal] [data-gamecast-skip]")?.click(); true`);
+  await delay(900);
+  const skipProbe = await evaluateInBrowser(`
+    (() => {
+      const modal = document.querySelector("[data-gamecast-modal]");
+      const overlay = modal?.querySelector("[data-gamecast-pause-overlay]");
+      const totalEvents = window.__labState?.lastGames?.[0]?.plateAppearanceEvents?.length ?? 0;
+      return {
+        nowText: modal?.querySelector(".gamecast-now")?.textContent?.trim() ?? "",
+        feedCount: modal?.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")?.length ?? 0,
+        totalEvents,
+        skipDisabled: Boolean(modal?.querySelector("[data-gamecast-skip]")?.disabled),
+        overlayVisible: Boolean(overlay?.classList.contains("is-visible"))
+      };
+    })()
+  `);
+  assert(skipProbe.skipDisabled || skipProbe.feedCount >= skipProbe.totalEvents || skipProbe.nowText.includes("경기 종료"), `스킵 후 종료 상태가 아닙니다: ${JSON.stringify(skipProbe)}`, "src/ui.js");
+  assert(!skipProbe.overlayVisible, `스킵 후 홀드 오버레이가 남았습니다: ${JSON.stringify(skipProbe)}`, "src/ui.js");
 
   loadEvent = cdp.once("Page.loadEventFired");
   await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fullscreen=1&step=1&speed=4&holds=0&qa=lab-step-${Date.now()}` });
@@ -1162,6 +1235,7 @@ async function checkGamecastLab() {
     `feed ${desktopProbe.feedCount}/${desktopProbe.totalEvents}`,
     "single-instance OK",
     "speed-persist OK",
+    "defense/skip/x4 OK",
     "pause/step OK",
     `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`
   ].join(", ");

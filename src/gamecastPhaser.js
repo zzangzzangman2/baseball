@@ -111,7 +111,9 @@ export function mountGamecastPhaser(options) {
     scene: null,
     game: null,
     resizeObserver: null,
-    metrics: null
+    metrics: null,
+    fieldHoldCanvas: null,
+    fieldHoldCacheKey: ""
   };
 
   runtime.metrics = calculatePhaserMetrics(runtime);
@@ -466,9 +468,35 @@ function paintStaticHoldFrame(runtime, frame) {
   ctx.save();
   ctx.setTransform(runtime.metrics.drawScaleX, 0, 0, runtime.metrics.drawScaleY, 0, 0);
   ctx.imageSmoothingEnabled = false;
-  drawFieldCanvas(ctx, runtime.palette, runtime.width, runtime.height, runtime.fieldProfile);
+  const fieldCanvas = getStaticFieldHoldCanvas(runtime);
+  if (fieldCanvas) ctx.drawImage(fieldCanvas, 0, 0);
+  else drawFieldCanvas(ctx, runtime.palette, runtime.width, runtime.height, runtime.fieldProfile);
   drawHoldBaseRunners(ctx, runtime, frame);
   ctx.restore();
+}
+
+function getStaticFieldHoldCanvas(runtime) {
+  const key = `${runtime.width}x${runtime.height}:${JSON.stringify(runtime.fieldProfile ?? {})}:${JSON.stringify(runtime.palette ?? {})}`;
+  if (runtime.fieldHoldCanvas && runtime.fieldHoldCacheKey === key) return runtime.fieldHoldCanvas;
+  const canvas = createRuntimeCanvas(runtime.width, runtime.height);
+  const ctx = canvas?.getContext?.("2d");
+  if (!canvas || !ctx) return null;
+  ctx.imageSmoothingEnabled = false;
+  drawFieldCanvas(ctx, runtime.palette, runtime.width, runtime.height, runtime.fieldProfile);
+  runtime.fieldHoldCanvas = canvas;
+  runtime.fieldHoldCacheKey = key;
+  return canvas;
+}
+
+function createRuntimeCanvas(width, height) {
+  if (typeof document !== "undefined" && typeof document.createElement === "function") {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  }
+  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(width, height);
+  return null;
 }
 
 function drawHoldBaseRunners(ctx, runtime, frame) {
@@ -495,10 +523,11 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
   const sx = (value) => Math.round((Number(value) / 120) * width);
   const sy = (value) => Math.round((Number(value) / 108) * height);
   const scale = Math.max(1, sx(1));
-  ctx.fillStyle = "#34303d";
+  const roofed = Boolean(profile.roofed);
+  ctx.fillStyle = roofed ? "#202b3a" : "#34303d";
   ctx.fillRect(0, 0, width, height);
-  for (let y = 0; y < sy(43); y += Math.max(2, sy(3))) {
-    ctx.fillStyle = y % Math.max(4, sy(8)) === 0 ? "#4a4654" : palette.standD;
+  for (let y = 0; y < sy(roofed ? 18 : 22); y += Math.max(2, sy(3))) {
+    ctx.fillStyle = y % Math.max(4, sy(8)) === 0 ? (roofed ? "#2b3b4d" : "#4a4654") : palette.standD;
     ctx.fillRect(0, y, width, Math.max(1, sy(1)));
   }
 
@@ -515,14 +544,19 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
           ctx.fillStyle = Math.floor((x + y) / Math.max(1, sx(5))) % 2 ? "#d1ad68" : palette.track;
         } else {
           const radial = Math.hypot((lx - 60) * 0.92, (ly - 101) * 0.72);
-          const ring = Math.floor((radial + Math.max(0, ly - wallY) * 0.3) / 7);
+          const ring = profile.mow === "rings"
+            ? Math.floor((radial + Math.max(0, ly - wallY) * 0.18) / 13)
+            : 0;
           const stripe = profile.mow === "checker"
             ? Math.floor(lx / 7) + Math.floor(ly / 6)
-            : profile.mow === "stripes"
-              ? Math.floor((lx + ly * 0.25) / 7)
-              : Math.floor(radial / 9);
+            : profile.mow === "dome"
+              ? 0
+              : profile.mow === "stripes"
+                ? Math.floor((lx + ly * 0.25) / 9)
+                : Math.floor(radial / 13);
           const grain = (x * 17 + y * 31) % 113 === 0;
-          ctx.fillStyle = grain ? (palette.grassL ?? palette.grassHi) : ((ring + stripe) % 2 ? palette.grassLo : palette.grassHi);
+          const softMow = (profile.mow === "checker" || profile.mow === "stripes") && (ring + stripe) % 2 && (x + y) % 11 === 0;
+          ctx.fillStyle = grain ? (palette.grassL ?? palette.grassHi) : (softMow ? palette.grassLo : palette.grassHi);
         }
         ctx.fillRect(x, y, 1, 1);
       }
@@ -532,8 +566,8 @@ function drawFieldCanvas(ctx, palette, width, height, fieldProfile = null) {
   drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale);
   drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile);
 
-  fillCircleCanvas(ctx, sx(60), sy(79), sx(26), palette.grassLo);
-  fillCircleCanvas(ctx, sx(60), sy(79), sx(22), palette.grassHi);
+  fillCircleCanvas(ctx, sx(60), sy(79), sx(15), palette.grassLo);
+  fillCircleCanvas(ctx, sx(60), sy(79), sx(10), palette.grassHi);
   fillDiamond(ctx, palette.dirtM, [
     [sx(60), sy(55)],
     [sx(88), sy(77)],
@@ -622,10 +656,12 @@ function drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale) {
   const rail = Math.max(1, Math.floor(scale * 0.35));
   for (let y = startY; y < endY; y += stepY) {
     const row = Math.floor((y - startY) / Math.max(1, stepY));
-    ctx.fillStyle = row % 2 ? "rgba(18, 23, 33, 0.78)" : "rgba(39, 45, 58, 0.78)";
-    ctx.fillRect(0, y + Math.floor(stepY * 0.28), width, seatBack);
-    ctx.fillStyle = row % 2 ? "rgba(255, 254, 251, 0.1)" : "rgba(0, 0, 0, 0.18)";
-    ctx.fillRect(0, y + stepY - rail, width, rail);
+    if (y < sy(profile.roofed ? 20 : 24)) {
+      ctx.fillStyle = row % 2 ? "rgba(18, 23, 33, 0.58)" : "rgba(39, 45, 58, 0.58)";
+      ctx.fillRect(0, y + Math.floor(stepY * 0.28), width, seatBack);
+      ctx.fillStyle = row % 2 ? "rgba(255, 254, 251, 0.08)" : "rgba(0, 0, 0, 0.12)";
+      ctx.fillRect(0, y + stepY - rail, width, rail);
+    }
     for (let x = sx(2) + (row % 2 ? Math.floor(stepX / 2) : 0); x < width - sx(3); x += stepX) {
       const lx = (x / width) * 120;
       const ly = (y / height) * 108;
@@ -663,12 +699,20 @@ function drawCanvasCrowd(ctx, palette, sx, sy, width, height, profile, scale) {
 
 function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile) {
   if (profile.roofed) {
-    ctx.fillStyle = "#263343";
-    for (let y = sy(1); y < sy(18); y += Math.max(scale, sy(4))) {
-      ctx.fillRect(sx(5), y, sx(110), scale);
+    ctx.fillStyle = "rgba(24, 36, 52, 0.72)";
+    ctx.fillRect(0, 0, width, sy(8));
+    ctx.fillStyle = "#314456";
+    for (let y = sy(2); y < sy(12); y += Math.max(scale, sy(5))) {
+      ctx.fillRect(sx(6), y, sx(108), scale);
+    }
+    ctx.fillStyle = "#33475a";
+    for (let x = sx(10); x < sx(112); x += sx(18)) {
+      ctx.fillRect(x, sy(1), scale, sy(13));
     }
     ctx.fillStyle = "rgba(221, 236, 255, 0.28)";
-    ctx.fillRect(sx(12), sy(19), sx(96), scale);
+    ctx.fillRect(sx(12), sy(13), sx(96), scale);
+    ctx.fillStyle = "rgba(255, 246, 199, 0.34)";
+    ctx.fillRect(sx(18), sy(8), sx(84), scale);
   }
   const adColors = [palette.ribbon, palette.defender, palette.spark, palette.runner, palette.wallCap];
   for (let index = 0; index < 10; index += 1) {
@@ -678,6 +722,16 @@ function drawCanvasStadiumTrim(ctx, palette, sx, sy, width, scale, profile) {
     ctx.fillStyle = adColors[index % adColors.length];
     ctx.fillRect(x + scale, sy(19), Math.max(scale, sx(6)), scale);
   }
+
+  ctx.fillStyle = palette.outline;
+  const boardX = profile.roofed ? sx(42) : sx(profile.monsterSide === "right" ? 50 : 47);
+  const boardY = profile.roofed ? sy(8) : sy(11);
+  const boardW = profile.roofed ? sx(36) : sx(26);
+  ctx.fillRect(boardX, boardY, boardW, sy(7));
+  ctx.fillStyle = profile.roofed ? "#0a1119" : "#12211b";
+  ctx.fillRect(boardX + scale, boardY + scale, boardW - scale * 2, sy(7) - scale * 2);
+  ctx.fillStyle = palette.sparkL;
+  ctx.fillRect(boardX + scale * 2, boardY + scale * 2, Math.max(scale, boardW - scale * 4), scale);
 
   ctx.fillStyle = palette.pole;
   ctx.fillRect(sx(15), sy(30), scale, sy(25));
@@ -787,6 +841,7 @@ function buildStaticDefenseSprites(runtime, frame) {
     { key: "2B", x: fieldX(runtime, 78), y: fieldY(runtime, 65) },
     { key: "3B", x: fieldX(runtime, 26), y: fieldY(runtime, 77) },
     { key: "SS", x: fieldX(runtime, 42), y: fieldY(runtime, 66) },
+    { key: "P", x: fieldX(runtime, 60), y: fieldY(runtime, 78) },
     { key: "LF", x: fieldX(runtime, 25), y: fieldY(runtime, 55) },
     { key: "CF", x: fieldX(runtime, 60), y: fieldY(runtime, 36) },
     { key: "RF", x: fieldX(runtime, 95), y: fieldY(runtime, 55) }
@@ -794,34 +849,69 @@ function buildStaticDefenseSprites(runtime, frame) {
   const sprites = [];
   for (const item of positions) {
     if (movingFielders.has(item.key)) continue;
+    const transition = staticFielderTransition(runtime, item, frame);
+    const position = transition?.position ?? { x: item.x, y: item.y };
     sprites.push({
-      position: { x: item.x, y: item.y },
+      position,
       color,
       jerseyColor,
       jerseyShadow,
       accentColor,
-      pose: item.key === "C" ? "catcher" : "field",
-      runFrame: 0,
+      pose: transition ? "run" : item.key === "C" ? "catcher" : "field",
+      animationKey: transition ? "run" : item.key === "C" ? "catcher" : null,
+      animationT: transition ? transition.t * 2 : 0,
+      animationLoop: Boolean(transition),
+      runFrame: transition ? Math.floor(transition.t * 8) % 4 : 0,
       fieldingKey: item.key,
-      facing: item.key === "C" ? 1 : undefined,
-      renderScale: item.key === "C" ? 0.58 : undefined
+      facing: transition ? transition.facing : item.key === "C" ? 1 : undefined,
+      renderScale: item.key === "C" ? 0.58 : item.key === "P" ? 0.56 : undefined
     });
   }
   return sprites;
+}
+
+function staticFielderTransition(runtime, item, frame) {
+  if (!frame?.bridge || frame?.inningSlate?.text !== "CHANGE") return null;
+  const t = Math.max(0, Math.min(1, Number(frame.gapProgress ?? 0)));
+  if (t <= 0.04) return null;
+  const eased = t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
+  const homeSide = item.x >= fieldX(runtime, 60);
+  const target = {
+    x: fieldX(runtime, homeSide ? 112 : 8),
+    y: fieldY(runtime, item.key === "C" || item.key === "P" ? 94 : 88)
+  };
+  return {
+    t,
+    facing: target.x >= item.x ? 1 : -1,
+    position: {
+      x: Math.round(item.x + (target.x - item.x) * eased),
+      y: Math.round(item.y + (target.y - item.y) * eased)
+    }
+  };
 }
 
 function compareGamecastActorDepth(a, b) {
   const ay = gamecastActorDepthY(a);
   const by = gamecastActorDepthY(b);
   if (ay !== by) return ay - by;
+  const homeCluster = gamecastHomeClusterOrder(a) - gamecastHomeClusterOrder(b);
+  if (homeCluster !== 0) return homeCluster;
   return gamecastActorRoleOrder(a) - gamecastActorRoleOrder(b);
 }
 
 function gamecastActorDepthY(actor) {
   const y = Number(actor?.sprite?.position?.y ?? 0);
-  if (actor?.role === "umpire") return y + 4;
-  if (actor?.role === "batter") return y + 2;
+  if (String(actor?.sprite?.fieldingKey ?? "") === "C") return y + 1;
+  if (actor?.role === "batter") return y + 3;
+  if (actor?.role === "umpire") return y + 5;
   return y;
+}
+
+function gamecastHomeClusterOrder(actor) {
+  if (String(actor?.sprite?.fieldingKey ?? "") === "C") return 1;
+  if (actor?.role === "batter") return 2;
+  if (actor?.role === "umpire") return 3;
+  return 0;
 }
 
 function gamecastActorRoleOrder(actor) {

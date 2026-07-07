@@ -461,6 +461,43 @@ def validate_registration(frames: Mapping[str, Image.Image], strict: bool = Fals
     return issues
 
 
+def validate_animation_metadata(frames: Mapping[str, object], animations: Mapping[str, object] | None) -> List[str]:
+    if not animations:
+        return []
+
+    issues: List[str] = []
+    frame_names = set(frames.keys())
+    for animation_name, spec in animations.items():
+        if not isinstance(spec, Mapping):
+            issues.append(f"{animation_name}: animation spec must be an object")
+            continue
+        sequence = list(spec.get("frames") or [])
+        durations = list(spec.get("durations") or [])
+        if not sequence:
+            issues.append(f"{animation_name}: no frames")
+        if len(sequence) != len(durations):
+            issues.append(f"{animation_name}: frames/durations length mismatch ({len(sequence)} != {len(durations)})")
+        for frame_name in sequence:
+            if frame_name not in frame_names:
+                issues.append(f"{animation_name}: missing frame '{frame_name}'")
+        for index, duration in enumerate(durations):
+            try:
+                numeric_duration = float(duration)
+            except (TypeError, ValueError):
+                issues.append(f"{animation_name}: duration {index} is not numeric")
+                continue
+            if numeric_duration <= 0:
+                issues.append(f"{animation_name}: duration {index} must be positive")
+
+    if issues:
+        print("animation metadata validation:")
+        for issue in issues:
+            print(f"  ERROR {issue}")
+        raise SystemExit("animation metadata validation failed")
+    print("animation metadata validation: ok")
+    return issues
+
+
 def write_player_atlas(
     source: Image.Image,
     output_dir: Path,
@@ -586,6 +623,7 @@ def write_json(
         },
     }
     if animations:
+        validate_animation_metadata(frames, animations)
         payload["animations"] = animations
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 

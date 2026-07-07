@@ -58,6 +58,7 @@ const evalJs = async (expr) => {
   const res = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
   return res.result?.result?.value;
 };
+const scopedEval = (body) => `(() => { const root = document.querySelector('[data-gamecast-modal]') || document; ${body} })()`;
 const shot = async (name) => {
   const res = await send("Page.captureScreenshot", { format: "png" });
   writeFileSync(path.join(OUT, name), Buffer.from(res.result.data, "base64"));
@@ -71,25 +72,25 @@ await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, dev
 const go = async (url, waitMs) => { await send("Page.navigate", { url }); await sleep(waitMs); };
 
 await go(BASE, 5000);
-await evalJs("(() => { const c=[...document.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1; })()");
+await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));
 await shot("01-early.png");
 await sleep(2600); await shot("02-pa-mid.png");
 await sleep(2600); await shot("03-pa-next.png");
-await evalJs("(() => { const b=[...document.querySelectorAll('[data-gamecast-speed]')].find(b=>b.dataset.gamecastSpeed==='4'); b && b.click(); return 1; })()");
+await evalJs(scopedEval("const b=[...root.querySelectorAll('[data-gamecast-speed]')].find(b=>b.dataset.gamecastSpeed==='4'); b && b.click(); return 1;"));
 await sleep(14000);
-await evalJs("(() => { const c=[...document.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1; })()");
+await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));
 await shot("04-x4-mid.png");
-await evalJs("(() => { const b=[...document.querySelectorAll('[data-gamecast-skip]')].find(Boolean); b && b.click(); return 1; })()");
+await evalJs(scopedEval("const b=[...root.querySelectorAll('[data-gamecast-skip]')].find(Boolean); b && b.click(); return 1;"));
 await sleep(1800); await shot("05-end.png");
 
 await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
 await go(BASE + "?m=1", 5000);
-await evalJs("(() => { const c=[...document.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1; })()");
+await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));
 await shot("06-mobile.png");
 
 await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 await go(BASE + "?team=kiwoom&k=1", 5000);
-await evalJs("(() => { const c=[...document.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1; })()");
+await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));
 await shot("07-kiwoom-dome.png");
 
 ws.close();

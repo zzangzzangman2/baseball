@@ -3195,6 +3195,7 @@ img {
 }
 
 .gamecast-speed-button {
+  min-width: max-content;
   min-height: 32px;
   padding: 6px 10px;
   border-color: rgba(216, 232, 226, 0.95);
@@ -3203,6 +3204,15 @@ img {
   font-size: 0.76rem;
   font-weight: 950;
   line-height: 1;
+  white-space: nowrap;
+}
+
+.gamecast-pause-button {
+  min-width: 66px;
+}
+
+.gamecast-step-button {
+  min-width: 78px;
 }
 
 .gamecast-speed-button.is-active {
@@ -3748,13 +3758,19 @@ img {
   place-items: center;
   gap: 8px;
   padding: clamp(12px, 2.2vw, 22px);
-  border: 1px solid rgba(255, 254, 251, 0.24);
-  border-radius: 6px;
+  border: 2px solid rgba(255, 240, 168, 0.62);
+  border-radius: 3px;
   background:
-    linear-gradient(180deg, rgba(12, 18, 24, 0.74), rgba(12, 18, 24, 0.84)),
-    repeating-linear-gradient(90deg, rgba(255, 254, 251, 0.04) 0 1px, transparent 1px 8px);
-  box-shadow: inset 0 0 0 2px rgba(35, 32, 42, 0.42), 0 18px 38px rgba(17, 27, 39, 0.28);
+    linear-gradient(180deg, rgba(8, 15, 22, 0.9), rgba(9, 17, 24, 0.94)),
+    repeating-linear-gradient(90deg, rgba(255, 240, 168, 0.08) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(0deg, rgba(221, 236, 255, 0.05) 0 1px, transparent 1px 5px);
+  box-shadow:
+    inset 0 0 0 2px rgba(35, 32, 42, 0.72),
+    inset 0 -8px 0 rgba(0, 0, 0, 0.18),
+    0 0 0 3px rgba(17, 27, 39, 0.62),
+    0 18px 38px rgba(17, 27, 39, 0.28);
   color: #fffefa;
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", "Roboto Mono", Menlo, monospace;
   opacity: 0;
   pointer-events: none;
   text-align: center;
@@ -3778,9 +3794,9 @@ img {
   justify-content: center;
   min-height: 22px;
   padding: 4px 8px;
-  border: 1px solid rgba(255, 254, 251, 0.22);
-  border-radius: 999px;
-  background: rgba(255, 254, 251, 0.1);
+  border: 1px solid rgba(255, 240, 168, 0.4);
+  border-radius: 2px;
+  background: rgba(255, 210, 63, 0.12);
   color: #fff0a8;
   font-size: clamp(0.6rem, 1.1vw, 0.74rem);
   font-weight: 950;
@@ -3795,6 +3811,7 @@ img {
   font-weight: 950;
   line-height: 1.05;
   overflow-wrap: anywhere;
+  text-shadow: 2px 2px 0 #23202a, 0 0 12px rgba(255, 210, 63, 0.26);
 }
 
 .gamecast-pause-overlay small {
@@ -3803,6 +3820,7 @@ img {
   font-size: clamp(0.76rem, 1.35vw, 1rem);
   font-weight: 850;
   line-height: 1.35;
+  text-shadow: 1px 1px 0 rgba(35, 32, 42, 0.86);
 }
 
 .gamecast-pause-next {
@@ -3817,6 +3835,7 @@ img {
   font-size: 0.82rem;
   font-weight: 950;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .gamecast-pause-overlay[data-hold-type="leverage"] span {
@@ -6085,11 +6104,23 @@ img {
   }
 
   .gamecast-controls {
-    justify-content: stretch;
+    justify-content: flex-start;
   }
 
   .gamecast-speed-button {
-    flex: 1 1 54px;
+    flex: 0 0 auto;
+    min-width: 46px;
+    padding-right: 8px;
+    padding-left: 8px;
+    font-size: 0.72rem;
+  }
+
+  .gamecast-pause-button {
+    min-width: 62px;
+  }
+
+  .gamecast-step-button {
+    min-width: 72px;
   }
 
   .trade-ledger-list,

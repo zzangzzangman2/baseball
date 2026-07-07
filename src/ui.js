@@ -4654,7 +4654,7 @@ function gamecastMatchupSummary(event) {
     };
   }
   return {
-    state: `${formatNumber(event.inning)}${event.side === "home" ? "말" : "초"} · ${formatNumber(outsInInning(event.outsBefore))}OUT`,
+    state: `${formatGamecastInningCompact(event)} · ${formatNumber(outsInInning(event.outsBefore))}OUT`,
     hitter: event.hitterName || "타자",
     pitcher: `vs ${event.pitcherName || "투수"}`,
     result: gamecastMatchupResult(event),
@@ -4747,7 +4747,7 @@ function renderGamecastEvent(event, state, index = 0) {
     <li class="${normalized.runs > 0 ? "is-scoring" : ""}" data-gamecast-event-id="${escapeAttribute(normalized.id)}" data-gamecast-event-index="${formatNumber(index)}">
       <span>
         <b>${formatNumber(normalized.inning)}회 ${normalized.side === "home" ? "말" : "초"}</b>
-        ${escapeHtml(normalized.offenseLabel || eventTeamLabel(normalized, state))}
+        ${escapeHtml(gamecastFeedHeadline(normalized))}
       </span>
       <small>${escapeHtml(gamecastNowDetail(normalized))}</small>
     </li>
@@ -4778,12 +4778,22 @@ function createGamecastFeedItem(event, index = 0) {
   const label = document.createElement("span");
   const inning = document.createElement("b");
   inning.textContent = `${formatNumber(event?.inning ?? 1)}회 ${event?.side === "home" ? "말" : "초"}`;
-  label.append(inning, ` ${event?.offenseLabel ?? ""}`);
+  label.append(inning, ` ${gamecastFeedHeadline(event)}`);
 
   const detail = document.createElement("small");
   detail.textContent = gamecastNowDetail(event);
   item.append(label, detail);
   return item;
+}
+
+function gamecastFeedHeadline(event) {
+  if (!event) return "결과 대기";
+  const team = String(event.offenseLabel ?? "").trim();
+  const hitter = String(event.hitterName ?? "타자").trim();
+  const result = gamecastMatchupResult(event);
+  const runs = Number(event.runs ?? 0);
+  const runText = runs > 0 && !String(result).includes("+") ? ` +${formatNumber(runs)}` : "";
+  return [team, `${hitter} ${result}${runText}`].filter(Boolean).join(" · ");
 }
 
 function isGamecastFeedEvent(event) {
@@ -5107,6 +5117,11 @@ function gamecastNowTitle(event) {
   return `${formatNumber(event?.inning ?? 1)}회 ${event?.side === "home" ? "말" : "초"} · ${event?.offenseLabel ?? ""}`;
 }
 
+function formatGamecastInningCompact(event) {
+  if (!event) return "LIVE";
+  return `${formatNumber(event.inning)}회${event.side === "home" ? "말" : "초"}`;
+}
+
 function gamecastNowDetail(event) {
   return gamecastBroadcastSentence(event);
 }
@@ -5307,14 +5322,18 @@ function createGamecastPalette(ballparkProfile = null) {
   const grass = park.grass ?? ["#4f8a73", "#8fd0b4"];
   const seats = park.seatColors ?? ["#6f6874", "#575160", "#b9d9f7"];
   const homeColor = normalizeHexColor(park.homeColor, "#315288");
+  const grassLow = normalizeHexColor(grass[0], "#4f8a73");
+  const grassHighRaw = normalizeHexColor(grass[1], "#8fd0b4");
+  const grassHi = mixHexColors(grassHighRaw, grassLow, 0.36);
+  const grassLo = mixHexColors(grassLow, grassHighRaw, 0.16);
   return {
     outline: "#23202a",
-    grassLo: normalizeHexColor(grass[0], "#4f8a73"),
-    grassHi: normalizeHexColor(grass[1], "#8fd0b4"),
-    grassEdge: mixHexColors(normalizeHexColor(grass[0], "#4f8a73"), "#23202a", 0.2),
-    grassD: normalizeHexColor(grass[0], "#4f8a73"),
-    grassM: normalizeHexColor(grass[1], "#8fd0b4"),
-    grassL: mixHexColors(normalizeHexColor(grass[1], "#8fd0b4"), "#fffefb", 0.08),
+    grassLo,
+    grassHi,
+    grassEdge: mixHexColors(grassLo, "#23202a", 0.2),
+    grassD: grassLow,
+    grassM: grassHi,
+    grassL: mixHexColors(grassHi, "#fffefb", 0.06),
     dirtD: "#c78a3e",
     dirtM: "#e8b866",
     dirtL: "#ffe39a",
@@ -5380,6 +5399,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     done: Boolean(normalizedSequence.done),
     hidden: typeof document !== "undefined" ? document.hidden : false,
     visible: true,
+    screen,
     sequence: normalizedSequence,
     appState,
     scoreNodes,
@@ -5464,7 +5484,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     if (state.paused) {
       phaser.pause();
       renderHoldFrame();
-    } else if (state.visible && !state.hidden) {
+    } else if (shouldRunGamecastPlayback(state)) {
       phaser.setSpeed(gamecastEffectivePlaybackRate(state));
       phaser.resume();
     }
@@ -5496,11 +5516,30 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
       state.hold = null;
       persistGamecastPlayback(state, { paused: false, hold: null, elapsedMs: state.elapsedMs });
       syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
-      if (state.visible && !state.hidden && !state.done) {
+      if (shouldRunGamecastPlayback(state)) {
         phaser.setSpeed(gamecastEffectivePlaybackRate(state));
         phaser.resume();
       }
     }, GAMECAST_RESUME_COUNTDOWN_MS);
+  };
+  const resumeImmediatelyFromHold = () => {
+    if (!state.paused || state.done) return false;
+    const hold = normalizeGamecastHold(state.hold);
+    if (!isAutomaticGamecastHold(hold)) return false;
+    clearResumeTimer();
+    if (hold?.resumeElapsedMs !== null && hold?.resumeElapsedMs !== undefined) {
+      state.elapsedMs = Math.min(gamecastTotalDuration(state.sequence), hold.resumeElapsedMs);
+      phaser.seek?.(state.elapsedMs);
+    }
+    state.paused = false;
+    state.hold = null;
+    persistGamecastPlayback(state, { paused: false, hold: null, elapsedMs: state.elapsedMs });
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+    if (shouldRunGamecastPlayback(state)) {
+      phaser.setSpeed(gamecastEffectivePlaybackRate(state));
+      phaser.resume();
+    }
+    return true;
   };
   const applyHold = (hold) => {
     const normalizedHold = normalizeGamecastHold(hold);
@@ -5538,6 +5577,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     }
     persistGamecastPlayback(state, { playbackRate: state.playbackRate });
     phaser.setSpeed(gamecastEffectivePlaybackRate(state));
+    if (isFastGamecastPlayback(state)) resumeImmediatelyFromHold();
     syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
   };
   const setSound = (enabled, allowUnlock = false) => {
@@ -5559,7 +5599,11 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     state.hold = null;
     state.elapsedMs = gamecastTotalDuration(state.sequence);
     persistGamecastPlayback(state, { done: true, paused: false, hold: null, elapsedMs: state.elapsedMs });
+    phaser.seek?.(state.elapsedMs);
     phaser.finish();
+    const finalFrame = buildGamecastFrameState(state, true);
+    state.currentFrame = finalFrame;
+    syncGamecastDom(state, finalFrame);
     syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
   };
   const onPauseClick = (event) => {
@@ -5596,7 +5640,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
   const onVisibilityChange = () => {
     state.hidden = Boolean(document.hidden);
     if (state.hidden) phaser.pause();
-    else if (state.visible && !state.paused) phaser.resume();
+    else if (shouldRunGamecastPlayback(state)) phaser.resume();
   };
 
   syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
@@ -5611,7 +5655,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
 
   const intersectionObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver((entries) => {
     state.visible = entries.some((entry) => entry.isIntersecting);
-    if (state.visible && !state.hidden && !state.paused) phaser.resume();
+    if (shouldRunGamecastPlayback(state)) phaser.resume();
     else phaser.pause();
   }, { threshold: 0.05 }) : null;
   intersectionObserver?.observe(screen);
@@ -5661,6 +5705,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
   const state = {
     animationFrame: 0,
     visible: true,
+    screen,
     hidden: typeof document !== "undefined" ? document.hidden : false,
     scale: 1,
     dpr: 1,
@@ -5767,6 +5812,23 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
       start();
     }, GAMECAST_RESUME_COUNTDOWN_MS);
   };
+  const resumeImmediatelyFromHold = () => {
+    if (!state.paused || state.done) return false;
+    const hold = normalizeGamecastHold(state.hold);
+    if (!isAutomaticGamecastHold(hold)) return false;
+    clearResumeTimer();
+    if (hold?.resumeElapsedMs !== null && hold?.resumeElapsedMs !== undefined) {
+      state.elapsedMs = Math.min(gamecastTotalDuration(state.sequence), hold.resumeElapsedMs);
+    }
+    state.paused = false;
+    state.hold = null;
+    state.lastTimestamp = 0;
+    persistGamecastPlayback(state, { paused: false, hold: null, elapsedMs: state.elapsedMs });
+    renderCurrentFrame(false);
+    syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
+    start();
+    return true;
+  };
   const applyHold = (hold) => {
     const normalizedHold = normalizeGamecastHold(hold);
     if (!normalizedHold || state.done) return false;
@@ -5867,14 +5929,14 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
       renderCurrentFrame(state.done || state.prefersReducedMotion || !state.sequence.events.length);
       return;
     }
-    if (!state.animationFrame && state.visible && !state.hidden && !state.paused) {
+    if (!state.animationFrame && shouldRunGamecastPlayback(state)) {
       state.animationFrame = window.requestAnimationFrame(loop);
     }
   };
   const onVisibilityChange = () => {
     state.hidden = Boolean(document.hidden);
     if (state.hidden) stop();
-    else if (!state.paused) start();
+    else if (shouldRunGamecastPlayback(state)) start();
   };
   const setSpeed = (speed) => {
     if (state.done) return;
@@ -5888,6 +5950,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     state.done = false;
     state.lastTimestamp = 0;
     persistGamecastPlayback(state, { playbackRate: state.playbackRate, done: false });
+    if (isFastGamecastPlayback(state)) resumeImmediatelyFromHold();
     syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
     start();
   };
@@ -5957,7 +6020,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     state.visible = entries.some((entry) => entry.isIntersecting);
     if (state.visible) {
       clearOffscreenPause();
-      if (!state.paused) start();
+      if (shouldRunGamecastPlayback(state)) start();
     } else {
       scheduleOffscreenPause();
     }
@@ -6060,6 +6123,19 @@ function gamecastEventDuration(sequence) {
 function sanitizeGamecastSpeed(value) {
   const speed = Number(value);
   return GAMECAST_SPEED_OPTIONS.includes(speed) ? speed : 1;
+}
+
+function isFastGamecastPlayback(state) {
+  return sanitizeGamecastSpeed(state?.playbackRate) >= 2;
+}
+
+function isAutomaticGamecastHold(hold) {
+  const type = String(hold?.type ?? "");
+  return type === "inning" || type === "leverage";
+}
+
+function shouldRunGamecastPlayback(state) {
+  return Boolean(state && !state.done && !state.paused && !state.hold && state.visible !== false && !state.hidden);
 }
 
 function shouldTriggerGamecastImpactShake(frame) {
@@ -6228,9 +6304,16 @@ function drawBallparkOutfield(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neu
       const inside = ly >= wallY;
       const distanceToWall = ly - wallY;
       if (!inside) {
-        const aisle = y % gamecastSize(7) === 0;
-        const seatBand = Math.floor((y + x * 0.08) / gamecastSize(4)) % 2;
-        const color = aisle ? "#3a3444" : (seatBand ? palette.stand : palette.standD);
+        const showSeatRows = ly < (profile.roofed ? 18 : 22);
+        const aisle = showSeatRows && y % gamecastSize(profile.roofed ? 5 : 7) === 0;
+        const seatBand = showSeatRows ? Math.floor((y + x * 0.08) / gamecastSize(profile.roofed ? 5 : 4)) % 2 : 0;
+        const color = profile.roofed
+          ? showSeatRows
+            ? (aisle ? "#172536" : (seatBand ? "#26384d" : "#202b3a"))
+            : "#202b3a"
+          : showSeatRows
+            ? (aisle ? "#3a3444" : (seatBand ? palette.stand : palette.standD))
+            : palette.standD;
         drawPixel(ctx, x, y, color);
       } else if (distanceToWall < 2.2 + Math.min(3.2, Number(profile.wallHeight ?? 3) * 0.28)) {
         const monster = profile.monsterSide === "right" && lx > 92;
@@ -6239,14 +6322,19 @@ function drawBallparkOutfield(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neu
         drawPixel(ctx, x, y, Math.floor((x + y) / gamecastSize(5)) % 2 ? "#d1ad68" : palette.track);
       } else {
         const radial = Math.hypot((lx - 60) * 0.92, (ly - 101) * 0.72);
-        const ring = Math.floor((radial + Math.max(0, ly - wallY) * 0.3) / 7);
+        const ring = profile.mow === "rings"
+          ? Math.floor((radial + Math.max(0, ly - wallY) * 0.18) / 13)
+          : 0;
         const stripe = profile.mow === "checker"
           ? Math.floor(lx / 7) + Math.floor(ly / 6)
-          : profile.mow === "stripes"
-            ? Math.floor((lx + ly * 0.25) / 7)
-            : Math.floor(radial / 9);
+          : profile.mow === "dome"
+            ? 0
+            : profile.mow === "stripes"
+              ? Math.floor((lx + ly * 0.25) / 9)
+              : Math.floor(radial / 13);
         const grain = (x * 17 + y * 31) % 113 === 0;
-        drawPixel(ctx, x, y, grain ? palette.grassL : ((ring + stripe) % 2 ? palette.grassLo : palette.grassHi));
+        const softMow = (profile.mow === "checker" || profile.mow === "stripes") && (ring + stripe) % 2 && (x + y) % 11 === 0;
+        drawPixel(ctx, x, y, grain ? palette.grassL : softMow ? palette.grassLo : palette.grassHi);
       }
     }
   }
@@ -6267,19 +6355,38 @@ function drawBallparkOutfield(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neu
 }
 
 function drawPixelStadiumScoreboard(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
-  void ctx;
-  void palette;
-  void profile;
+  const x = gamecastX(profile.roofed ? 41 : profile.monsterSide === "right" ? 49 : 47);
+  const y = gamecastY(profile.roofed ? 7 : 10);
+  const w = gamecastSize(profile.roofed ? 38 : 26);
+  const h = gamecastSize(profile.roofed ? 9 : 7);
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = profile.roofed ? "#071019" : "#101d18";
+  ctx.fillRect(x + gamecastSize(1), y + gamecastSize(1), w - gamecastSize(2), h - gamecastSize(2));
+  ctx.fillStyle = profile.roofed ? "#ddecff" : palette.sparkL;
+  ctx.fillRect(x + gamecastSize(2), y + gamecastSize(2), Math.max(gamecastSize(4), w - gamecastSize(4)), gamecastSize(1));
+  ctx.fillStyle = profile.roofed ? "rgba(221, 236, 255, 0.5)" : "rgba(255, 246, 199, 0.42)";
+  for (let px = x + gamecastSize(3); px < x + w - gamecastSize(3); px += gamecastSize(6)) {
+    ctx.fillRect(px, y + gamecastSize(5), gamecastSize(2), gamecastSize(1));
+  }
 }
 
 function drawBallparkArchitecture(ctx, palette, profile = KBO_GAMECAST_BALLPARKS.neutral) {
   if (profile.roofed) {
-    ctx.fillStyle = "#263343";
-    for (let y = gamecastY(1); y < gamecastY(18); y += gamecastSize(4)) {
-      ctx.fillRect(gamecastX(5), y, gamecastX(110), gamecastSize(1));
+    ctx.fillStyle = "rgba(21, 35, 52, 0.72)";
+    ctx.fillRect(0, 0, GAMECAST_PIXEL_W, gamecastY(8));
+    ctx.fillStyle = "#314456";
+    for (let y = gamecastY(2); y < gamecastY(12); y += gamecastSize(5)) {
+      ctx.fillRect(gamecastX(6), y, gamecastX(108), gamecastSize(1));
+    }
+    ctx.fillStyle = "#354a5f";
+    for (let x = gamecastX(10); x < gamecastX(112); x += gamecastX(18)) {
+      ctx.fillRect(x, gamecastY(1), gamecastSize(1), gamecastY(13));
     }
     ctx.fillStyle = "rgba(221, 236, 255, 0.28)";
-    ctx.fillRect(gamecastX(12), gamecastY(19), gamecastX(96), gamecastSize(1));
+    ctx.fillRect(gamecastX(12), gamecastY(13), gamecastX(96), gamecastSize(1));
+    ctx.fillStyle = "rgba(255, 246, 199, 0.34)";
+    ctx.fillRect(gamecastX(18), gamecastY(8), gamecastX(84), gamecastSize(1));
   } else {
     drawPixelLightTower(ctx, palette, gamecastX(9), gamecastY(4), -1);
     drawPixelLightTower(ctx, palette, gamecastX(111), gamecastY(4), 1);
@@ -7171,19 +7278,16 @@ function blockLettersWidth(text, scale) {
 }
 
 function drawPixelFielders(ctx, palette, frame) {
-  const positions = gamecastDefensiveAlignment();
   const activePosition = normalizeFieldingPosition(frame.event?.fieldingPosition);
-  const movingFielders = new Set(frame.activeFielders ?? []);
   const defenderColor = frame.defenseColor ?? (frame.side === "home" ? palette.defender : "#575160");
   const jerseyColor = frame.defenseJerseyColor ?? palette.defenderL;
   const activeProgress = Number(frame.progress ?? 0);
-  const pitchingNow = frame.event && activeProgress < gamecastPitchEnd(frame.event) + 0.04;
+  const positions = frame.staticDefense ?? gamecastStaticDefenseSnapshot(frame);
 
   for (const fielder of positions) {
-    if (movingFielders.has(fielder.key)) continue;
     const isActive = activePosition && fielder.key === activePosition && activeProgress >= 0.28 && activeProgress <= 0.82;
-    if (isActive || (pitchingNow && fielder.key === "P")) continue;
-    const pose = fielder.key === "C" ? "catcher" : activePosition === fielder.key && activeProgress > 0.82 ? "catch" : "field";
+    if (isActive) continue;
+    const pose = fielder.transitioning ? "run" : fielder.key === "C" ? "catcher" : activePosition === fielder.key && activeProgress > 0.82 ? "catch" : "field";
     drawPixelRunner(ctx, palette, fielder.position, false, defenderColor, fielder.frame, {
       jerseyColor,
       jerseyShadow: frame.defenseJerseyShadow ?? palette.uniformSh,
@@ -7207,6 +7311,42 @@ function gamecastDefensiveAlignment() {
     { key: "P", position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(2) }, frame: 2 },
     { key: "C", position: { x: bases.home.x, y: bases.home.y + gamecastSize(5) }, frame: 2 }
   ];
+}
+
+function gamecastStaticDefenseSnapshot(frame) {
+  const movingFielders = new Set(frame?.activeFielders ?? []);
+  const activeProgress = Number(frame?.progress ?? 0);
+  const pitchingNow = frame?.event && activeProgress < gamecastPitchEnd(frame.event) + 0.04;
+  return gamecastDefensiveAlignment()
+    .filter((fielder) => !movingFielders.has(fielder.key) && !(pitchingNow && fielder.key === "P"))
+    .map((fielder) => {
+      const transition = gamecastStaticFielderTransition(fielder, frame);
+      return {
+        ...fielder,
+        position: transition?.position ?? { ...fielder.position },
+        transitioning: Boolean(transition),
+        frame: transition ? Math.floor(transition.t * 8) % 4 : fielder.frame
+      };
+    });
+}
+
+function gamecastStaticFielderTransition(fielder, frame) {
+  if (!frame?.bridge || frame?.inningSlate?.text !== "CHANGE") return null;
+  const t = Math.max(0, Math.min(1, Number(frame.gapProgress ?? 0)));
+  if (t <= 0.04) return null;
+  const eased = easeInOutCubic(t);
+  const toRight = fielder.position.x >= gamecastX(60);
+  const target = {
+    x: gamecastX(toRight ? 112 : 8),
+    y: gamecastY(fielder.key === "C" || fielder.key === "P" ? 94 : 88)
+  };
+  return {
+    t,
+    position: {
+      x: Math.round(lerp(fielder.position.x, target.x, eased)),
+      y: Math.round(lerp(fielder.position.y, target.y, eased))
+    }
+  };
 }
 
 function normalizeFieldingPosition(position) {
@@ -7322,6 +7462,9 @@ function buildGamecastFrameState(state, forceFinal = false) {
   const runners = buildRunnerSprites(event, progress, state.palette);
   const defenseSprites = buildGamecastDefenseSprites(event, progress, state.palette);
   const activeFielders = [...new Set(defenseSprites.map((sprite) => sprite.fieldingKey).filter(Boolean))];
+  const inningSlate = buildGamecastBridgeSlate(event, nextEvent, gapProgress) ?? buildGamecastInningSlate(event, progress);
+  const bridge = gapProgress > 0;
+  const staticDefense = gamecastStaticDefenseSnapshot({ event, activeFielders, progress, gapProgress, bridge, inningSlate });
 
   return {
     done: false,
@@ -7338,6 +7481,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
     ballShadow: buildGamecastBallShadow(event, progress),
     defenseSprites,
     activeFielders,
+    staticDefense,
     throwLines: buildGamecastThrowLines(event, progress),
     contactBurst: buildGamecastContactBurst(event, progress),
     ballTrailColor: event.outcome === "homeRun" ? state.palette.homerL : state.palette.baseSh,
@@ -7345,7 +7489,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
     playerLabel: buildGamecastPlayerLabel(event, progress, runners),
     actionBurst: buildGamecastActionBurst(event, progress),
     baseCallout: buildGamecastBaseCallout(event, progress),
-    inningSlate: buildGamecastBridgeSlate(event, nextEvent, gapProgress) ?? buildGamecastInningSlate(event, progress),
+    inningSlate,
     ballparkProfile: seq.ballparkProfile,
     scoreFlash: event.runs > 0 && progress >= 0.62 && progress <= 0.84,
     flash: event.outcome === "homeRun" && progress >= 0.68 && progress < 0.76,
@@ -7360,7 +7504,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
     progress,
     rawProgress,
     gapProgress,
-    bridge: gapProgress > 0,
+    bridge,
     leverage
   };
 }
@@ -7413,6 +7557,7 @@ function maybeHoldGamecastPlayback(state, frame, applyHold) {
   const slotMs = gamecastEventDuration(state.sequence);
   const holdElapsedMs = Math.max(0, Math.min(totalMs, (eventIndex + 1) * slotMs - 1));
   const resumeElapsedMs = Math.max(0, Math.min(totalMs, (eventIndex + 1) * slotMs + 1));
+  const allowAutomaticHolds = state.holdsEnabled !== false && !isFastGamecastPlayback(state);
   const setBoundaryHoldTime = () => {
     state.elapsedMs = holdElapsedMs;
     state.done = false;
@@ -7427,7 +7572,7 @@ function maybeHoldGamecastPlayback(state, frame, applyHold) {
     });
   };
 
-  if (state.holdsEnabled !== false && Number(frame.rawProgress ?? 0) <= 0.035 && Number(frame.gapProgress ?? 0) <= 0) {
+  if (allowAutomaticHolds && Number(frame.rawProgress ?? 0) <= 0.035 && Number(frame.gapProgress ?? 0) <= 0) {
     const key = `leverage:${event.id}`;
     if (state.lastHoldKey !== key && Number(frame.leverage ?? 0) >= GAMECAST_HOLD_LEVERAGE_THRESHOLD) {
       return applyHold({
@@ -7454,7 +7599,7 @@ function maybeHoldGamecastPlayback(state, frame, applyHold) {
 
   if (!nextEvent || Number(frame.gapProgress ?? 0) < 0.68) return false;
 
-  if (state.holdsEnabled !== false && (event.inningEnded || event.inning !== nextEvent.inning || event.side !== nextEvent.side)) {
+  if (allowAutomaticHolds && (event.inningEnded || event.inning !== nextEvent.inning || event.side !== nextEvent.side)) {
     return issueHold({
       type: "inning",
       key: `inning:${event.id}`,
@@ -7930,9 +8075,9 @@ function buildGamecastDefenseSprites(event, progress, palette) {
   if (!isBattedBallOutcome(event?.outcome)) return sprites;
   if (progress < pitchEnd + 0.06 || progress > 0.9) return sprites;
 
-  const fieldingKey = normalizeFieldingPosition(event.fieldingPosition) || "SS";
   const battedType = String(event.battedBallType ?? "");
   const target = battedBallGroundPoint(event, 1);
+  const fieldingKey = gamecastFieldingKeyForTarget(event, target);
   const start = gamecastDefenderStartForTarget(target, event);
   const catchProgress = battedType === "groundBall" ? 0.5 : battedType === "lineDrive" ? 0.54 : 0.6;
   const runStart = Math.max(0.24, pitchEnd + 0.04);
@@ -7985,13 +8130,14 @@ function buildGamecastDefenseSprites(event, progress, palette) {
   }
 
   if (event.outcome === "homeRun" && progress > 0.64) {
+    const chaseKey = gamecastFieldingKeyForTarget(event, target);
     sprites.push({
       position: { x: Math.round(target.x), y: Math.round(target.y + gamecastSize(7)) },
       color: event.defenseColor ?? palette.defenderSh,
       jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
       jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
       accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
-      fieldingKey: normalizeFieldingPosition(event.fieldingPosition),
+      fieldingKey: chaseKey,
       uniformNumber: gamecastUniformNumber(event.defenderName, event.fieldingPosition),
     runFrame: 2,
     squash: false,
@@ -8200,7 +8346,7 @@ function battedBallLift(event) {
 }
 
 function gamecastDefenderStartForTarget(target, event) {
-  const key = normalizeFieldingPosition(event?.fieldingPosition);
+  const key = gamecastFieldingKeyForTarget(event, target);
   const alignment = gamecastDefensiveAlignment().find((fielder) => fielder.key === key);
   if (alignment) return { ...alignment.position };
   const leftSide = target.x < gamecastX(60);
@@ -8212,6 +8358,27 @@ function gamecastDefenderStartForTarget(target, event) {
     x: leftSide ? gamecastX(deep ? 24 : 36) : gamecastX(deep ? 96 : 84),
     y: gamecastY(deep ? 48 : 58)
   };
+}
+
+function gamecastFieldingKeyForTarget(event, target) {
+  const recorded = normalizeFieldingPosition(event?.fieldingPosition);
+  if (recorded) return recorded;
+  const point = target ?? battedBallGroundPoint(event, 1);
+  const leftSide = point.x < gamecastX(60);
+  const centerBand = Math.abs(point.x - gamecastX(60)) <= gamecastSize(15);
+  const deep = point.y < gamecastY(58);
+  const infield = point.y > gamecastY(68);
+  if (event?.outcome === "homeRun" || deep) {
+    if (centerBand) return "CF";
+    return leftSide ? "LF" : "RF";
+  }
+  if (infield) {
+    if (point.x < gamecastX(38)) return "3B";
+    if (point.x > gamecastX(84)) return "1B";
+    return leftSide ? "SS" : "2B";
+  }
+  if (centerBand) return "CF";
+  return leftSide ? "LF" : "RF";
 }
 
 function gamecastFieldingSpot(event) {
@@ -8284,6 +8451,7 @@ function positionAlongPath(path, t) {
 }
 
 function syncGamecastDom(state, frame) {
+  if (state?.screen) state.screen.__gamecastDebugFrame = frame;
   if (state.scoreNodes?.[0]) state.scoreNodes[0].textContent = formatNumber(frame.score?.away ?? 0);
   if (state.scoreNodes?.[1]) state.scoreNodes[1].textContent = formatNumber(frame.score?.home ?? 0);
   if (state.nowTitle) state.nowTitle.textContent = frame.done ? "경기 종료" : frame.event ? gamecastNowTitle(frame.event) : "중계 대기";
@@ -8617,7 +8785,7 @@ function syncGamecastHud(hud, frame) {
   const event = frame.done ? null : frame.event;
   hud.root.classList.toggle("is-scoring", Boolean(frame.scoreFlash));
   hud.root.classList.toggle("is-homer", event?.outcome === "homeRun");
-  if (hud.inning) hud.inning.textContent = event ? `${formatNumber(event.inning)}${event.side === "home" ? "말" : "초"}` : "FINAL";
+  if (hud.inning) hud.inning.textContent = event ? formatGamecastInningCompact(event) : "FINAL";
   if (hud.result) hud.result.textContent = event ? gamecastJumbotronText(event) : "END";
   if (hud.away) hud.away.textContent = formatNumber(frame.score?.away ?? 0);
   if (hud.home) hud.home.textContent = formatNumber(frame.score?.home ?? 0);
