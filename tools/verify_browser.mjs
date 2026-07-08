@@ -1380,22 +1380,33 @@ async function checkGamecastLab() {
       const screen = document.querySelector("[data-gamecast-modal] [data-gamecast-screen]");
       const canvas = document.querySelector("[data-gamecast-modal] [data-gamecast-canvas].gamecast-pixel-canvas");
       const anchors = screen?.__gamecast2Anchors?.anchors ?? {};
+      const players = screen?.__gamecast2Players ?? { defenders: [], actors: [] };
       const rect = canvas?.getBoundingClientRect();
       const keys = Object.keys(anchors).sort();
       const required = ["home", "first", "second", "third", "mound", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "leftPole", "rightPole", "scoreboardTl"];
+      const defenseRequired = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
+      const defenderKeys = (players.defenders ?? []).map((actor) => actor.fieldingKey || actor.key).sort();
+      const outfieldScales = (players.defenders ?? []).filter((actor) => actor.isOutfielder).map((actor) => Number(actor.scale ?? 0));
+      const infieldScales = (players.defenders ?? []).filter((actor) => !actor.isOutfielder && actor.fieldingKey !== "P" && actor.fieldingKey !== "C").map((actor) => Number(actor.scale ?? 0));
       return {
         engine: screen?.dataset?.gamecastEngineCurrent ?? "",
         field: screen?.dataset?.gamecast2Field ?? "",
         anchorCount: Number(screen?.dataset?.gamecast2AnchorCount ?? 0),
+        defenderCount: Number(screen?.dataset?.gamecast2DefenderCount ?? 0),
+        playerCount: Number(screen?.dataset?.gamecast2PlayerCount ?? 0),
         keys,
         missing: required.filter((key) => !keys.includes(key)),
+        missingDefenders: defenseRequired.filter((key) => !defenderKeys.includes(key)),
+        hasBatter: (players.actors ?? []).some((actor) => actor.role === "batter"),
         canvasPixelW: Number(canvas?.dataset?.pixelW ?? 0),
         canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0),
         canvasWidth: Math.round(rect?.width ?? 0),
         canvasHeight: Math.round(rect?.height ?? 0),
         baseDirectionOk: Number(anchors.first?.x ?? 0) > Number(anchors.home?.x ?? 0) && Number(anchors.third?.x ?? 0) < Number(anchors.home?.x ?? 0),
+        baseBagOk: Math.abs(Number(anchors.first?.y ?? 0) - Number(anchors.third?.y ?? 999)) <= 4 && Number(anchors.first?.y ?? 999) < Number(anchors.C?.y ?? 0),
         depthOk: Number(anchors.CF?.y ?? 999) < Number(anchors.LF?.y ?? 0) && Number(anchors.LF?.y ?? 999) < Number(anchors.third?.y ?? 0),
-        pitcherOk: Number(anchors.P?.y ?? 999) > Number(anchors.mound?.y ?? 0)
+        pitcherOk: Number(anchors.P?.y ?? 999) > Number(anchors.mound?.y ?? 0),
+        outfieldScaleOk: outfieldScales.length === 3 && infieldScales.length >= 4 && Math.max(...outfieldScales) < Math.min(...infieldScales)
       };
     })()
   `);
@@ -1404,7 +1415,16 @@ async function checkGamecastLab() {
   assert(anchorProbe.anchorCount >= 15 && anchorProbe.missing.length === 0, `v2 앵커가 부족합니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(anchorProbe.canvasPixelW === 960 && anchorProbe.canvasPixelH === 720, `v2 필드 해상도 계약이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.canvasWidth > 0 && anchorProbe.canvasHeight > 0, `v2 캔버스가 보이지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
-  assert(anchorProbe.baseDirectionOk && anchorProbe.depthOk && anchorProbe.pitcherOk, `v2 앵커 배치가 어긋났습니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
+  assert(anchorProbe.baseDirectionOk && anchorProbe.baseBagOk && anchorProbe.depthOk && anchorProbe.pitcherOk, `v2 앵커 배치가 어긋났습니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
+  assert(
+      anchorProbe.defenderCount === 9 &&
+      anchorProbe.playerCount >= 10 &&
+      anchorProbe.missingDefenders.length === 0 &&
+      anchorProbe.hasBatter &&
+      anchorProbe.outfieldScaleOk,
+    `v2 R2 선수 배치가 부족합니다: ${JSON.stringify(anchorProbe)}`,
+    "src/gamecast2/scene.js"
+  );
 
   return [
     `desktop ${Math.round(desktopProbe.cssWidth)}x${Math.round(desktopProbe.cssHeight)}`,
@@ -1416,7 +1436,7 @@ async function checkGamecastLab() {
     `playfeel ball ${playFeelProbe.ballFrames}/${playFeelSamples.length}`,
     `midview ${viewportSweep.map((probe) => probe.width).join("/")}`,
     `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`,
-    `v2 anchors ${anchorProbe.anchorCount}`
+    `v2 anchors ${anchorProbe.anchorCount}, players ${anchorProbe.playerCount}`
   ].join(", ");
 }
 

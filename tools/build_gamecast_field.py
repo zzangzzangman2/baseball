@@ -38,57 +38,57 @@ MARKERS: Dict[str, Tuple[int, int, int]] = {
 FIELD_MARKERS: Dict[str, Dict[str, Tuple[int, int]]] = {
     "field-jamsil-day": {
         "home": (480, 617),
-        "first": (801, 428),
-        "second": (480, 330),
-        "third": (162, 428),
+        "first": (758, 415),
+        "second": (480, 321),
+        "third": (202, 415),
         "mound": (480, 407),
         "P": (480, 414),
         "C": (480, 646),
-        "1B": (746, 456),
+        "1B": (724, 438),
         "2B": (592, 400),
-        "3B": (214, 456),
+        "3B": (236, 438),
         "SS": (368, 400),
-        "LF": (282, 279),
-        "CF": (480, 231),
-        "RF": (678, 279),
+        "LF": (260, 306),
+        "CF": (480, 264),
+        "RF": (700, 306),
         "leftPole": (42, 252),
         "rightPole": (918, 252),
         "scoreboardTl": (401, 64),
     },
     "field-jamsil-night": {
         "home": (480, 622),
-        "first": (744, 428),
-        "second": (480, 358),
-        "third": (216, 428),
+        "first": (742, 414),
+        "second": (480, 344),
+        "third": (218, 414),
         "mound": (480, 441),
         "P": (480, 448),
         "C": (480, 650),
-        "1B": (708, 456),
-        "2B": (590, 416),
-        "3B": (252, 456),
-        "SS": (370, 416),
-        "LF": (294, 287),
-        "CF": (480, 245),
-        "RF": (666, 287),
+        "1B": (696, 430),
+        "2B": (590, 410),
+        "3B": (264, 430),
+        "SS": (370, 410),
+        "LF": (282, 312),
+        "CF": (480, 274),
+        "RF": (678, 312),
         "leftPole": (18, 254),
         "rightPole": (942, 254),
         "scoreboardTl": (394, 86),
     },
     "field-gocheok-dome": {
         "home": (480, 632),
-        "first": (723, 424),
-        "second": (480, 353),
-        "third": (237, 424),
+        "first": (724, 414),
+        "second": (480, 363),
+        "third": (236, 414),
         "mound": (480, 460),
         "P": (480, 467),
         "C": (480, 660),
-        "1B": (692, 456),
-        "2B": (589, 421),
-        "3B": (268, 456),
-        "SS": (371, 421),
-        "LF": (299, 289),
-        "CF": (480, 247),
-        "RF": (661, 289),
+        "1B": (688, 430),
+        "2B": (589, 414),
+        "3B": (272, 430),
+        "SS": (371, 414),
+        "LF": (286, 318),
+        "CF": (480, 282),
+        "RF": (674, 318),
         "leftPole": (25, 247),
         "rightPole": (935, 247),
         "scoreboardTl": (404, 84),
@@ -191,6 +191,21 @@ def clean_markers(image: Image.Image, marker_pixels: set[Tuple[int, int]]) -> Im
     return cleaned
 
 
+def restamp_marked_sources(source_dir: Path) -> None:
+    for field_id in FIELD_MARKERS:
+        source_path = source_dir / f"{field_id}.marked.png"
+        if not source_path.exists():
+            raise SystemExit(f"missing marked source for restamp: {source_path}")
+        source = Image.open(source_path).convert("RGBA")
+        if source.size != (DESIGN_W, DESIGN_H):
+            raise SystemExit(f"{source_path}: expected {DESIGN_W}x{DESIGN_H}, got {source.size[0]}x{source.size[1]}")
+        _found, marker_pixels = find_marker_pixels(source)
+        cleaned = clean_markers(source, marker_pixels)
+        restamped = stamp_markers(cleaned, field_id)
+        restamped.save(source_path)
+        print(f"restamped {source_path}")
+
+
 def depth_scale(y: float) -> float:
     return round(max(0.62, min(1.04, 0.56 + (y / DESIGN_H) * 0.52)), 2)
 
@@ -279,11 +294,14 @@ def main() -> None:
     parser.add_argument("--source-dir", default=Path("assets/gamecast2/source"), type=Path)
     parser.add_argument("--out", default=Path("assets/gamecast2"), type=Path)
     parser.add_argument("--prepare", action="append", default=[], metavar="FIELD_ID=PNG_PATH")
+    parser.add_argument("--restamp-sources", action="store_true", help="remove existing marker pixels and stamp FIELD_MARKERS onto committed sources")
     args = parser.parse_args()
 
     raw_paths = parse_prepare_args(args.prepare)
     if raw_paths:
         prepare_sources(args.source_dir, raw_paths)
+    if args.restamp_sources:
+        restamp_marked_sources(args.source_dir)
     build_fields(args.source_dir, args.out)
 
 

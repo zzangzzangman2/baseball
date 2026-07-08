@@ -223,24 +223,51 @@ if (MODE === "burst") {
 }
 
 if (MODE === "anchors") {
-  await go(BASE, 3200);
+  await go(BASE, 1200);
   await assertGamecastReady();
   await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));
+  const motionSamples = [];
+  for (let index = 0; index < 12; index += 1) {
+    motionSamples.push(await evalJs(scopedEval(`
+      const screen = root.querySelector("[data-gamecast-screen]");
+      const frame = screen?.__gamecast2Frame ?? {};
+      return {
+        frame: ${index + 1},
+        eventId: frame.eventId ?? "",
+        outcome: frame.outcome ?? "",
+        progress: Number(frame.progress ?? 0),
+        movingDefenseCount: Number(frame.movingDefenseCount ?? screen?.dataset?.gamecast2MovingDefenseCount ?? 0),
+        ballVisible: Boolean(frame.ballVisible ?? screen?.dataset?.gamecast2BallVisible === "1")
+      };
+    `)));
+    if (index < 11) await sleep(300);
+  }
   const meta = await evalJs(scopedEval(`
     const screen = root.querySelector("[data-gamecast-screen]");
     const canvas = root.querySelector("[data-gamecast-canvas]");
     const anchors = screen?.__gamecast2Anchors?.anchors ?? {};
+    const players = screen?.__gamecast2Players ?? { defenders: [], actors: [] };
     const keys = Object.keys(anchors).sort();
     return {
       engine: screen?.dataset?.gamecastEngineCurrent ?? "",
       field: screen?.dataset?.gamecast2Field ?? "",
       anchorCount: Number(screen?.dataset?.gamecast2AnchorCount ?? 0),
+      defenderCount: Number(screen?.dataset?.gamecast2DefenderCount ?? 0),
+      playerCount: Number(screen?.dataset?.gamecast2PlayerCount ?? 0),
       keys,
+      defenders: players.defenders ?? [],
+      actors: players.actors ?? [],
+      motion: {
+        ballFrames: ${JSON.stringify(motionSamples)}.filter((sample) => sample.ballVisible).length,
+        movingDefenseFrames: ${JSON.stringify(motionSamples)}.filter((sample) => sample.movingDefenseCount > 0).length,
+        homeRunBadDefenseFrames: ${JSON.stringify(motionSamples)}.filter((sample) => sample.outcome === "homeRun" && sample.movingDefenseCount > 0).length,
+        samples: ${JSON.stringify(motionSamples)}
+      },
       canvasPixelW: Number(canvas?.dataset?.pixelW ?? 0),
       canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0)
     };
   `));
-  if (meta.engine !== "v2" || meta.anchorCount < 15 || meta.canvasPixelW !== 960 || meta.canvasPixelH !== 720) {
+  if (meta.engine !== "v2" || meta.anchorCount < 15 || meta.defenderCount !== 9 || meta.playerCount < 10 || meta.canvasPixelW !== 960 || meta.canvasPixelH !== 720) {
     throw new Error(`Gamecast v2 anchors failed: ${JSON.stringify(meta)}`);
   }
   writeFileSync(path.join(OUT, "anchors-summary.json"), JSON.stringify(meta, null, 2));

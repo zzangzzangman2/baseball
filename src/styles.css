@@ -3482,8 +3482,8 @@ img {
   aspect-ratio: 4 / 3;
 }
 
-.gamecast-screen.is-v2[data-gamecast2-debug-anchors="1"] .gamecast-player-label,
-.gamecast-screen.is-v2[data-gamecast2-debug-anchors="1"] .gamecast-action-burst {
+.gamecast-screen.is-v2 .gamecast-player-label,
+.gamecast-screen.is-v2 .gamecast-action-burst {
   display: none;
 }
 
