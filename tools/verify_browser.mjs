@@ -1317,14 +1317,19 @@ async function checkGamecastLab() {
   await evaluateInBrowser(`document.activeElement?.blur?.(); true`);
   await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
-  await delay(3600);
-  const stepAdvancedProbe = await evaluateInBrowser(`
-    (() => ({
-      feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
-      overlayVisible: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay].is-visible")),
-      holdType: document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay]")?.dataset?.holdType ?? ""
-    }))()
-  `);
+  let stepAdvancedProbe = null;
+  const stepAdvanceDeadline = Date.now() + 9000;
+  while (Date.now() < stepAdvanceDeadline) {
+    await delay(260);
+    stepAdvancedProbe = await evaluateInBrowser(`
+      (() => ({
+        feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
+        overlayVisible: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay].is-visible")),
+        holdType: document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay]")?.dataset?.holdType ?? ""
+      }))()
+    `);
+    if (stepAdvancedProbe.feedCount > stepHoldProbe.feedCount && stepAdvancedProbe.overlayVisible && stepAdvancedProbe.holdType === "step") break;
+  }
   assert(stepAdvancedProbe.feedCount > stepHoldProbe.feedCount, `Space 후 다음 타석으로 진행되지 않았습니다: ${JSON.stringify({ stepHoldProbe, stepAdvancedProbe })}`, "src/ui.js");
   assert(stepAdvancedProbe.overlayVisible && stepAdvancedProbe.holdType === "step", `다음 타석 종료 후 다시 스텝 홀드가 걸리지 않았습니다: ${JSON.stringify(stepAdvancedProbe)}`, "src/ui.js");
 
