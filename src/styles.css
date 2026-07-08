@@ -8783,7 +8783,7 @@ input {
 .appointment-card {
   border-color: rgba(190, 174, 232, 0.22);
   background:
-    linear-gradient(135deg, rgba(11, 16, 32, 0.97), rgba(22, 18, 42, 0.96) 58%, color-mix(in srgb, var(--team-color, #8a38ff), #10172a 76%)),
+    linear-gradient(135deg, rgba(8, 12, 24, 0.985), rgba(15, 18, 32, 0.985) 62%, color-mix(in srgb, var(--team-color, #8a38ff), #101827 88%)),
     repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 42px);
   color: #f5efff;
   box-shadow: 0 24px 52px rgba(2, 4, 10, 0.38);
@@ -9031,6 +9031,125 @@ input {
   border-color: rgba(255, 255, 255, 0.16);
 }
 
+.start-hero.is-manager-step {
+  grid-template-columns: minmax(300px, 0.48fr) minmax(520px, 1fr);
+}
+
+.start-hero.is-manager-step .start-copy {
+  align-self: center;
+  max-width: 410px;
+}
+
+.start-hero.is-manager-step .start-copy h1 {
+  max-width: 9.4ch;
+  font-size: clamp(2.65rem, 4.35vw, 4.15rem);
+  line-height: 1.08;
+  letter-spacing: 0;
+  word-break: keep-all;
+}
+
+.start-hero.is-manager-step .start-copy p {
+  max-width: 26rem;
+}
+
+.start-club-plate {
+  border-color: rgba(255, 255, 255, 0.16);
+  border-left-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 10%);
+  background:
+    linear-gradient(135deg, rgba(9, 14, 26, 0.96), rgba(20, 24, 40, 0.94) 64%, color-mix(in srgb, var(--team-color, #b54764), #101827 88%));
+  color: #fff8ec;
+  box-shadow: 0 18px 34px rgba(2, 4, 10, 0.28);
+  backdrop-filter: none;
+}
+
+.start-club-plate strong {
+  color: #fff8ec;
+}
+
+.start-club-plate small {
+  color: rgba(245, 239, 255, 0.66);
+}
+
+.start-hero.is-appointment-step {
+  background:
+    linear-gradient(90deg, rgba(8, 11, 16, 0.78) 0%, rgba(8, 11, 16, 0.52) 36%, rgba(8, 11, 16, 0.34) 70%),
+    linear-gradient(180deg, rgba(8, 11, 16, 0.08), rgba(8, 11, 16, 0.5)),
+    url("../assets/ui/appointment-press-room.png") center / cover no-repeat;
+}
+
+.appointment-card {
+  border-color: rgba(255, 255, 255, 0.18);
+  background:
+    linear-gradient(135deg, rgba(8, 12, 24, 0.995), rgba(15, 18, 32, 0.99) 62%, color-mix(in srgb, var(--team-color, #b54764), #101827 90%));
+  color: #fff8ec;
+  box-shadow: 0 26px 58px rgba(0, 0, 0, 0.44);
+  backdrop-filter: none;
+}
+
+.appointment-card-backdrop {
+  opacity: 0.24;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--team-color, #b54764), transparent 70%), transparent 54%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 14px);
+}
+
+.appointment-card-head {
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.appointment-press-badge,
+.appointment-ceremony-banner,
+.appointment-media-strip span,
+.interview-question label {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff8ec;
+  box-shadow: none;
+}
+
+.appointment-press-badge span,
+.appointment-ceremony-banner span {
+  background: color-mix(in srgb, var(--team-color, #b54764), #ff4f8a 34%);
+  color: #fff;
+}
+
+.appointment-club-lockup small,
+.appointment-title-block .mini-label,
+.interview-question legend span {
+  color: color-mix(in srgb, var(--team-color, #c6a268), #ffffff 56%);
+}
+
+.appointment-club-lockup strong,
+.appointment-title-block h2,
+.appointment-ceremony-banner strong,
+.appointment-media-strip b,
+.interview-question strong {
+  color: #fff8ec;
+}
+
+.appointment-title-block p,
+.appointment-ceremony-banner p,
+.appointment-media-strip small,
+.interview-question small {
+  color: rgba(245, 239, 255, 0.68);
+}
+
+.interview-question {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.interview-question label:has(input:checked) {
+  border-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 16%);
+  border-left-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 6%);
+  background: color-mix(in srgb, var(--team-color, #b54764), rgba(255, 255, 255, 0.1) 82%);
+}
+
+.interview-question label:has(input:checked) strong,
+.interview-question label:has(input:checked) small {
+  color: #fff8ec;
+}
+
 @media (max-width: 1180px) {
   .start-hero.is-team-select {
     grid-template-columns: minmax(210px, 0.38fr) minmax(0, 1.62fr);
@@ -9046,14 +9165,38 @@ input {
     max-width: 5.15em;
     font-size: clamp(2.35rem, 4.1vw, 3.05rem);
   }
+
+  .start-hero.is-manager-step {
+    grid-template-columns: minmax(260px, 0.42fr) minmax(0, 1.58fr);
+  }
+
+  .start-hero.is-manager-step .start-copy h1 {
+    max-width: 9.4ch;
+    font-size: clamp(2.45rem, 4.25vw, 3.55rem);
+  }
 }
 
 @media (max-width: 860px) {
+  .start-hero.is-manager-step {
+    grid-template-columns: 1fr;
+  }
+
   .start-hero.is-team-select .start-copy,
   .start-hero.is-team-select .start-copy p,
   .start-hero.is-team-select .start-logo-strip,
   .start-hero.is-team-select .start-copy h1 {
     max-width: 100%;
+  }
+
+  .start-hero.is-manager-step .start-copy,
+  .start-hero.is-manager-step .start-copy p,
+  .start-hero.is-manager-step .start-copy h1 {
+    max-width: 100%;
+  }
+
+  .manager-form,
+  .manager-style-list {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -9117,6 +9260,12 @@ input {
 
   .start-copy h1 {
     font-size: clamp(2.7rem, 18vw, 4.2rem);
+  }
+
+  .start-hero.is-manager-step .start-copy h1 {
+    max-width: 9.4ch;
+    font-size: clamp(2.2rem, 12vw, 3rem);
+    line-height: 1.12;
   }
 
   .start-preview {
