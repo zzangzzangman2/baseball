@@ -126,7 +126,7 @@ const INAUGURAL_QUESTIONS = [
 
 const DASHBOARD_TABS = [
   { id: "clubhouse", label: "클럽하우스", detail: "오늘의 브리핑" },
-  { id: "news", label: "뉴스함", detail: "비서·언론·공문" },
+  { id: "news", label: "포털", detail: "메시지·뉴스·로그" },
   { id: "schedule", label: "일정", detail: "캘린더와 다음 경기" },
   { id: "lineup", label: "라인업", detail: "타순·투수 운용" },
   { id: "players", label: "선수단", detail: "상세·기록·계약" },
@@ -381,11 +381,8 @@ function renderActiveTabContent(activeTab, context) {
   } = context;
 
   if (activeTab === "news") {
-    return renderTabSurface("news", "뉴스함", `
-      ${renderNarrativeMemoryPanel(state, selectedTeam)}
+    return renderTabSurface("news", "포털", `
       ${renderNewsInboxPanel(state, selectedTeam, manager)}
-      ${renderPendingMailDecisionPanel(state)}
-      ${renderNewsLogPanel(state)}
     `);
   }
 
@@ -1568,35 +1565,42 @@ function narrativeTypeLabel(type) {
 function renderNewsInboxPanel(state, selectedTeam, manager) {
   const filter = normalizeMailFilter(state?.ui?.mailFilter);
   const mailbox = getMailboxSummary(state);
-  const items = getMailboxItems(state, filter === "decision" ? { decisionOnly: true } : { category: filter });
-  const fallbackItems = items.length ? items : buildNewsInboxItems(state, selectedTeam, manager);
+  const allItems = buildNewsInboxItems(state, selectedTeam, manager);
+  const fallbackItems = filterNewsInboxItems(allItems, filter);
   const selectedId = state?.ui?.selectedMailId;
   const selected = fallbackItems.find((item) => String(item.id) === String(selectedId)) ??
+    fallbackItems.find((item) => item.decision?.status === "open") ??
     fallbackItems.find((item) => !item.read) ??
     fallbackItems[0] ??
     buildFallbackAssistantBriefing(state, selectedTeam, manager);
-  const phaseLabel = state.phase === "preseason" ? "프리시즌 뉴스함" : "뉴스함";
+  const counts = buildNewsInboxCounts(allItems);
+  const phaseLabel = state.phase === "preseason" ? "프리시즌 포털" : "구단 포털";
 
   return `
-    <section class="news-inbox-panel mailbox-panel" id="news-inbox" data-main-news-inbox data-preseason-desk aria-label="받은편지함">
-      <div class="news-inbox-head">
+    <section class="news-inbox-panel mailbox-panel" id="news-inbox" data-main-news-inbox data-preseason-desk aria-label="통합 받은편지함">
+      <div class="news-inbox-head mailbox-portal-head">
         <div>
           <span class="mini-label">${escapeHtml(phaseLabel)}</span>
           <h2>받은편지함</h2>
-          <p>${escapeHtml(state.currentDate ?? "")} · 새 편지 ${formatNumber(mailbox.unread)}통 · 결재 ${formatNumber(mailbox.openDecisions)}건</p>
+          <p>${escapeHtml(state.currentDate ?? "")} · 새 편지 ${formatNumber(mailbox.unread)}통 · 결재 ${formatNumber(mailbox.openDecisions)}건 · 통합 항목 ${formatNumber(allItems.length)}개</p>
         </div>
-        <span class="pill">${formatNumber(mailbox.unread)} unread</span>
+        <div class="mailbox-summary-strip" aria-label="받은편지함 요약">
+          <span><b>${formatNumber(mailbox.unread)}</b> 읽지 않음</span>
+          <span><b>${formatNumber(counts.log + counts.event)}</b> 로그</span>
+          <span><b>${formatNumber(counts.media + counts.league)}</b> 뉴스</span>
+        </div>
       </div>
       <div class="mailbox-filter-row" role="tablist" aria-label="메일 필터">
-        ${["all", "decision", "club", "league", "media"].map((id) => `
+        ${["all", "decision", "club", "league", "media", "log"].map((id) => `
           <button class="mail-filter ${filter === id ? "is-active" : ""}" data-action="mail-filter" data-mail-filter="${escapeAttribute(id)}" type="button">
             ${escapeHtml(mailFilterLabel(id))}
+            <small>${formatNumber(counts[id] ?? allItems.length)}</small>
           </button>
         `).join("")}
       </div>
       <div class="mailbox-grid">
-        <div class="mailbox-list" aria-label="메일 목록">
-          ${fallbackItems.slice(0, 18).map((item) => renderMailListItem(item, selected)).join("")}
+        <div class="mailbox-list" aria-label="통합 소식 목록">
+          ${fallbackItems.slice(0, 42).map((item) => renderMailListItem(item, selected)).join("")}
         </div>
         ${renderMailBody(selected)}
       </div>
@@ -1605,21 +1609,135 @@ function renderNewsInboxPanel(state, selectedTeam, manager) {
 }
 
 function buildNewsInboxItems(state, selectedTeam, manager) {
-  const mailboxItems = getMailboxItems(state);
-  if (mailboxItems.length) return mailboxItems;
-  const normalized = (state.logs ?? []).map((log) => normalizeLogItem(log, state));
+  const mailboxItems = getMailboxItems(state).map((mail) => normalizeInboxFeedItem({
+    ...mail,
+    feedSource: "mail",
+    category: normalizeInboxCategory(mail)
+  }, state, "mail"));
+  const logItems = (state.logs ?? []).map((log, index) => normalizeInboxFeedItem(normalizeLogItem(log, state), state, "log", index));
+  const newsItems = (state.newsLog ?? []).map((log, index) => normalizeInboxFeedItem(normalizeLogItem(log, state), state, "news", index));
+  const eventItems = (state.eventLog ?? []).slice(0, 50).map((event, index) => normalizeEventLogInboxItem(event, state, index));
   const fallbacks = [
     buildFallbackAssistantBriefing(state, selectedTeam, manager),
     buildFallbackMediaBriefing(state, selectedTeam)
-  ];
-  const merged = [...normalized, ...fallbacks];
+  ].map((item, index) => normalizeInboxFeedItem(item, state, "briefing", index));
+  const merged = [...mailboxItems, ...logItems, ...newsItems, ...eventItems, ...fallbacks];
   const seen = new Set();
-  return merged.filter((item) => {
-    const key = `${item.date ?? ""}-${item.type ?? ""}-${item.source ?? item.tag ?? ""}-${item.headline ?? item.text ?? ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, 12);
+  return merged
+    .filter((item) => {
+      const key = `${item.id ?? ""}|${item.date ?? ""}|${item.category ?? ""}|${item.headline ?? item.text ?? ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort(compareInboxFeedItems)
+    .slice(0, 80);
+}
+
+function normalizeInboxFeedItem(item, state, feedSource, index = 0) {
+  const source = item.from?.role ?? item.source ?? item.tag ?? feedSourceLabel(feedSource);
+  const category = normalizeInboxCategory(item, feedSource);
+  const headline = item.headline ?? item.title ?? item.text ?? item.message ?? "새 소식";
+  const body = item.body ?? item.text ?? item.message ?? headline;
+  return {
+    ...item,
+    id: item.id ?? `${feedSource}-${state.currentDate ?? "date"}-${index}`,
+    feedSource,
+    category,
+    from: item.from ?? { role: source, icon: item.type ?? feedSource },
+    source,
+    headline,
+    body,
+    text: item.text ?? body,
+    type: item.type ?? feedSource,
+    read: feedSource === "mail" ? Boolean(item.read) : true,
+    date: item.date ?? state.currentDate ?? ""
+  };
+}
+
+function normalizeEventLogInboxItem(event, state, index) {
+  const type = event?.type ?? "event";
+  const gameLine = event?.type === "game.final"
+    ? `${event.away ?? event.awayTeamId ?? "원정"} ${formatNumber(event.awayScore)} - ${formatNumber(event.homeScore)} ${event.home ?? event.homeTeamId ?? "홈"}`
+    : "";
+  const headline = event?.headline ?? event?.summary ?? (gameLine ? `경기 종료: ${gameLine}` : eventTypeLabel(type));
+  const body = event?.body ?? event?.text ?? event?.message ?? [
+    gameLine,
+    event?.winnerTeamId ? `승리 팀: ${event.winnerTeamId}` : "",
+    event?.gameId ? `경기 ID: ${event.gameId}` : "",
+    type ? `분류: ${type}` : ""
+  ].filter(Boolean).join("\n");
+  return normalizeInboxFeedItem({
+    id: event?.id ?? `event-${event?.gameId ?? index}`,
+    date: event?.date ?? state.currentDate ?? "",
+    type: `event-${type}`,
+    category: "log",
+    source: event?.source ?? "최근 이벤트",
+    headline,
+    body,
+    read: true,
+    eventId: event?.id ?? event?.gameId ?? ""
+  }, state, "event", index);
+}
+
+function normalizeInboxCategory(item, feedSource = item?.feedSource) {
+  if (item?.decision?.status === "open") return "decision";
+  const category = String(item?.category ?? "");
+  if (["decision", "club", "league", "media", "log"].includes(category)) return category;
+  const type = String(item?.type ?? "");
+  if (["media", "press", "community"].some((key) => type.includes(key))) return "media";
+  if (["league", "kbo", "waiver", "trade-completed", "draft"].some((key) => type.includes(key))) return "league";
+  if (["log", "event", "news"].includes(feedSource)) return "log";
+  return "club";
+}
+
+function filterNewsInboxItems(items, filter) {
+  if (filter === "all") return items;
+  if (filter === "decision") return items.filter((item) => item.decision?.status === "open");
+  if (filter === "log") return items.filter((item) => item.category === "log" || ["log", "event", "news"].includes(item.feedSource));
+  return items.filter((item) => item.category === filter);
+}
+
+function buildNewsInboxCounts(items) {
+  const counts = { all: items.length, decision: 0, club: 0, league: 0, media: 0, log: 0, event: 0 };
+  for (const item of items) {
+    if (item.decision?.status === "open") counts.decision += 1;
+    if (item.feedSource === "event") counts.event += 1;
+    if (item.category === "log" || ["log", "event", "news"].includes(item.feedSource)) counts.log += 1;
+    else if (Object.hasOwn(counts, item.category)) counts[item.category] += 1;
+  }
+  return counts;
+}
+
+function compareInboxFeedItems(a, b) {
+  const dateDiff = String(b.date ?? "").localeCompare(String(a.date ?? ""));
+  if (dateDiff !== 0) return dateDiff;
+  const priority = (item) => item.decision?.status === "open" ? 0 : item.feedSource === "mail" && !item.read ? 1 : item.feedSource === "mail" ? 2 : item.feedSource === "log" ? 3 : 4;
+  const priorityDiff = priority(a) - priority(b);
+  if (priorityDiff !== 0) return priorityDiff;
+  return String(a.headline ?? "").localeCompare(String(b.headline ?? ""));
+}
+
+function feedSourceLabel(feedSource) {
+  const labels = {
+    mail: "받은편지",
+    log: "최근 로그",
+    news: "뉴스",
+    event: "이벤트",
+    briefing: "브리핑"
+  };
+  return labels[feedSource] ?? "소식";
+}
+
+function eventTypeLabel(type) {
+  const labels = {
+    "game.final": "경기 종료",
+    "trade.completed": "트레이드 완료",
+    "fa.signed": "FA 계약",
+    "foreign.signed": "외국인 권리 계약",
+    "season.rollover": "시즌 전환"
+  };
+  return labels[type] ?? "최근 이벤트";
 }
 
 function renderMailListItem(item, selected) {
@@ -1627,11 +1745,16 @@ function renderMailListItem(item, selected) {
   const isSelected = String(item.id) === String(selected?.id);
   const decision = item.decision?.status === "open";
   const blocking = Boolean(item.decision?.blocking);
+  const feedLabel = feedSourceLabel(item.feedSource);
   return `
-    <button class="news-inbox-item mail-list-item ${type ? `is-${escapeAttribute(type)}` : ""} ${isSelected ? "is-selected" : ""} ${!item.read ? "is-unread" : ""}" data-action="open-mail" data-mail-id="${escapeAttribute(item.id)}" data-news-type="${escapeAttribute(item.type)}" type="button">
-      <span>${!item.read ? `<i class="unread-dot" aria-hidden="true"></i>` : ""}${escapeHtml(item.from?.role ?? item.source ?? item.tag ?? "뉴스")}</span>
+    <button class="news-inbox-item mail-list-item ${type ? `is-${escapeAttribute(type)}` : ""} is-feed-${escapeAttribute(item.feedSource ?? "mail")} ${isSelected ? "is-selected" : ""} ${!item.read ? "is-unread" : ""}" data-action="open-mail" data-mail-id="${escapeAttribute(item.id)}" data-news-type="${escapeAttribute(item.type)}" type="button">
+      <span class="mail-list-meta">
+        ${!item.read ? `<i class="unread-dot" aria-hidden="true"></i>` : `<i class="mail-source-icon" aria-hidden="true">${escapeHtml(feedLabel.slice(0, 1))}</i>`}
+        <em>${escapeHtml(item.from?.role ?? item.source ?? item.tag ?? feedLabel)}</em>
+        <time>${escapeHtml(item.date ?? "")}</time>
+      </span>
       <strong>${escapeHtml(item.headline ?? item.text ?? "새 소식")}</strong>
-      <small>${escapeHtml(item.date ?? "")} · ${escapeHtml(mailCategoryLabel(item.category))}${decision ? ` · ${blocking ? "blocking" : "decision"}` : ""}</small>
+      <small>${escapeHtml(mailCategoryLabel(item.category))}${decision ? ` · ${blocking ? "진행 전 처리" : "결재"}` : ""}</small>
     </button>
   `;
 }
@@ -1644,11 +1767,17 @@ function renderMailBody(item) {
   return `
     <article class="mailbox-body is-${escapeAttribute(logTypeClass(item.type))}" data-mail-body data-mail-id="${escapeAttribute(item.id)}">
       <div class="mailbox-body-head">
-        <span class="mini-label">${escapeHtml(item.from?.role ?? item.source ?? "프런트")}</span>
+        <span class="mini-label">${escapeHtml(item.from?.role ?? item.source ?? feedSourceLabel(item.feedSource))}</span>
         <h3>${escapeHtml(item.headline ?? "새 소식")}</h3>
-        <small>${escapeHtml(item.date ?? "")} · ${escapeHtml(mailCategoryLabel(item.category))}</small>
+        <div class="mail-detail-meta">
+          <span>${escapeHtml(item.date ?? "")}</span>
+          <span>${escapeHtml(mailCategoryLabel(item.category))}</span>
+          <span>${escapeHtml(feedSourceLabel(item.feedSource))}</span>
+        </div>
       </div>
-      <p>${escapeHtml(item.body ?? item.text ?? "")}</p>
+      <div class="mailbox-body-content">
+        ${renderMailBodyText(item.body ?? item.text ?? "")}
+      </div>
       ${Array.isArray(item.links) && item.links.length ? `
         <div class="mail-link-row">
           ${item.links.map((link) => `<button class="button button-soft" data-action="mail-link" data-mail-target="${escapeAttribute(link.target)}" type="button">${escapeHtml(link.label)}</button>`).join("")}
@@ -1657,6 +1786,12 @@ function renderMailBody(item) {
       ${decision ? renderMailDecisionActions(item, decision) : ""}
     </article>
   `;
+}
+
+function renderMailBodyText(text) {
+  const lines = String(text ?? "").split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const paragraphs = lines.length ? lines : ["내용을 불러오는 중입니다."];
+  return paragraphs.map((line) => `<p>${escapeHtml(line)}</p>`).join("");
 }
 
 function renderMailDecisionActions(item, decision) {
@@ -1680,7 +1815,7 @@ function renderMailDecisionActions(item, decision) {
 
 function normalizeMailFilter(value) {
   const id = String(value ?? "all");
-  return ["all", "decision", "club", "league", "media"].includes(id) ? id : "all";
+  return ["all", "decision", "club", "league", "media", "log"].includes(id) ? id : "all";
 }
 
 function mailFilterLabel(id) {
@@ -1689,7 +1824,8 @@ function mailFilterLabel(id) {
     decision: "결재함",
     club: "구단",
     league: "리그",
-    media: "미디어"
+    media: "미디어",
+    log: "로그"
   };
   return labels[id] ?? "전체";
 }
@@ -1699,7 +1835,8 @@ function mailCategoryLabel(category) {
     decision: "결재",
     club: "구단",
     league: "리그",
-    media: "미디어"
+    media: "미디어",
+    log: "로그"
   };
   return labels[category] ?? "소식";
 }
@@ -2800,7 +2937,7 @@ function bindActions(root, state) {
         activeTab: "news"
       };
       render(root, state);
-      setStatus(root, "메일을 열었습니다.");
+      setStatus(root, "항목을 열었습니다.");
     });
   });
 
