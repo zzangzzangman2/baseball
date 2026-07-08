@@ -26,8 +26,35 @@ const MAILBOX_IMPORTANCE_TYPES = new Set([
   "standings-race",
   "streak",
   "owner-monthly",
+  "owner-warning",
+  "owner-dismissal",
+  "player-meeting",
+  "promise-result",
   "phase-transition"
 ]);
+const MANAGER_TRUST_WARNING = 28;
+const MANAGER_TRUST_DISMISSAL = 12;
+const MANAGER_JOB_EVALUATION_LIMIT = 80;
+const MANAGER_JOB_OFFER_LIMIT = 3;
+const PLAYER_RELATION_ISSUE_LIMIT = 120;
+const MANAGER_PROMISE_LIMIT = 100;
+const PLAYER_MEETING_DAILY_LIMIT = 1;
+const PROMISE_PLAYING_TIME_GAMES = 5;
+const PROMISE_WINDOW_DAYS = 21;
+const CLUB_PHILOSOPHIES = {
+  balanced: {
+    label: "균형 운영",
+    summary: "현재 성적과 다음 세대 육성을 함께 본다."
+  },
+  winNow: {
+    label: "즉시 성적",
+    summary: "주전 전력과 베테랑 기용을 우선해 당장 순위를 끌어올린다."
+  },
+  rebuild: {
+    label: "장기 리빌딩",
+    summary: "젊은 선수 출전과 자산 축적을 감수하고 2~3년 뒤 창을 만든다."
+  }
+};
 const KBO_OPTION_LOCK_DAYS = 10;
 const KBO_FOREIGN_REGISTERED_LIMIT = 3;
 const KBO_FOREIGN_APPEARANCE_LIMIT = 2;
@@ -257,6 +284,92 @@ export function getRecordBook(state, options = {}) {
 
 export function getSelectedTeam(state) {
   return state?.teams?.find((team) => team.id === state.selectedTeamId) ?? state?.teams?.[0];
+}
+
+export function getManagerJobStatus(state, teamId = state?.selectedTeamId) {
+  if (!state) return null;
+  normalizeState(state);
+  const team = findTeamById(state, teamId) ?? getSelectedTeam(state);
+  if (!team) return null;
+  const job = ensureManagerJob(state, team);
+  const standings = getStandings(state);
+  const rank = standings.findIndex((entry) => String(entry.id) === String(team.id)) + 1;
+  const games = teamGamesPlayed(team);
+  const pct = winningPct(team);
+  const activePromises = (state.promises ?? []).filter((promise) =>
+    String(promise.teamId) === String(team.id) && promise.status === "active"
+  );
+  const openIssues = (state.playerRelations?.issues ?? []).filter((issue) =>
+    String(issue.teamId) === String(team.id) && ["open", "meeting-requested"].includes(issue.status)
+  );
+  return {
+    ...job,
+    teamId: team.id,
+    teamName: team.shortName ?? team.name,
+    rank,
+    games,
+    winningPct: pct,
+    record: renderRecordText(team),
+    trustBand: managerTrustBand(job.trust),
+    trustLabel: managerTrustLabel(job.trust),
+    philosophyLabel: CLUB_PHILOSOPHIES[job.philosophy]?.label ?? CLUB_PHILOSOPHIES.balanced.label,
+    goalLabel: job.seasonGoal?.label ?? "시즌 목표 설정 전",
+    targetRank: job.seasonGoal?.targetRank ?? job.expectedRank,
+    activePromises: activePromises.length,
+    openIssues: openIssues.length,
+    latestEvaluation: job.evaluations?.[0] ?? null
+  };
+}
+
+export function getClubhouseDynamics(state, teamId = state?.selectedTeamId) {
+  if (!state) return { issues: [], promises: [], summary: { openIssues: 0, activePromises: 0, brokenPromises: 0 } };
+  normalizeState(state);
+  const selectedTeamId = String(teamId ?? state.selectedTeamId ?? "");
+  const issues = (state.playerRelations?.issues ?? [])
+    .filter((issue) => !selectedTeamId || String(issue.teamId) === selectedTeamId)
+    .sort((a, b) => compareText(b.updatedAt, a.updatedAt) || safeNumber(b.severity) - safeNumber(a.severity))
+    .slice(0, 8);
+  const promises = (state.promises ?? [])
+    .filter((promise) => !selectedTeamId || String(promise.teamId) === selectedTeamId)
+    .sort((a, b) => Number(a.status !== "active") - Number(b.status !== "active") || compareText(a.dueDate, b.dueDate))
+    .slice(0, 8);
+  return {
+    issues,
+    promises,
+    summary: {
+      openIssues: issues.filter((issue) => ["open", "meeting-requested"].includes(issue.status)).length,
+      activePromises: promises.filter((promise) => promise.status === "active").length,
+      brokenPromises: promises.filter((promise) => promise.status === "broken").length
+    }
+  };
+}
+
+export function commitClubPhilosophy(state, input = {}) {
+  if (!state) return { ok: false, code: "missing-state", message: "게임 상태가 없습니다." };
+  normalizeState(state);
+  const team = findTeamById(state, input.teamId ?? state.selectedTeamId);
+  if (!team) return { ok: false, code: "missing-team", message: "구단 철학을 저장할 팀을 찾지 못했습니다." };
+  const philosophy = CLUB_PHILOSOPHIES[input.philosophy] ? String(input.philosophy) : "balanced";
+  const job = ensureManagerJob(state, team);
+  job.philosophy = philosophy;
+  job.philosophyUpdatedAt = state.currentDate;
+  rememberManagerAction(state, {
+    type: "club-philosophy",
+    teamId: team.id,
+    subject: CLUB_PHILOSOPHIES[philosophy].label,
+    subjectId: philosophy,
+    headline: `${team.shortName ?? team.name} 운영 철학: ${CLUB_PHILOSOPHIES[philosophy].label}`,
+    summary: CLUB_PHILOSOPHIES[philosophy].summary,
+    heat: philosophy === "rebuild" ? 15 : 10,
+    confidence: 72,
+    tags: ["philosophy", "owner", "manager"]
+  });
+  return {
+    ok: true,
+    code: "club-philosophy-saved",
+    message: `${CLUB_PHILOSOPHIES[philosophy].label} 철학을 구단 운영 기준으로 저장했습니다.`,
+    managerJob: job
+  };
 }
 
 export function getMailboxSummary(state) {
@@ -1225,6 +1338,12 @@ export function resolveMailDecision(state, mailIdOrAction = "acknowledge", maybe
     result = resolveInterviewDecision(state, decision, action);
   } else if (decision.type === "slumping-starter") {
     result = resolveSlumpingStarterDecision(state, decision, action);
+  } else if (decision.type === "player-meeting") {
+    result = resolvePlayerMeetingDecision(state, decision, action);
+  } else if (decision.type === "owner-warning") {
+    result = resolveOwnerWarningDecision(state, decision, action);
+  } else if (decision.type === "owner-dismissal") {
+    result = resolveOwnerDismissalDecision(state, decision, action);
   } else {
     result = { ok: true, code: "acknowledged", message: "보고를 확인했습니다." };
   }
@@ -7189,6 +7308,9 @@ function normalizeState(state) {
   state.leagueHistory = Array.isArray(state.leagueHistory) ? state.leagueHistory : [];
   normalizeNarratives(state);
   state.gameInterventions = normalizeGameInterventions(state.gameInterventions);
+  state.managerJob = normalizeManagerJob(state.managerJob, state);
+  state.playerRelations = normalizePlayerRelations(state.playerRelations, state);
+  state.promises = normalizePromises(state.promises, state);
   state.scoutingQueue = Array.isArray(state.scoutingQueue) ? state.scoutingQueue.slice(0, 40) : [];
   state.scoutingReportsById = state.scoutingReportsById && typeof state.scoutingReportsById === "object"
     ? state.scoutingReportsById
@@ -7252,6 +7374,549 @@ function normalizeSettings(source) {
       importantMail: continueStops.importantMail !== false
     }
   };
+}
+
+function normalizeManagerJob(source, state) {
+  const team = findTeamById(state, source?.teamId ?? state.selectedTeamId) ?? getSelectedTeam(state);
+  const goal = buildSeasonGoalForTeam(state, team);
+  const job = source && typeof source === "object" ? source : {};
+  const philosophy = CLUB_PHILOSOPHIES[job.philosophy] ? job.philosophy : defaultClubPhilosophy(goal);
+  return {
+    version: 1,
+    teamId: String(job.teamId ?? team?.id ?? state.selectedTeamId ?? ""),
+    season: safeNumber(job.season, inferSeasonFromState(state)),
+    status: String(job.status ?? "active"),
+    trust: clamp(Math.round(safeNumber(job.trust, defaultManagerTrust(goal))), 0, 100),
+    seasonGoal: normalizeSeasonGoal(job.seasonGoal ?? goal, goal),
+    expectedRank: safeNumber(job.expectedRank, goal.expectedRank),
+    philosophy,
+    philosophyUpdatedAt: String(job.philosophyUpdatedAt ?? state.currentDate ?? ""),
+    warningIssued: Boolean(job.warningIssued),
+    firedAt: String(job.firedAt ?? ""),
+    firedReason: String(job.firedReason ?? ""),
+    lastEvaluatedAt: String(job.lastEvaluatedAt ?? ""),
+    lastWarningAt: String(job.lastWarningAt ?? ""),
+    evaluations: Array.isArray(job.evaluations)
+      ? job.evaluations.map(normalizeManagerEvaluation).filter(Boolean).slice(0, MANAGER_JOB_EVALUATION_LIMIT)
+      : [],
+    offers: Array.isArray(job.offers) ? job.offers.map(normalizeManagerOffer).filter(Boolean).slice(0, MANAGER_JOB_OFFER_LIMIT) : []
+  };
+}
+
+function normalizeSeasonGoal(source, fallback) {
+  const goal = source && typeof source === "object" ? source : fallback;
+  return {
+    key: String(goal.key ?? fallback.key ?? "balanced"),
+    label: String(goal.label ?? fallback.label ?? "5강 경쟁"),
+    targetRank: clamp(Math.round(safeNumber(goal.targetRank, fallback.targetRank ?? 5)), 1, KBO_TEAM_COUNT),
+    targetWinPct: clamp(safeNumber(goal.targetWinPct, fallback.targetWinPct ?? 0.5), 0.25, 0.75),
+    pressure: String(goal.pressure ?? fallback.pressure ?? "normal")
+  };
+}
+
+function normalizeManagerEvaluation(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  return {
+    date: String(entry.date ?? ""),
+    teamId: String(entry.teamId ?? ""),
+    rank: safeNumber(entry.rank),
+    expectedRank: safeNumber(entry.expectedRank),
+    trustBefore: clamp(Math.round(safeNumber(entry.trustBefore)), 0, 100),
+    trustAfter: clamp(Math.round(safeNumber(entry.trustAfter)), 0, 100),
+    delta: clamp(Math.round(safeNumber(entry.delta)), -25, 25),
+    headline: String(entry.headline ?? "구단주 평가"),
+    summary: String(entry.summary ?? "")
+  };
+}
+
+function normalizeManagerOffer(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  return {
+    id: String(entry.id ?? ""),
+    teamId: String(entry.teamId ?? ""),
+    teamName: String(entry.teamName ?? ""),
+    role: String(entry.role ?? "감독"),
+    philosophy: CLUB_PHILOSOPHIES[entry.philosophy] ? entry.philosophy : "balanced",
+    trust: clamp(Math.round(safeNumber(entry.trust, 55)), 0, 100)
+  };
+}
+
+function normalizePlayerRelations(source, state) {
+  const relation = source && typeof source === "object" ? source : {};
+  return {
+    version: 1,
+    issues: Array.isArray(relation.issues)
+      ? relation.issues.map((issue) => normalizePlayerIssue(issue, state)).filter(Boolean).slice(0, PLAYER_RELATION_ISSUE_LIMIT)
+      : [],
+    lastScannedAt: String(relation.lastScannedAt ?? "")
+  };
+}
+
+function normalizePlayerIssue(issue, state) {
+  if (!issue || typeof issue !== "object") return null;
+  const playerId = String(issue.playerId ?? "");
+  const teamId = String(issue.teamId ?? "");
+  if (!playerId || !teamId) return null;
+  const entry = findPlayerEntry(state, playerId, teamId);
+  return {
+    id: String(issue.id ?? playerIssueId(teamId, playerId, issue.type ?? "clubhouse")),
+    type: String(issue.type ?? "clubhouse"),
+    teamId,
+    playerId,
+    playerName: String(issue.playerName ?? entry?.player?.name ?? "선수"),
+    status: String(issue.status ?? "open"),
+    severity: clamp(Math.round(safeNumber(issue.severity, 45)), 1, 100),
+    reason: String(issue.reason ?? ""),
+    createdAt: String(issue.createdAt ?? state.currentDate ?? ""),
+    updatedAt: String(issue.updatedAt ?? issue.createdAt ?? state.currentDate ?? ""),
+    lastMailAt: String(issue.lastMailAt ?? ""),
+    promiseId: String(issue.promiseId ?? "")
+  };
+}
+
+function normalizePromises(source, state) {
+  return (Array.isArray(source) ? source : [])
+    .map((promise) => normalizePromise(promise, state))
+    .filter(Boolean)
+    .sort((a, b) => Number(a.status !== "active") - Number(b.status !== "active") || compareText(a.dueDate, b.dueDate))
+    .slice(0, MANAGER_PROMISE_LIMIT);
+}
+
+function normalizePromise(promise, state) {
+  if (!promise || typeof promise !== "object") return null;
+  const playerId = String(promise.playerId ?? "");
+  const teamId = String(promise.teamId ?? "");
+  if (!playerId || !teamId) return null;
+  const entry = findPlayerEntry(state, playerId, teamId);
+  return {
+    id: String(promise.id ?? `promise-${teamId}-${playerId}-${promise.madeDate ?? state.currentDate ?? ""}`),
+    type: String(promise.type ?? "playing-time"),
+    teamId,
+    playerId,
+    playerName: String(promise.playerName ?? entry?.player?.name ?? "선수"),
+    label: String(promise.label ?? promiseLabel(promise.type ?? "playing-time")),
+    madeDate: String(promise.madeDate ?? state.currentDate ?? ""),
+    dueDate: String(promise.dueDate ?? addDaysKey(state.currentDate, PROMISE_WINDOW_DAYS)),
+    status: String(promise.status ?? "active"),
+    baselineGames: safeNumber(promise.baselineGames),
+    targetGames: Math.max(1, Math.floor(safeNumber(promise.targetGames, PROMISE_PLAYING_TIME_GAMES))),
+    fulfilledAt: String(promise.fulfilledAt ?? ""),
+    brokenAt: String(promise.brokenAt ?? ""),
+    sourceIssueId: String(promise.sourceIssueId ?? "")
+  };
+}
+
+function buildSeasonGoalForTeam(state, team) {
+  const expectedRank = getOwnerExpectedRank(state, team);
+  if (expectedRank <= 2) {
+    return { key: "championship", label: "한국시리즈 우승 경쟁", expectedRank, targetRank: 2, targetWinPct: 0.57, pressure: "high" };
+  }
+  if (expectedRank <= 5) {
+    return { key: "postseason", label: "가을야구 진출", expectedRank, targetRank: 5, targetWinPct: 0.52, pressure: "normal" };
+  }
+  if (expectedRank <= 7) {
+    return { key: "five-hundred", label: "5할 승률 경쟁", expectedRank, targetRank: 7, targetWinPct: 0.49, pressure: "normal" };
+  }
+  return { key: "rebuild", label: "리빌딩 원년", expectedRank, targetRank: 8, targetWinPct: 0.43, pressure: "patient" };
+}
+
+function defaultClubPhilosophy(goal) {
+  if (goal?.key === "rebuild") return "rebuild";
+  if (goal?.key === "championship") return "winNow";
+  return "balanced";
+}
+
+function defaultManagerTrust(goal) {
+  if (goal?.pressure === "patient") return 72;
+  if (goal?.pressure === "high") return 64;
+  return 68;
+}
+
+function ensureManagerJob(state, team = null) {
+  const selected = team ?? getSelectedTeam(state);
+  state.managerJob = normalizeManagerJob(state.managerJob, state);
+  if (selected && String(state.managerJob.teamId) !== String(selected.id) && state.managerJob.status !== "dismissed") {
+    state.managerJob = normalizeManagerJob({ teamId: selected.id }, state);
+  }
+  return state.managerJob;
+}
+
+function evaluateManagerJobPressure(state, team, dateKey, options = {}) {
+  if (!state || !team) return null;
+  const job = ensureManagerJob(state, team);
+  if (job.status !== "active") return job;
+  const games = teamGamesPlayed(team);
+  if (games < 8 && !options.force) return job;
+  if (!options.force && job.lastEvaluatedAt && daysBetween(job.lastEvaluatedAt, dateKey) < 7) return job;
+
+  const standings = getStandings(state);
+  const rank = standings.findIndex((entry) => String(entry.id) === String(team.id)) + 1 || KBO_TEAM_COUNT;
+  const pct = winningPct(team);
+  const goal = job.seasonGoal;
+  const recent = recentTeamResults(state, team.id, 8);
+  const recentLosses = recent.filter((item) => item.diff < 0).length;
+  const rankDelta = safeNumber(goal.targetRank, job.expectedRank) - rank;
+  const pctDelta = pct - safeNumber(goal.targetWinPct, 0.5);
+  const youngShare = youngPlayerUsageShare(team);
+  const philosophyDelta = managerPhilosophyTrustDelta(job.philosophy, goal, rankDelta, pctDelta, youngShare);
+  const streakDelta = recent.length >= 5 && recentLosses >= 5 ? -6 : recent.length >= 5 && recentLosses <= 1 ? 3 : 0;
+  const rawDelta = (pctDelta * 42) + (rankDelta * 1.6) + philosophyDelta + streakDelta;
+  const delta = clamp(Math.round(rawDelta), -10, 7);
+  const before = safeNumber(job.trust, 68);
+  job.trust = clamp(before + delta, 0, 100);
+  job.lastEvaluatedAt = String(dateKey ?? state.currentDate ?? "");
+  const headline = managerEvaluationHeadline(job.trust, delta);
+  const summary = `${team.shortName ?? team.name} 현재 ${rank}위(${renderRecordText(team)}), 목표 ${goal.label}. ${CLUB_PHILOSOPHIES[job.philosophy]?.label ?? "균형 운영"} 기준으로 신뢰도 ${before}→${job.trust}.`;
+  const evaluation = {
+    date: job.lastEvaluatedAt,
+    teamId: team.id,
+    rank,
+    expectedRank: job.expectedRank,
+    trustBefore: before,
+    trustAfter: job.trust,
+    delta,
+    headline,
+    summary
+  };
+  job.evaluations = [evaluation, ...(job.evaluations ?? [])].slice(0, MANAGER_JOB_EVALUATION_LIMIT);
+  rememberManagerAction(state, {
+    type: "owner-pressure",
+    teamId: team.id,
+    subject: "구단주 신뢰도",
+    subjectId: `trust-${team.id}`,
+    headline,
+    summary,
+    heat: job.trust <= MANAGER_TRUST_WARNING ? 22 : 10,
+    confidence: 78,
+    tags: ["owner", "trust", job.philosophy],
+    date: dateKey
+  });
+  maybeDeliverOwnerPressureMail(state, team, job, evaluation, dateKey);
+  return job;
+}
+
+function managerPhilosophyTrustDelta(philosophy, goal, rankDelta, pctDelta, youngShare) {
+  if (philosophy === "rebuild") {
+    return (youngShare >= 0.18 ? 3 : -2) + (goal?.key === "rebuild" ? 2 : Math.min(0, rankDelta));
+  }
+  if (philosophy === "winNow") {
+    return pctDelta >= 0 ? 2 : Math.min(-1, Math.round(rankDelta * 0.8));
+  }
+  return 0;
+}
+
+function maybeDeliverOwnerPressureMail(state, team, job, evaluation, dateKey) {
+  if (job.trust <= MANAGER_TRUST_DISMISSAL) {
+    job.status = "dismissed";
+    job.firedAt = String(dateKey ?? state.currentDate ?? "");
+    job.firedReason = evaluation.summary;
+    job.offers = buildManagerJobOffers(state, team, job);
+    queueMailDecision(state, buildOwnerDismissalDecision(state, team, job, evaluation, dateKey));
+    return;
+  }
+  if (job.trust <= MANAGER_TRUST_WARNING && !job.warningIssued) {
+    job.warningIssued = true;
+    job.lastWarningAt = String(dateKey ?? state.currentDate ?? "");
+    queueMailDecision(state, buildOwnerWarningDecision(state, team, job, evaluation, dateKey));
+  }
+}
+
+function buildOwnerWarningDecision(state, team, job, evaluation, dateKey) {
+  return {
+    id: `owner-warning-${dateKey}-${team.id}`,
+    date: dateKey,
+    type: "owner-warning",
+    teamId: team.id,
+    headline: "구단주 긴급 면담: 현장 신뢰도 경고",
+    body: `${evaluation.summary} 구단주는 다음 평가 전까지 반등 계획을 요구했습니다.`,
+    source: "구단주",
+    blocking: true,
+    severity: "danger",
+    defaultAction: "accept-pressure",
+    options: [
+      { action: "rebuild-briefing", label: "리빌딩 설명", note: "장기 플랜으로 설득" },
+      { action: "accept-pressure", label: "책임 인정", note: "즉시 반등 약속" },
+      { action: "lineup-shake", label: "쇄신안 보고", note: "기용 변화 예고" }
+    ]
+  };
+}
+
+function buildOwnerDismissalDecision(state, team, job, evaluation, dateKey) {
+  return {
+    id: `owner-dismissal-${dateKey}-${team.id}`,
+    date: dateKey,
+    type: "owner-dismissal",
+    teamId: team.id,
+    headline: "구단주 결정: 감독직 해임 통보",
+    body: `${evaluation.summary} 구단은 감독 교체를 통보했습니다. 다른 구단의 제안을 수락하면 커리어를 이어갈 수 있습니다.`,
+    source: "구단주",
+    blocking: true,
+    severity: "danger",
+    defaultAction: job.offers?.[0] ? `accept-offer-${job.offers[0].teamId}` : "end-career",
+    options: [
+      ...(job.offers ?? []).map((offer) => ({
+        action: `accept-offer-${offer.teamId}`,
+        label: `${offer.teamName} 제안`,
+        note: `${CLUB_PHILOSOPHIES[offer.philosophy]?.label ?? "균형 운영"}`
+      })),
+      { action: "end-career", label: "커리어 종료", note: "현재 세이브를 종료 상태로 둠" }
+    ].slice(0, 4)
+  };
+}
+
+function buildManagerJobOffers(state, dismissedTeam, job) {
+  return [...(state.teams ?? [])]
+    .filter((team) => String(team.id) !== String(dismissedTeam.id))
+    .sort((a, b) => teamStrengthScore(a) - teamStrengthScore(b))
+    .slice(0, MANAGER_JOB_OFFER_LIMIT)
+    .map((team) => {
+      const goal = buildSeasonGoalForTeam(state, team);
+      return {
+        id: `manager-offer-${job.firedAt || state.currentDate}-${team.id}`,
+        teamId: team.id,
+        teamName: team.shortName ?? team.name,
+        role: "감독",
+        philosophy: defaultClubPhilosophy(goal),
+        trust: defaultManagerTrust(goal)
+      };
+    });
+}
+
+function scanPlayerRelations(state, team, dateKey, options = {}) {
+  if (!team) return [];
+  state.playerRelations = normalizePlayerRelations(state.playerRelations, state);
+  const today = String(dateKey ?? state.currentDate ?? "");
+  if (!options.force && state.playerRelations.lastScannedAt === today) return [];
+  const teamGames = teamGamesPlayed(team);
+  if (teamGames < 12 && !options.force) return [];
+  const created = [];
+  let mailed = 0;
+  for (const player of team.roster ?? []) {
+    const issue = detectPlayerConcern(state, team, player, teamGames, today, options);
+    if (!issue) continue;
+    created.push(issue);
+    if (mailed < PLAYER_MEETING_DAILY_LIMIT && !issue.lastMailAt) {
+      issue.lastMailAt = today;
+      queueMailDecision(state, buildPlayerMeetingDecision(state, team, player, issue, today));
+      mailed += 1;
+    }
+  }
+  state.playerRelations.lastScannedAt = today;
+  return created;
+}
+
+function detectPlayerConcern(state, team, player, teamGames, dateKey, options = {}) {
+  if (!player || safeNumber(player.injuredDays) > 0 || player.role !== "hitter") return null;
+  const expectation = String(player.personality?.roleExpectation ?? playerRoleExpectation(player));
+  const importantRole = expectation.includes("핵심") || expectation.includes("주전") || safeNumber(player.ovr) >= 135;
+  if (!importantRole && !options.force) return null;
+  const games = safeNumber(player.seasonStats?.batting?.games);
+  const activeRate = teamGames > 0 ? games / teamGames : 0;
+  let type = "";
+  let reason = "";
+  let severity = 0;
+  if (player.status === "futures" && safeNumber(player.ovr) >= 125) {
+    type = "demotion";
+    reason = "주전급 선수의 2군 체류";
+    severity = 62 + Math.max(0, safeNumber(player.ovr) - 130) * 0.4;
+  } else if (activeRate < 0.34 || options.force) {
+    type = "playing-time";
+    reason = `출전 비중 ${Math.round(activeRate * 100)}%`;
+    severity = 52 + Math.max(0, safeNumber(player.ovr) - 130) * 0.35;
+  }
+  if (!type) return null;
+  const id = playerIssueId(team.id, player.id, type);
+  const existing = state.playerRelations.issues.find((issue) => issue.id === id && !["closed", "resolved"].includes(issue.status));
+  if (existing) {
+    existing.severity = clamp(Math.round(Math.max(safeNumber(existing.severity), severity)), 1, 100);
+    existing.updatedAt = dateKey;
+    existing.reason = reason;
+    return existing;
+  }
+  const issue = normalizePlayerIssue({
+    id,
+    type,
+    teamId: team.id,
+    playerId: player.id,
+    playerName: player.name,
+    status: "meeting-requested",
+    severity,
+    reason,
+    createdAt: dateKey,
+    updatedAt: dateKey
+  }, state);
+  state.playerRelations.issues = [issue, ...state.playerRelations.issues].slice(0, PLAYER_RELATION_ISSUE_LIMIT);
+  rememberManagerAction(state, {
+    type: "player-discontent",
+    teamId: team.id,
+    subjectId: player.id,
+    subject: player.name,
+    headline: `${player.name} 면담 요청`,
+    summary: `${expectation} 기대치와 실제 기용 사이에 간극이 생겼습니다. 사유: ${reason}.`,
+    heat: Math.round(severity / 3),
+    confidence: 74,
+    tags: ["player", "morale", "promise"],
+    date: dateKey
+  });
+  return issue;
+}
+
+function buildPlayerMeetingDecision(state, team, player, issue, dateKey) {
+  const callupOption = issue.type === "demotion"
+    ? [{ action: "promise-callup", label: "1군 등록 약속", note: "14일 내 등록" }]
+    : [];
+  return {
+    id: `player-meeting-${dateKey}-${team.id}-${player.id}`,
+    date: dateKey,
+    type: "player-meeting",
+    teamId: team.id,
+    playerId: player.id,
+    playerName: player.name,
+    issueId: issue.id,
+    headline: `${player.name} 면담 요청`,
+    body: `${player.name}이 ${issue.reason} 문제로 감독 면담을 요청했습니다. 약속을 하면 원장에 기록되고 기한 내 이행 여부를 추적합니다.`,
+    source: "선수단",
+    blocking: false,
+    severity: issue.severity >= 70 ? "warning" : "notice",
+    defaultAction: "encourage",
+    options: [
+      { action: "encourage", label: "격려", note: "사기 소폭 회복" },
+      { action: "challenge", label: "경쟁 요구", note: "프로 의식 자극" },
+      { action: "promise-playing-time", label: "출전 약속", note: "21일 내 5경기" },
+      ...callupOption
+    ].slice(0, 4)
+  };
+}
+
+function evaluateActivePromises(state, team, dateKey) {
+  state.promises = normalizePromises(state.promises, state);
+  const today = String(dateKey ?? state.currentDate ?? "");
+  for (const promise of state.promises) {
+    if (promise.status !== "active") continue;
+    if (team && String(promise.teamId) !== String(team.id)) continue;
+    const entry = findPlayerEntry(state, promise.playerId, promise.teamId);
+    const player = entry?.player ?? null;
+    if (!player) continue;
+    if (promiseFulfilled(promise, player)) {
+      settlePromise(state, promise, player, "fulfilled", today);
+    } else if (promise.dueDate && String(promise.dueDate) < today) {
+      settlePromise(state, promise, player, "broken", today);
+    }
+  }
+}
+
+function promiseFulfilled(promise, player) {
+  if (promise.type === "first-team") return player.status === "active";
+  const currentGames = promisePlayerGames(player);
+  return currentGames - safeNumber(promise.baselineGames) >= safeNumber(promise.targetGames, PROMISE_PLAYING_TIME_GAMES);
+}
+
+function settlePromise(state, promise, player, status, dateKey) {
+  if (promise.status !== "active") return;
+  promise.status = status;
+  if (status === "fulfilled") {
+    promise.fulfilledAt = dateKey;
+    player.morale = clamp(safeNumber(player.morale, 50) + 8, 20, 98);
+  } else {
+    promise.brokenAt = dateKey;
+    player.morale = clamp(safeNumber(player.morale, 50) - 16, 5, 90);
+    const team = findTeamById(state, promise.teamId);
+    if (team) team.morale = clamp(safeNumber(team.morale, 50) - 3, 10, 85);
+  }
+  const issue = state.playerRelations?.issues?.find((entry) => entry.id === promise.sourceIssueId);
+  if (issue) {
+    issue.status = status === "fulfilled" ? "resolved" : "open";
+    issue.updatedAt = dateKey;
+  }
+  const headline = status === "fulfilled" ? `${promise.playerName} 약속 이행` : `${promise.playerName} 약속 파기`;
+  const body = status === "fulfilled"
+    ? `${promise.label} 약속이 기한 내 지켜졌습니다. 선수단은 감독 메시지를 신뢰하는 분위기입니다.`
+    : `${promise.label} 약속이 기한을 넘겼습니다. 당사자 사기와 클럽하우스 신뢰가 하락했습니다.`;
+  deliverMail(state, {
+    id: `promise-result-${dateKey}-${promise.id}`,
+    date: dateKey,
+    from: { role: "개인비서", icon: "promise" },
+    category: "club",
+    type: "promise-result",
+    headline,
+    body,
+    read: false,
+    important: status === "broken"
+  });
+  rememberManagerAction(state, {
+    type: status === "fulfilled" ? "promise-kept" : "promise-broken",
+    teamId: promise.teamId,
+    subjectId: promise.playerId,
+    subject: promise.playerName,
+    headline,
+    summary: body,
+    heat: status === "broken" ? 24 : 12,
+    confidence: 82,
+    tags: ["promise", status, "clubhouse"],
+    date: dateKey
+  });
+}
+
+function runClubhousePressureRoutine(state, team, dateKey, options = {}) {
+  if (!team) return;
+  evaluateActivePromises(state, team, dateKey);
+  evaluateManagerJobPressure(state, team, dateKey, options);
+  scanPlayerRelations(state, team, dateKey, options);
+}
+
+function promisePlayerGames(player) {
+  if (player?.role === "pitcher") return safeNumber(player.seasonStats?.pitching?.games);
+  return safeNumber(player?.seasonStats?.batting?.games);
+}
+
+function youngPlayerUsageShare(team) {
+  const roster = team?.roster ?? [];
+  const games = sum(roster.map((player) => ({ games: promisePlayerGames(player) })), "games");
+  if (games <= 0) return 0;
+  const youngGames = sum(roster.map((player) => ({ games: safeNumber(player.age, 99) <= 25 ? promisePlayerGames(player) : 0 })), "games");
+  return youngGames / games;
+}
+
+function managerTrustBand(trust) {
+  const value = safeNumber(trust, 68);
+  if (value <= MANAGER_TRUST_DISMISSAL) return "dismissal";
+  if (value <= MANAGER_TRUST_WARNING) return "danger";
+  if (value <= 45) return "pressure";
+  if (value >= 72) return "secure";
+  return "stable";
+}
+
+function managerTrustLabel(trust) {
+  const band = managerTrustBand(trust);
+  return {
+    dismissal: "경질권",
+    danger: "최후 경고",
+    pressure: "압박",
+    stable: "보통",
+    secure: "신뢰"
+  }[band] ?? "보통";
+}
+
+function managerEvaluationHeadline(trust, delta) {
+  if (trust <= MANAGER_TRUST_DISMISSAL) return "구단주 신뢰도 붕괴";
+  if (trust <= MANAGER_TRUST_WARNING) return "구단주 압박 고조";
+  if (delta > 3) return "구단주 신뢰 회복";
+  if (delta < -3) return "구단주 우려 확대";
+  return "구단주 평가 유지";
+}
+
+function playerIssueId(teamId, playerId, type) {
+  return `issue-${teamId}-${playerId}-${type}`;
+}
+
+function promiseLabel(type) {
+  if (type === "first-team") return "1군 등록";
+  return "출전 기회";
+}
+
+function daysBetween(left, right) {
+  const diff = parseDate(right).getTime() - parseDate(left).getTime();
+  return Math.floor(diff / MS_PER_DAY);
 }
 
 function normalizeWeeklySnapshot(source, state) {
@@ -7555,11 +8220,14 @@ function defaultDecisionAction(type) {
   if (type === "foreign-lineup") return "acknowledge";
   if (type === "bullpen-rest") return "manager-discretion";
   if (type === "futures-callup") return "hold";
+  if (type === "player-meeting") return "encourage";
+  if (type === "owner-warning") return "accept-pressure";
+  if (type === "owner-dismissal") return "end-career";
   return "acknowledge";
 }
 
 function defaultDecisionExpiry(dateKey, type) {
-  const days = type === "waiver-claim" ? 7 : type === "trade-offer" ? 3 : 1;
+  const days = type === "waiver-claim" ? 7 : type === "trade-offer" ? 3 : type === "player-meeting" ? 5 : 1;
   return dateKey ? addDaysKey(dateKey, days) : "";
 }
 
@@ -8240,6 +8908,7 @@ function addDailyMorningRoutine(state, context = {}) {
     reportDate,
     gameText
   });
+  runClubhousePressureRoutine(state, team, morningDate);
   const narrative = buildNarrativeContext(state, team, morningDate);
 
   deliverMail(state, {
@@ -8408,10 +9077,14 @@ function buildMonthlyReviewMail(state, team, dateKey) {
 }
 
 function buildOwnerMonthlyMail(state, team, dateKey) {
+  const currentJob = ensureManagerJob(state, team);
+  const job = currentJob.lastEvaluatedAt === String(dateKey)
+    ? currentJob
+    : evaluateManagerJobPressure(state, team, dateKey, { force: true });
   const standings = getStandings(state);
   const rank = standings.findIndex((entry) => String(entry.id) === String(team.id)) + 1;
-  const expected = getOwnerExpectedRank(state, team);
-  const tone = rank && rank <= expected ? "격려" : rank && rank >= expected + 3 ? "우려" : "중립";
+  const expected = job?.seasonGoal?.targetRank ?? getOwnerExpectedRank(state, team);
+  const tone = job?.trust <= MANAGER_TRUST_WARNING ? "우려" : rank && rank <= expected ? "격려" : rank && rank >= expected + 3 ? "우려" : "중립";
   const delta = tone === "격려" ? 1 : tone === "우려" ? -1 : 0;
   team.morale = clamp(safeNumber(team.morale, 50) + delta, 20, 90);
   return {
@@ -8421,7 +9094,7 @@ function buildOwnerMonthlyMail(state, team, dateKey) {
     category: "club",
     type: "owner-monthly",
     headline: `구단주 월례 평가: ${tone}`,
-    body: `시즌 전 기대 순위 ${expected}위 대비 현재 ${rank || "-"}위입니다. 구단주는 ${tone === "격려" ? "현장 메시지를 긍정적으로 평가했습니다" : tone === "우려" ? "분위기 전환 계획을 요구했습니다" : "현 흐름을 더 지켜보겠다는 입장입니다"}.`,
+    body: `시즌 목표는 ${job?.seasonGoal?.label ?? `${expected}위권`}입니다. 현재 ${rank || "-"}위, 감독 신뢰도 ${job?.trust ?? "-"}(${managerTrustLabel(job?.trust)}), 운영 철학은 ${CLUB_PHILOSOPHIES[job?.philosophy]?.label ?? "균형 운영"}입니다. 구단주는 ${tone === "격려" ? "현장 메시지를 긍정적으로 평가했습니다" : tone === "우려" ? "분위기 전환 계획을 요구했습니다" : "현 흐름을 더 지켜보겠다는 입장입니다"}.`,
     read: false,
     important: tone !== "중립"
   };
@@ -8921,6 +9594,114 @@ function resolveSlumpingStarterDecision(state, decision, action) {
   }
   if (player) player.morale = clamp(safeNumber(player.morale, 50) + 1, 20, 95);
   return { ok: true, code: "slump-trusted", message: `${decision.playerName ?? player?.name ?? "부진 주전"}에게 한 번 더 기회를 주기로 했습니다.` };
+}
+
+function resolvePlayerMeetingDecision(state, decision, action) {
+  const entry = findPlayerEntry(state, decision.playerId, decision.teamId);
+  const player = entry?.player ?? null;
+  const issue = state.playerRelations?.issues?.find((item) => String(item.id) === String(decision.issueId));
+  if (!player) return { ok: true, code: "player-meeting-missing", message: "면담 대상 선수를 찾지 못해 코칭스태프 메모로 남겼습니다." };
+  if (action === "promise-playing-time" || action === "promise-callup") {
+    const promiseType = action === "promise-callup" ? "first-team" : "playing-time";
+    const dueDays = promiseType === "first-team" ? 14 : PROMISE_WINDOW_DAYS;
+    const promise = normalizePromise({
+      id: `promise-${state.currentDate}-${decision.teamId}-${player.id}-${promiseType}`,
+      type: promiseType,
+      teamId: decision.teamId,
+      playerId: player.id,
+      playerName: player.name,
+      label: promiseLabel(promiseType),
+      madeDate: state.currentDate,
+      dueDate: addDaysKey(state.currentDate, dueDays),
+      status: "active",
+      baselineGames: promisePlayerGames(player),
+      targetGames: promiseType === "first-team" ? 1 : PROMISE_PLAYING_TIME_GAMES,
+      sourceIssueId: decision.issueId
+    }, state);
+    state.promises = [promise, ...(state.promises ?? []).filter((item) => item.id !== promise.id)].slice(0, MANAGER_PROMISE_LIMIT);
+    if (issue) {
+      issue.status = "promise-made";
+      issue.promiseId = promise.id;
+      issue.updatedAt = state.currentDate;
+    }
+    player.morale = clamp(safeNumber(player.morale, 50) + 3, 20, 95);
+    rememberManagerAction(state, {
+      type: "player-promise",
+      teamId: decision.teamId,
+      subjectId: player.id,
+      subject: player.name,
+      headline: `${player.name}에게 ${promise.label} 약속`,
+      summary: `${promise.dueDate}까지 ${promise.label} 약속을 이행해야 합니다.`,
+      heat: 18,
+      confidence: 78,
+      tags: ["promise", "player", "clubhouse"]
+    });
+    return { ok: true, code: "promise-created", message: `${player.name}에게 ${promise.label} 약속을 했습니다. 기한은 ${promise.dueDate}입니다.` };
+  }
+  if (action === "challenge") {
+    player.morale = clamp(safeNumber(player.morale, 50) - 2 + Math.round(safeNumber(player.personality?.traits?.professionalism, 10) / 8), 10, 95);
+    if (issue) {
+      issue.status = "closed";
+      issue.updatedAt = state.currentDate;
+    }
+    return { ok: true, code: "meeting-challenge", message: `${player.name}에게 경쟁으로 증명하라는 메시지를 전달했습니다.` };
+  }
+  player.morale = clamp(safeNumber(player.morale, 50) + 2, 20, 95);
+  if (issue) {
+    issue.status = "closed";
+    issue.updatedAt = state.currentDate;
+  }
+  return { ok: true, code: "meeting-encouraged", message: `${player.name}을 달래고 현재 기용 방침을 설명했습니다.` };
+}
+
+function resolveOwnerWarningDecision(state, decision, action) {
+  const team = findTeamById(state, decision.teamId) ?? findTeamById(state, state.selectedTeamId);
+  const job = ensureManagerJob(state, team);
+  if (action === "rebuild-briefing") {
+    job.philosophy = "rebuild";
+    job.trust = clamp(safeNumber(job.trust) + 5, 0, 100);
+    return { ok: true, code: "owner-rebuild-briefing", message: "구단주에게 장기 리빌딩 철학과 젊은 선수 기용 계획을 보고했습니다. 신뢰도가 일부 회복됐습니다." };
+  }
+  if (action === "lineup-shake") {
+    job.trust = clamp(safeNumber(job.trust) + 3, 0, 100);
+    return { ok: true, code: "owner-lineup-shake", message: "라인업·불펜 쇄신안을 보고했습니다. 다음 평가에서 실제 성적 반영을 요구받았습니다." };
+  }
+  job.trust = clamp(safeNumber(job.trust) + 1, 0, 100);
+  return { ok: true, code: "owner-pressure-accepted", message: "책임을 인정하고 다음 월례 평가까지 반등을 약속했습니다." };
+}
+
+function resolveOwnerDismissalDecision(state, decision, action) {
+  const dismissedTeam = findTeamById(state, decision.teamId) ?? findTeamById(state, state.selectedTeamId);
+  const currentJob = ensureManagerJob(state, dismissedTeam);
+  if (String(action).startsWith("accept-offer-")) {
+    const teamId = String(action).replace("accept-offer-", "");
+    const team = findTeamById(state, teamId);
+    const offer = currentJob.offers?.find((entry) => String(entry.teamId) === teamId);
+    if (team && offer) {
+      state.selectedTeamId = team.id;
+      state.managerJob = normalizeManagerJob({
+        teamId: team.id,
+        trust: offer.trust,
+        philosophy: offer.philosophy,
+        status: "active",
+        season: inferSeasonFromState(state)
+      }, state);
+      rememberManagerAction(state, {
+        type: "manager-job-change",
+        teamId: team.id,
+        subject: `${team.shortName ?? team.name} 감독 부임`,
+        headline: `${team.shortName ?? team.name} 새 감독직 수락`,
+        summary: "경질 이후 새 구단 제안을 받아 커리어를 이어갑니다.",
+        heat: 22,
+        confidence: 82,
+        tags: ["career", "owner", "job"]
+      });
+      return { ok: true, code: "manager-job-accepted", message: `${team.shortName ?? team.name} 감독 제안을 수락했습니다. 새 구단으로 이어서 진행합니다.` };
+    }
+  }
+  currentJob.status = "career-ended";
+  state.phase = "complete";
+  return { ok: true, code: "manager-career-ended", message: "감독 커리어를 종료했습니다. 세이브는 완료 상태로 남습니다." };
 }
 
 function sendDecisionFollowUps(state, dateKey = state?.currentDate) {
@@ -9463,6 +10244,7 @@ function processMailboxMorning(state, dateKey = state?.currentDate) {
   deliverDeferredMail(state, dateKey);
   expireOpenMailDecisions(state, dateKey);
   sendDecisionFollowUps(state, dateKey);
+  runClubhousePressureRoutine(state, findTeamById(state, state.selectedTeamId), dateKey);
   refreshMailboxDerivedState(state);
 }
 
@@ -9591,6 +10373,9 @@ function decisionSourceRole(decision) {
   if (decision.type === "futures-callup") return "2군 감독";
   if (decision.type === "opening-roster") return "운영팀";
   if (decision.type === "opening-rotation") return "코칭스태프";
+  if (decision.type === "player-meeting") return "선수단";
+  if (decision.type === "owner-warning") return "구단주";
+  if (decision.type === "owner-dismissal") return "구단주";
   return "개인비서";
 }
 

@@ -275,6 +275,7 @@ async function main() {
   await runCheck("로테이션/불펜 운용 snapshot", checkPitchingSnapshotUsage);
   await runCheck("수동 투수 운용 우선 적용", checkManualPitchingPlan);
   await runCheck("운영 깊이 v0: 개인성/전략/스카우트/서사", checkManagementDepthV0);
+  await runCheck("FM 압박 v1: 구단주/불만/약속", checkFmPressureRelationships);
   await runCheck("FM식 daily loop: mailbox/continue/content", checkDailyLoopV1);
   await runCheck("simulateDays 실행", checkSimulateDays);
   await runCheck("simulateRegularSeason 종료 상태", checkSimulateRegularSeason);
@@ -363,8 +364,11 @@ async function checkModuleImports() {
   assertExport(engineModule, "commitForeignPlayerSigning", MODULE_PATHS.engine);
   assertExport(engineModule, "commitTradeProposal", MODULE_PATHS.engine);
   assertExport(engineModule, "commitPitchingPlan", MODULE_PATHS.engine);
+  assertExport(engineModule, "commitClubPhilosophy", MODULE_PATHS.engine);
   assertExport(engineModule, "commitGameInterventionPlan", MODULE_PATHS.engine);
   assertExport(engineModule, "commitScoutAssignment", MODULE_PATHS.engine);
+  assertExport(engineModule, "getManagerJobStatus", MODULE_PATHS.engine);
+  assertExport(engineModule, "getClubhouseDynamics", MODULE_PATHS.engine);
   assertExport(engineModule, "runAutonomousOffseason", MODULE_PATHS.engine);
   assertExport(engineModule, "advanceSeason", MODULE_PATHS.engine);
   assertExport(engineModule, "advanceToNextSeason", MODULE_PATHS.engine);
@@ -1295,6 +1299,89 @@ function checkManagementDepthV0() {
   assert(arcs.some((arc) => String(arc.type).includes("scouting-report")), "스카우트 리포트 장기 서사가 기록되지 않았습니다.", MODULE_PATHS.engine);
 
   return `개인성 ${personalities.length}명, 전략 ${played.game.managerPlans[side].label}, 스카우트 리포트 ${scout.reports.length}건, 서사 ${arcs.length}개`;
+}
+
+function checkFmPressureRelationships() {
+  ensureImportsReady();
+  assert(saveModule, "save.js import가 선행되지 않았습니다.", MODULE_PATHS.save);
+
+  const state = dataModule.createInitialState();
+  state.selectedTeamId = "lg";
+  advanceToRegularSeason(state);
+  const team = state.teams.find((entry) => entry.id === state.selectedTeamId);
+  const job = engineModule.getManagerJobStatus(state, team.id);
+  assert(job?.seasonGoal?.key && Number.isFinite(Number(job.trust)), "managerJob 목표/신뢰도 초기화 실패", MODULE_PATHS.engine);
+
+  const philosophy = engineModule.commitClubPhilosophy(state, { teamId: team.id, philosophy: "rebuild" });
+  assert(philosophy.ok && state.managerJob?.philosophy === "rebuild", "장기 리빌딩 철학 저장 실패", MODULE_PATHS.engine);
+
+  const relationState = dataModule.createInitialState();
+  relationState.selectedTeamId = "lg";
+  advanceToRegularSeason(relationState);
+  const relationTeam = relationState.teams.find((entry) => entry.id === relationState.selectedTeamId);
+  relationTeam.wins = 8;
+  relationTeam.losses = 12;
+  const player = relationTeam.roster.find((entry) => entry.role === "hitter" && Number(entry.ovr) >= 135) ??
+    relationTeam.roster.find((entry) => entry.role === "hitter");
+  player.status = "active";
+  player.seasonStats = player.seasonStats ?? {};
+  player.seasonStats.batting = { ...(player.seasonStats.batting ?? {}), games: 0 };
+  engineModule.simulateDay(relationState);
+  const meeting = engineModule.getOpenMailDecisions(relationState).find((mail) => mail.decision?.type === "player-meeting");
+  assert(meeting, "출전 부족 선수 면담 요청 메일이 발생하지 않았습니다.", MODULE_PATHS.engine);
+  const promised = engineModule.resolveMailDecision(relationState, meeting.id, "promise-playing-time");
+  const meetingPlayer = relationTeam.roster.find((entry) => String(entry.id) === String(meeting.decision.playerId));
+  assert(promised.ok && (relationState.promises ?? []).some((promise) => promise.status === "active" && promise.playerId === meeting.decision.playerId), "면담 결재 후 약속 원장이 생성되지 않았습니다.", MODULE_PATHS.engine);
+  const promise = relationState.promises.find((entry) => entry.playerId === meeting.decision.playerId);
+  meetingPlayer.seasonStats = meetingPlayer.seasonStats ?? {};
+  meetingPlayer.seasonStats.batting = { ...(meetingPlayer.seasonStats.batting ?? {}) };
+  meetingPlayer.seasonStats.batting.games = Number(promise.baselineGames) + Number(promise.targetGames);
+  engineModule.simulateDay(relationState);
+  assert((relationState.promises ?? []).some((entry) => entry.id === promise.id && entry.status === "fulfilled"), "약속 이행 판정이 동작하지 않았습니다.", MODULE_PATHS.engine);
+
+  const brokenState = dataModule.createInitialState();
+  brokenState.selectedTeamId = "lg";
+  advanceToRegularSeason(brokenState);
+  const brokenTeam = brokenState.teams.find((entry) => entry.id === brokenState.selectedTeamId);
+  const brokenPlayer = brokenTeam.roster.find((entry) => entry.role === "hitter");
+  brokenState.promises = [{
+    id: "verify-broken-promise",
+    type: "playing-time",
+    teamId: brokenTeam.id,
+    playerId: brokenPlayer.id,
+    playerName: brokenPlayer.name,
+    label: "출전 기회",
+    madeDate: "2026-03-01",
+    dueDate: "2026-03-02",
+    status: "active",
+    baselineGames: 0,
+    targetGames: 5
+  }];
+  engineModule.simulateDay(brokenState);
+  assert((brokenState.promises ?? []).some((entry) => entry.id === "verify-broken-promise" && entry.status === "broken"), "약속 파기 판정이 동작하지 않았습니다.", MODULE_PATHS.engine);
+
+  const pressureState = dataModule.createInitialState();
+  pressureState.selectedTeamId = "kiwoom";
+  advanceToRegularSeason(pressureState);
+  const pressureTeam = pressureState.teams.find((entry) => entry.id === pressureState.selectedTeamId);
+  pressureTeam.wins = 1;
+  pressureTeam.losses = 24;
+  pressureState.managerJob = {
+    teamId: pressureTeam.id,
+    trust: 11,
+    philosophy: "winNow",
+    status: "active",
+    seasonGoal: { key: "postseason", label: "가을야구 진출", targetRank: 5, targetWinPct: 0.52, pressure: "high" }
+  };
+  engineModule.simulateDay(pressureState);
+  const dismissal = engineModule.getOpenMailDecisions(pressureState).find((mail) => mail.decision?.type === "owner-dismissal");
+  assert(pressureState.managerJob?.status === "dismissed" && dismissal, "구단주 신뢰도 붕괴 시 경질 결재가 발생하지 않았습니다.", MODULE_PATHS.engine);
+
+  const imported = saveModule.importGameState(saveModule.exportGameState(relationState));
+  assert((imported.promises ?? []).some((entry) => entry.id === promise.id && entry.status === "fulfilled"), "저장 roundtrip 후 약속 원장이 보존되지 않았습니다.", MODULE_PATHS.save);
+  assert(imported.managerJob?.philosophy, "저장 roundtrip 후 managerJob이 보존되지 않았습니다.", MODULE_PATHS.save);
+
+  return `목표 ${job.goalLabel}, 철학 ${state.managerJob.philosophy}, 면담 ${meeting.headline}, 약속 fulfilled/broken, 경질 ${dismissal.headline}`;
 }
 
 function checkDailyLoopV1() {

@@ -4,6 +4,7 @@ import {
   advanceSecondaryDraftToUserPick,
   buildLineup,
   buildPitchingSnapshot,
+  commitClubPhilosophy,
   commitGameInterventionPlan,
   commitPitchingPlan,
   commitScoutAssignment,
@@ -14,8 +15,10 @@ import {
   commitTradeProposal,
   advanceUntilStop,
   deliverMail,
+  getClubhouseDynamics,
   getMailboxItems,
   getMailboxSummary,
+  getManagerJobStatus,
   getOpenMailDecisions,
   getRecordBook,
   getSelectedTeam,
@@ -233,6 +236,8 @@ function render(root, state) {
   });
   const pitchingSnapshot = buildPitchingSnapshot(selectedTeam);
   const injuries = roster.filter((player) => Number(player.injuredDays) > 0);
+  const managerJob = getManagerJobStatus(state, selectedTeam?.id ?? state.selectedTeamId);
+  const clubhouseDynamics = getClubhouseDynamics(state, selectedTeam?.id ?? state.selectedTeamId);
   const teamColor = getTeamColor(selectedTeam);
   const activeTab = normalizeActiveTab(state?.ui?.activeTab);
   const selectedPlayerEntry = getSelectedPlayerEntry(state, selectedTeam) ?? (activeTab === "players" ? getDefaultPlayerEntry(selectedTeam) : null);
@@ -320,6 +325,8 @@ function render(root, state) {
           lineup,
           pitchingSnapshot,
           injuries,
+          managerJob,
+          clubhouseDynamics,
           frontOffice,
           gmDesk
         })}
@@ -367,6 +374,8 @@ function renderActiveTabContent(activeTab, context) {
     lineup,
     pitchingSnapshot,
     injuries,
+    managerJob,
+    clubhouseDynamics,
     frontOffice,
     gmDesk
   } = context;
@@ -459,11 +468,12 @@ function renderActiveTabContent(activeTab, context) {
     <section class="clubhouse-dashboard" aria-label="클럽하우스 메인 브리핑">
       <div class="clubhouse-main-rail">
         ${renderTodayDeskPanel(state, selectedTeam, selectedRank, nextGame)}
-        ${renderManagerBriefingPanel(state, selectedTeam, manager)}
+        ${renderManagerBriefingPanel(state, selectedTeam, manager, managerJob)}
         ${renderNewsInboxPanel(state, selectedTeam, manager)}
       </div>
       <aside class="clubhouse-side-rail" aria-label="오늘의 운영 요약">
         ${renderMetricGrid(state, selectedTeam, selectedRank, injuries)}
+        ${renderClubPressurePanel(managerJob, clubhouseDynamics)}
         ${renderNextGamePanel(state, selectedTeam, nextGame)}
         ${renderNarrativeMemoryPanel(state, selectedTeam)}
       </aside>
@@ -1386,27 +1396,95 @@ function isManualLineupActive(team, lineup) {
   return ids.slice(0, 9).every((id, index) => String(lineup[index]?.id ?? "") === id);
 }
 
-function renderManagerBriefingPanel(state, selectedTeam, manager) {
+function renderManagerBriefingPanel(state, selectedTeam, manager, managerJob = null) {
   const answers = Array.isArray(manager.interviewAnswers) ? manager.interviewAnswers : [];
-  const goal = answers.find((answer) => answer.id === "goal")?.label ?? "매 경기 준비";
+  const goal = managerJob?.goalLabel ?? answers.find((answer) => answer.id === "goal")?.label ?? "매 경기 준비";
   const front = answers.find((answer) => answer.id === "front")?.label ?? "균형 있는 운영";
   const message = answers.find((answer) => answer.id === "message")?.label ?? "선수단 신뢰";
+  const trust = managerJob ? `신뢰도 ${formatNumber(managerJob.trust)} · ${managerJob.trustLabel}` : `${formatNumber(manager.age)}세 · ${managerStyleLabel(manager.style)}`;
 
   return `
     <section class="manager-briefing-panel" aria-label="감독 브리핑">
       <div class="manager-briefing-main">
         <span class="mini-label">감독실</span>
         <h2>${escapeHtml(manager.name)} 감독 취임 브리핑</h2>
-        <p>${escapeHtml(getTeamShortName(selectedTeam) ?? "우리 팀")} · ${formatNumber(manager.age)}세 · ${escapeHtml(managerStyleLabel(manager.style))}</p>
+        <p>${escapeHtml(getTeamShortName(selectedTeam) ?? "우리 팀")} · ${escapeHtml(trust)}</p>
       </div>
       <div class="manager-briefing-quotes">
         <span>${escapeHtml(goal)}</span>
         <span>${escapeHtml(message)}</span>
-        <span>${escapeHtml(front)}</span>
+        <span>${escapeHtml(managerJob?.philosophyLabel ?? front)}</span>
       </div>
       <small>${escapeHtml(manager.appointedAt ?? state.currentDate ?? "")} 취임</small>
     </section>
   `;
+}
+
+function renderClubPressurePanel(managerJob, dynamics) {
+  if (!managerJob) return "";
+  const promises = dynamics?.promises ?? [];
+  const issues = dynamics?.issues ?? [];
+  const activePromise = promises.find((promise) => promise.status === "active");
+  const openIssue = issues.find((issue) => ["open", "meeting-requested", "promise-made"].includes(issue.status));
+  const trust = Math.max(0, Math.min(100, Number(managerJob.trust ?? 0)));
+  return `
+    <section class="panel club-pressure-panel is-${escapeAttribute(managerJob.trustBand ?? "stable")}" aria-label="구단주 압박과 약속">
+      <div class="panel-head">
+        <div>
+          <span class="mini-label">구단주/클럽하우스</span>
+          <h2>감독 압박</h2>
+        </div>
+        <span class="pill">${escapeHtml(managerJob.trustLabel ?? "보통")}</span>
+      </div>
+      <div class="pressure-meter" style="--trust:${trust}%">
+        <span></span>
+      </div>
+      <div class="pressure-summary">
+        <strong>${escapeHtml(managerJob.goalLabel ?? "시즌 목표")}</strong>
+        <small>${escapeHtml(managerJob.record ?? "-")} · 현재 ${formatNumber(managerJob.rank)}위 · 신뢰도 ${formatNumber(managerJob.trust)}</small>
+      </div>
+      <div class="philosophy-switch" role="group" aria-label="운영 철학">
+        ${["balanced", "winNow", "rebuild"].map((id) => `
+          <button class="mini-action ${managerJob.philosophy === id ? "is-active" : ""}" data-action="commit-club-philosophy" data-philosophy="${escapeAttribute(id)}" type="button">
+            ${escapeHtml(clubPhilosophyLabel(id))}
+          </button>
+        `).join("")}
+      </div>
+      <ol class="player-list compact front-office-list pressure-list">
+        <li>
+          <span class="order">${formatNumber(dynamics?.summary?.openIssues ?? 0)}</span>
+          <span>
+            <strong>${escapeHtml(openIssue?.playerName ?? "선수 불만 없음")}</strong>
+            <small>${escapeHtml(openIssue ? `${clubIssueLabel(openIssue.type)} · ${openIssue.reason}` : "면담 요청이 생기면 여기에 고정됩니다.")}</small>
+          </span>
+        </li>
+        <li>
+          <span class="order">${formatNumber(dynamics?.summary?.activePromises ?? 0)}</span>
+          <span>
+            <strong>${escapeHtml(activePromise?.playerName ?? "활성 약속 없음")}</strong>
+            <small>${escapeHtml(activePromise ? `${activePromise.label} · 기한 ${activePromise.dueDate}` : "약속을 하면 이행 여부를 매일 추적합니다.")}</small>
+          </span>
+        </li>
+      </ol>
+    </section>
+  `;
+}
+
+function clubPhilosophyLabel(id) {
+  const labels = {
+    balanced: "균형",
+    winNow: "즉시성적",
+    rebuild: "리빌딩"
+  };
+  return labels[id] ?? "균형";
+}
+
+function clubIssueLabel(type) {
+  const labels = {
+    "playing-time": "출전 불만",
+    demotion: "2군행 불만"
+  };
+  return labels[type] ?? "면담 요청";
 }
 
 function renderNarrativeMemoryPanel(state, selectedTeam) {
@@ -1710,6 +1788,25 @@ function fallbackDecisionOptions(type) {
     return [
       { action: "callup", label: "콜업", note: "1군 등록" },
       { action: "hold", label: "보류", note: "추가 관찰" }
+    ];
+  }
+  if (type === "player-meeting") {
+    return [
+      { action: "encourage", label: "격려", note: "사기 회복" },
+      { action: "challenge", label: "경쟁 요구", note: "약속 없음" },
+      { action: "promise-playing-time", label: "출전 약속", note: "21일 내 5경기" }
+    ];
+  }
+  if (type === "owner-warning") {
+    return [
+      { action: "rebuild-briefing", label: "리빌딩 설명", note: "장기 플랜" },
+      { action: "accept-pressure", label: "책임 인정", note: "반등 약속" },
+      { action: "lineup-shake", label: "쇄신안", note: "기용 변화" }
+    ];
+  }
+  if (type === "owner-dismissal") {
+    return [
+      { action: "end-career", label: "커리어 종료", note: "완료 상태" }
     ];
   }
   if (type === "opening-rotation") {
@@ -2664,6 +2761,17 @@ function bindActions(root, state) {
         activeTab: "schedule"
       };
       render(root, state);
+    });
+  });
+
+  root.querySelectorAll("[data-action='commit-club-philosophy']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const result = commitClubPhilosophy(state, {
+        teamId: state.selectedTeamId,
+        philosophy: button.dataset.philosophy
+      });
+      render(root, state);
+      setStatus(root, result.message || "운영 철학을 저장했습니다.");
     });
   });
 

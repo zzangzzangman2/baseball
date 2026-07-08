@@ -1196,6 +1196,71 @@ img {
   background: linear-gradient(90deg, color-mix(in srgb, var(--team-color, #2f343a), #ffffff 18%), #5f7568);
 }
 
+.club-pressure-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.club-pressure-panel.is-danger,
+.club-pressure-panel.is-dismissal {
+  border-left: 4px solid #a33b42;
+}
+
+.club-pressure-panel.is-pressure {
+  border-left: 4px solid #9b6f2f;
+}
+
+.pressure-meter {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8e3da;
+}
+
+.pressure-meter span {
+  display: block;
+  width: var(--trust);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #a33b42, #d1a24a 46%, #527f66);
+}
+
+.pressure-summary {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pressure-summary strong,
+.pressure-summary small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pressure-summary small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.philosophy-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.philosophy-switch .mini-action.is-active {
+  border-color: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 18%);
+  background: color-mix(in srgb, var(--team-color, #2f343a), #ffffff 86%);
+  color: var(--ink);
+}
+
+.pressure-list {
+  margin-top: 0;
+}
+
 .preseason-desk-panel {
   display: grid;
   grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.1fr);

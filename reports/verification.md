@@ -1,10 +1,10 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-08T02:30:38.239Z
+- 실행 시각: 2026-07-08T02:56:05.361Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Program Files\nodejs\node.exe (v24.18.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
-- 종합 결과: 통과 (36/36 통과)
+- 종합 결과: 통과 (37/37 통과)
 
 ## 체크 결과
 
@@ -30,6 +30,7 @@
 | 로테이션/불펜 운용 snapshot | PASS | 7일 선발 42명, 등판 투수 110명, SU 28, CL 28, W-L 28-28, SV 8, HLD 13 | - |
 | 수동 투수 운용 우선 적용 | PASS | 수동 nextStarter 리오스, CL 김윤식, 부상 슬롯 자동 보정 확인 | - |
 | 운영 깊이 v0: 개인성/전략/스카우트/서사 | PASS | 개인성 55명, 전략 강공, 스카우트 리포트 5건, 서사 24개 | - |
+| FM 압박 v1: 구단주/불만/약속 | PASS | 목표 가을야구 진출, 철학 rebuild, 면담 송찬의 면담 요청, 약속 fulfilled/broken, 경질 구단주 결정: 감독직 해임 통보 | - |
 | FM식 daily loop: mailbox/continue/content | PASS | mailbox 4통/open 1건, 만료 1건, camp 101통/7경기 | - |
 | simulateDays 실행 | PASS | 7일 진행 후 day=35, gamesPlayed=30 | - |
 | simulateRegularSeason 종료 상태 | PASS | 정규시즌 종료: 720/720경기, day=196, phase=complete | - |
