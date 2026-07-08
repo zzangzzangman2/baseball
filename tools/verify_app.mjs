@@ -1033,6 +1033,7 @@ function checkPitchingSnapshotUsage() {
   const state = dataModule.createInitialState();
   advanceToRegularSeason(state);
   const problems = [];
+  const roleAppearances = new Map();
 
   for (const team of state.teams) {
     const snapshot = engineModule.buildPitchingSnapshot(team);
@@ -1079,6 +1080,10 @@ function checkPitchingSnapshotUsage() {
     const winLines = allPitchingLines.filter((line) => String(line.decision ?? "").includes("W"));
     const lossLines = allPitchingLines.filter((line) => String(line.decision ?? "").includes("L"));
     const saveLines = allPitchingLines.filter((line) => String(line.decision ?? "").includes("S"));
+    for (const line of allPitchingLines) {
+      const role = String(line.role ?? "RP");
+      roleAppearances.set(role, (roleAppearances.get(role) ?? 0) + 1);
+    }
 
     if (!isTie && winLines.length !== 1) {
       problems.push(`${game.id}: 승리투수 결정 ${winLines.length}`);
@@ -1127,6 +1132,8 @@ function checkPitchingSnapshotUsage() {
   const pitcherLosses = sumNumbers(players, ({ player }) => player.seasonStats.pitching.losses);
   const pitcherSaves = sumNumbers(players, ({ player }) => player.seasonStats.pitching.saves);
   const pitcherHolds = sumNumbers(players, ({ player }) => player.seasonStats.pitching.holds);
+  const setupAppearances = roleAppearances.get("SU") ?? 0;
+  const closerAppearances = roleAppearances.get("CL") ?? 0;
 
   assert(
     problems.length === 0,
@@ -1137,8 +1144,10 @@ function checkPitchingSnapshotUsage() {
   assert(pitchersUsed > gamesStarted, `불펜 등판이 선발보다 많지 않습니다: ${pitchersUsed}/${gamesStarted}`, MODULE_PATHS.engine);
   assert(pitcherWins === teamWins, `투수 승 ${pitcherWins}, 팀 승 ${teamWins}`, MODULE_PATHS.engine);
   assert(pitcherLosses === teamLosses, `투수 패 ${pitcherLosses}, 팀 패 ${teamLosses}`, MODULE_PATHS.engine);
+  assert(setupAppearances > 0, `자동 불펜에서 SU 등판이 없습니다. roleAppearances=${JSON.stringify(Object.fromEntries(roleAppearances))}`, MODULE_PATHS.engine);
+  assert(closerAppearances > 0, `자동 불펜에서 CL 등판이 없습니다. roleAppearances=${JSON.stringify(Object.fromEntries(roleAppearances))}`, MODULE_PATHS.engine);
 
-  return `7일 선발 ${gamesStarted}명, 등판 투수 ${pitchersUsed}명, W-L ${pitcherWins}-${pitcherLosses}, SV ${pitcherSaves}, HLD ${pitcherHolds}`;
+  return `7일 선발 ${gamesStarted}명, 등판 투수 ${pitchersUsed}명, SU ${setupAppearances}, CL ${closerAppearances}, W-L ${pitcherWins}-${pitcherLosses}, SV ${pitcherSaves}, HLD ${pitcherHolds}`;
 }
 
 function checkManualPitchingPlan() {

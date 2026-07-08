@@ -6243,34 +6243,27 @@ function choosePitcherForPlateAppearance(pitchingPlan, result, outs) {
     return pitchingPlan.starter;
   }
 
-  if (pitchingPlan.manual) {
-    const preferredRoles = outs >= 24
-      ? ["CL", "SU", "MR", "LR", "RP"]
-      : outs >= 21
-        ? ["SU", "CL", "MR", "LR", "RP"]
-        : ["LR", "MR", "SU", "CL", "RP"];
-    for (const role of preferredRoles) {
-      for (const candidate of pitchingPlan.bullpen ?? []) {
-        if (bullpenRoleForPitcher(pitchingPlan, candidate) !== role) continue;
-        const line = getExistingGamePitchingLine(result, candidate);
-        if (!line || safeNumber(line.pitches) < 28) return candidate;
-      }
-    }
+  const preferredRoles = preferredBullpenRolesForOuts(outs);
+  for (const role of preferredRoles) {
     for (const candidate of pitchingPlan.bullpen ?? []) {
+      if (bullpenRoleForPitcher(pitchingPlan, candidate) !== role) continue;
       const line = getExistingGamePitchingLine(result, candidate);
       if (!line || safeNumber(line.pitches) < 28) return candidate;
     }
   }
 
-  let bullpenIndex = outs >= 24 ? 2 : outs >= 21 ? 1 : 0;
-  while (bullpenIndex < pitchingPlan.bullpen.length) {
-    const candidate = pitchingPlan.bullpen[bullpenIndex];
+  for (const candidate of pitchingPlan.bullpen ?? []) {
     const line = getExistingGamePitchingLine(result, candidate);
     if (!line || safeNumber(line.pitches) < 28) return candidate;
-    bullpenIndex += 1;
   }
 
   return pitchingPlan.bullpen.at(-1) ?? pitchingPlan.starter;
+}
+
+function preferredBullpenRolesForOuts(outs) {
+  if (outs >= 24) return ["CL", "SU", "MR", "LR", "RP"];
+  if (outs >= 21) return ["SU", "CL", "MR", "LR", "RP"];
+  return ["LR", "MR", "SU", "CL", "RP"];
 }
 
 function applyGamePitchingEvent(result, pitcher, pitchingPlan, outcome, advancement) {
