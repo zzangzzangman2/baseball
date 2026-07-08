@@ -7193,6 +7193,11 @@ body {
   min-width: 0;
 }
 
+.clubhouse-dashboard.is-mail-first {
+  grid-template-columns: minmax(260px, 0.42fr) minmax(560px, 1fr);
+  align-items: start;
+}
+
 .clubhouse-main-rail,
 .clubhouse-side-rail {
   display: grid;
@@ -7393,6 +7398,14 @@ body {
   display: none;
 }
 
+.clubhouse-dashboard.is-mail-first .clubhouse-side-rail .news-inbox-panel {
+  min-height: 620px;
+}
+
+.clubhouse-dashboard.is-mail-first .clubhouse-side-rail .mailbox-grid {
+  grid-template-columns: minmax(230px, 0.82fr) minmax(0, 1.18fr);
+}
+
 .simulation-progress-panel {
   grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr);
   align-items: start;
@@ -7478,13 +7491,18 @@ body {
 }
 
 @media (max-width: 1180px) {
-  .clubhouse-dashboard {
+  .clubhouse-dashboard,
+  .clubhouse-dashboard.is-mail-first {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .clubhouse-side-rail {
     grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.8fr);
     align-items: start;
+  }
+
+  .clubhouse-dashboard.is-mail-first .clubhouse-side-rail {
+    grid-template-columns: 1fr;
   }
 
   .clubhouse-side-rail .narrative-memory-panel {
@@ -8204,6 +8222,10 @@ body {
   .clubhouse-dashboard .manager-briefing-panel,
   .clubhouse-side-rail,
   .simulation-progress-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .clubhouse-dashboard.is-mail-first .clubhouse-side-rail .mailbox-grid {
     grid-template-columns: 1fr;
   }
 
@@ -9313,6 +9335,10 @@ input {
   box-shadow: 0 18px 38px rgba(9, 12, 14, 0.18);
 }
 
+.today-desk-panel.is-compact {
+  align-content: start;
+}
+
 .today-desk-main {
   display: grid;
   gap: 6px;
@@ -9342,6 +9368,14 @@ input {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.today-desk-panel.is-compact .today-desk-cards {
+  grid-template-columns: 1fr;
+}
+
+.today-desk-panel.is-compact .today-desk-cards article {
+  min-height: 86px;
 }
 
 .today-desk-cards article,

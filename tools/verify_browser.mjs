@@ -376,12 +376,21 @@ async function checkViewport(viewport) {
       const bodyText = document.body.innerText;
       return {
         hasMainNewsInbox: Boolean(document.querySelector("[data-main-news-inbox]")),
+        inboxInRightRail: Boolean(document.querySelector(".clubhouse-side-rail [data-main-news-inbox]")),
         hasTodayDesk: Boolean(document.querySelector("[data-today-desk]")),
+        todayCardLabels: [...document.querySelectorAll("[data-today-desk] .today-desk-cards article span")].map((node) => node.textContent.trim()),
         hasMailboxGrid: Boolean(document.querySelector(".mailbox-grid")),
         mailFilterCount: document.querySelectorAll("[data-action='mail-filter']").length,
         hasUnreadDot: Boolean(document.querySelector(".unread-dot")),
         hasTopbarLogo: Boolean(document.querySelector(".topbar .topbar-logo-plate img")),
         hasDuplicateHero: Boolean(document.querySelector(".hero-card")),
+        hasManagerBriefing: Boolean(document.querySelector(".manager-briefing-panel")) || bodyText.includes("감독실"),
+        hasPressurePanel: bodyText.includes("감독 압박") || bodyText.includes("구단주/클럽하우스"),
+        hasNextGamePanel: Boolean(document.querySelector(".next-game-panel")),
+        hasNarrativePanel: Boolean(document.querySelector(".narrative-memory-panel")),
+        hasMetricGrid: Boolean(document.querySelector(".metric-grid")),
+        hasTodayScheduleCopy: bodyText.includes("오늘 일정"),
+        hasTodayMailPreview: Boolean(document.querySelector(".today-desk-mail-preview")),
         hasPreseasonDesk: Boolean(document.querySelector("[data-preseason-desk]")),
         hasAssistantBrief: Boolean(document.querySelector("[data-news-type='assistant']")),
         hasMediaBrief: Boolean(document.querySelector("[data-news-type='media']")),
@@ -393,7 +402,9 @@ async function checkViewport(viewport) {
   assert(headerProbe.hasTopbarLogo && !headerProbe.hasDuplicateHero, "상단 로고 이동 또는 중복 구단 히어로 제거가 확인되지 않았습니다.", "src/ui.js");
   assert(
     headerProbe.hasMainNewsInbox &&
+      headerProbe.inboxInRightRail &&
       headerProbe.hasTodayDesk &&
+      headerProbe.todayCardLabels.join("|") === "날씨|성적|순위" &&
       headerProbe.hasMailboxGrid &&
       headerProbe.mailFilterCount >= 5 &&
       headerProbe.hasUnreadDot &&
@@ -401,34 +412,15 @@ async function checkViewport(viewport) {
       headerProbe.hasAssistantBrief &&
       headerProbe.hasMediaBrief &&
       headerProbe.hasSpotv &&
-      headerProbe.hasAppointmentNews,
-    "오늘의 데스크/받은편지함/취임식/비서/언론 피드가 확인되지 않았습니다.",
-    "src/ui.js"
-  );
-  const nextGameProbe = await evaluateInBrowser(`
-    (() => {
-      const panel = document.querySelector(".next-game-panel");
-      return {
-        hasPanel: Boolean(panel),
-        isPreseasonCamp: Boolean(panel?.classList.contains("is-preseason-camp")),
-        hasCampDay: Boolean(panel?.querySelector("[data-action='next-day']")),
-        hasCampWeek: Boolean(panel?.querySelector("[data-action='week']")),
-        hasEnabledWatch: Boolean(panel?.querySelector("[data-action='watch-next-game']:not(:disabled)")),
-        hasEnabledQuick: Boolean(panel?.querySelector("[data-action='simulate-next-game']:not(:disabled)")),
-        text: panel?.textContent?.trim() ?? ""
-      };
-    })()
-  `);
-  assert(
-    nextGameProbe.hasPanel &&
-      nextGameProbe.isPreseasonCamp &&
-      nextGameProbe.hasCampDay &&
-      nextGameProbe.hasCampWeek &&
-      !nextGameProbe.hasEnabledWatch &&
-      !nextGameProbe.hasEnabledQuick &&
-      nextGameProbe.text.includes("프리시즌 캠프") &&
-      nextGameProbe.text.includes("개막 전 경기 없음"),
-    `프리시즌 캠프 패널이 개막 전 경기 버튼을 막지 못했습니다: ${JSON.stringify(nextGameProbe)}`,
+      headerProbe.hasAppointmentNews &&
+      !headerProbe.hasManagerBriefing &&
+      !headerProbe.hasPressurePanel &&
+      !headerProbe.hasNextGamePanel &&
+      !headerProbe.hasNarrativePanel &&
+      !headerProbe.hasMetricGrid &&
+      !headerProbe.hasTodayScheduleCopy &&
+      !headerProbe.hasTodayMailPreview,
+    "간소화된 오늘의 데스크/오른쪽 받은편지함/중복 섹션 제거가 확인되지 않았습니다.",
     "src/ui.js"
   );
   await switchDashboardTab("lineup");
@@ -531,13 +523,18 @@ async function checkViewport(viewport) {
   assert(preseasonProbe.hadPreseason && preseasonProbe.dateAdvanced && preseasonProbe.gamesStillZero && preseasonProbe.boxscores === 0, "프리시즌 하루 진행이 경기 없이 날짜만 넘기지 않았습니다.", "src/ui.js");
   assert(preseasonProbe.hasSimulationPanel, "날짜 진행 계산 패널이 완료 상태로 렌더링되지 않았습니다.", "src/ui.js");
   assert(preseasonProbe.hasAssistantMail && preseasonProbe.hasMediaMail && preseasonProbe.hasKboStyleMail, "프리시즌 하루 진행 후 비서/언론/KBO식 메일이 쌓이지 않았습니다.", "src/ui.js");
+  await switchDashboardTab("operations");
   const weeklyProbe = await evaluateInBrowser(`
     (async () => {
+      const hasWeekButton = Boolean(document.querySelector("[data-action='week']"));
       document.querySelector("[data-action='week']")?.click();
-      await new Promise((resolve) => setTimeout(resolve, 850));
+      for (let guard = 0; guard < 24; guard += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 140));
+        if (document.body.innerText.includes("2026-03-09")) break;
+      }
       const after = document.body.innerText;
       return {
-        hasWeekButton: Boolean(document.querySelector("[data-action='week']")),
+        hasWeekButton,
         dateAdvanced: after.includes("2026-03-09"),
         gamesStillZero: after.includes("0 / 720경기"),
         boxscores: document.querySelectorAll(".boxscore-mini").length

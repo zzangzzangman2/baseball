@@ -462,19 +462,13 @@ function renderActiveTabContent(activeTab, context) {
   }
 
   return renderTabSurface("clubhouse", "클럽하우스", `
-    <section class="clubhouse-dashboard" aria-label="클럽하우스 메인 브리핑">
+    <section class="clubhouse-dashboard is-mail-first" aria-label="클럽하우스 메인 브리핑">
       <div class="clubhouse-main-rail">
         ${renderTodayDeskPanel(state, selectedTeam, selectedRank, nextGame)}
-        ${renderManagerBriefingPanel(state, selectedTeam, manager, managerJob)}
-        ${renderNewsInboxPanel(state, selectedTeam, manager)}
       </div>
-      <aside class="clubhouse-side-rail" aria-label="오늘의 운영 요약">
-        ${renderMetricGrid(state, selectedTeam, selectedRank, injuries)}
-        ${renderClubPressurePanel(managerJob, clubhouseDynamics)}
-        ${renderNextGamePanel(state, selectedTeam, nextGame)}
-        ${renderNarrativeMemoryPanel(state, selectedTeam)}
+      <aside class="clubhouse-side-rail" aria-label="받은편지함">
+        ${renderNewsInboxPanel(state, selectedTeam, manager)}
       </aside>
-      ${renderPendingMailDecisionPanel(state)}
     </section>
   `);
 }
@@ -568,68 +562,43 @@ function renderMetricGrid(state, selectedTeam, selectedRank, injuries) {
   `;
 }
 
-function renderTodayDeskPanel(state, selectedTeam, selectedRank, nextGame) {
-  const mailbox = getMailboxSummary(state);
-  const unread = getMailboxItems(state).filter((mail) => !mail.read).slice(0, 3);
-  const decisions = getOpenMailDecisions(state);
-  const lastGame = (state.lastGames ?? []).find((game) =>
-    String(game.awayTeamId ?? "") === String(selectedTeam?.id ?? "") ||
-    String(game.homeTeamId ?? "") === String(selectedTeam?.id ?? "")
-  );
-  const gameText = nextGame?.ok
-    ? `${nextGame.awayShortName ?? "원정"} @ ${nextGame.homeShortName ?? "홈"} · ${nextGame.ballpark ?? ""}`
-    : nextGame?.message ?? "휴식일/이동일";
-  const primaryAction = decisions.length
-    ? `<button class="button button-primary" data-action="mail-filter" data-mail-filter="decision" type="button">결재 처리</button>`
-    : nextGame?.ok && String(nextGame.date) === String(state.currentDate)
-      ? `<button class="button button-primary" data-action="watch-next-game" type="button">경기 보기</button>`
-      : `<button class="button button-primary" data-action="continue" type="button">계속 ▶</button>`;
+function renderTodayDeskPanel(state, selectedTeam, selectedRank) {
+  const weatherLabel = state.weather?.label ?? "날씨 확인 중";
+  const temperature = formatTemperature(state.weather?.temperature);
+  const rankLabel = selectedRank ? `${formatNumber(selectedRank)}위` : "순위 집계 전";
+  const recordLabel = renderRecord(selectedTeam);
 
   return `
-    <section class="today-desk-panel" data-today-desk aria-label="오늘의 데스크">
+    <section class="today-desk-panel is-compact" data-today-desk aria-label="오늘의 데스크">
       <div class="today-desk-main">
         <span class="mini-label">오늘의 데스크</span>
         <h2>${escapeHtml(formatDeskDate(state.currentDate))}</h2>
-        <p>${escapeHtml(state.weather?.label ?? "날씨 확인 중")} · ${formatTemperature(state.weather?.temperature)} · ${selectedRank ? `${formatNumber(selectedRank)}위` : "순위 집계 전"} · ${escapeHtml(renderRecord(selectedTeam))}</p>
-        <div class="today-desk-actions">
-          ${primaryAction}
-          <button class="button button-soft" data-action="mail-filter" data-mail-filter="all" type="button">편지함</button>
-        </div>
+        <p>${escapeHtml(weatherLabel)} · ${temperature} · ${escapeHtml(rankLabel)} · ${escapeHtml(recordLabel)}</p>
       </div>
       <div class="today-desk-cards">
         <article>
-          <span>오늘 일정</span>
-          <strong>${escapeHtml(gameText)}</strong>
-          <small>${nextGame?.ok ? escapeHtml(nextGame.date ?? state.currentDate ?? "") : "경기 없음"}</small>
+          <span>날씨</span>
+          <strong>${escapeHtml(weatherLabel)}</strong>
+          <small>${temperature}</small>
         </article>
         <article>
-          <span>받은편지함</span>
-          <strong>새 편지 ${formatNumber(mailbox.unread)}통</strong>
-          <small>결재 ${formatNumber(mailbox.openDecisions)}건 · 중요 ${formatNumber(mailbox.importantUnread)}건</small>
+          <span>성적</span>
+          <strong>${escapeHtml(recordLabel)}</strong>
+          <small>승률 ${formatPct(winningPct(selectedTeam))}</small>
         </article>
         <article>
-          <span>어제 결과</span>
-          <strong>${escapeHtml(renderDeskResult(lastGame, selectedTeam))}</strong>
-          <small>${escapeHtml(lastGame?.date ?? "결과 대기")}</small>
+          <span>순위</span>
+          <strong>${escapeHtml(rankLabel)}</strong>
+          <small>${formatNumber(state.teams.length)}개 구단</small>
         </article>
       </div>
-      ${unread.length ? `
-        <div class="today-desk-mail-preview">
-          ${unread.map((mail) => `
-            <button data-action="open-mail" data-mail-id="${escapeAttribute(mail.id)}" type="button">
-              <span>${escapeHtml(mail.from?.role ?? "프런트")}</span>
-              <strong>${escapeHtml(mail.headline)}</strong>
-            </button>
-          `).join("")}
-        </div>
-      ` : ""}
     </section>
   `;
 }
 
 function formatDeskDate(dateKey) {
   const date = parseUiDate(dateKey);
-  return `${dateKey ?? ""} ${KOREAN_WEEKDAYS[date.getUTCDay()] ?? ""}요일`;
+  return `${String(dateKey ?? "").replaceAll("-", ".")} ${KOREAN_WEEKDAYS[date.getUTCDay()] ?? ""}`;
 }
 
 function renderDeskResult(game, selectedTeam) {
