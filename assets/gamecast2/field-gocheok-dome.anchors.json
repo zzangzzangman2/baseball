@@ -1,0 +1,115 @@
+{
+  "fieldId": "field-gocheok-dome",
+  "name": "고척 돔",
+  "image": "field-gocheok-dome.png",
+  "design": {
+    "width": 960,
+    "height": 720
+  },
+  "markerCount": 153,
+  "anchors": {
+    "home": {
+      "x": 480.0,
+      "y": 632.0,
+      "scale": 1.02
+    },
+    "first": {
+      "x": 723.0,
+      "y": 424.0,
+      "scale": 0.87
+    },
+    "second": {
+      "x": 480.0,
+      "y": 353.0,
+      "scale": 0.81
+    },
+    "third": {
+      "x": 237.0,
+      "y": 424.0,
+      "scale": 0.87
+    },
+    "mound": {
+      "x": 480.0,
+      "y": 460.0,
+      "scale": 0.89
+    },
+    "P": {
+      "x": 480.0,
+      "y": 467.0,
+      "scale": 0.9
+    },
+    "C": {
+      "x": 480.0,
+      "y": 660.0,
+      "scale": 1.04
+    },
+    "1B": {
+      "x": 692.0,
+      "y": 456.0,
+      "scale": 0.89
+    },
+    "2B": {
+      "x": 589.0,
+      "y": 421.0,
+      "scale": 0.86
+    },
+    "3B": {
+      "x": 268.0,
+      "y": 456.0,
+      "scale": 0.89
+    },
+    "SS": {
+      "x": 371.0,
+      "y": 421.0,
+      "scale": 0.86
+    },
+    "LF": {
+      "x": 299.0,
+      "y": 289.0,
+      "scale": 0.77
+    },
+    "CF": {
+      "x": 480.0,
+      "y": 247.0,
+      "scale": 0.74
+    },
+    "RF": {
+      "x": 661.0,
+      "y": 289.0,
+      "scale": 0.77
+    },
+    "leftPole": {
+      "x": 25.0,
+      "y": 247.0,
+      "scale": 0.74
+    },
+    "rightPole": {
+      "x": 935.0,
+      "y": 247.0,
+      "scale": 0.74
+    },
+    "scoreboardTl": {
+      "x": 404.0,
+      "y": 84.0,
+      "scale": 0.62
+    }
+  },
+  "paths": {
+    "bases": [
+      "home",
+      "first",
+      "second",
+      "third",
+      "home"
+    ],
+    "outfield": [
+      "LF",
+      "CF",
+      "RF"
+    ],
+    "poles": [
+      "leftPole",
+      "rightPole"
+    ]
+  }
+}

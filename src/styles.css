@@ -3435,6 +3435,14 @@ img {
   display: block;
 }
 
+.gamecast-screen.is-v2 .gamecast-dom-overlay {
+  display: block;
+}
+
+.gamecast-screen.is-v2 {
+  aspect-ratio: 4 / 3;
+}
+
 .gamecast-screen.is-canvas .gamecast-dom-overlay {
   display: none;
 }
@@ -3467,6 +3475,16 @@ img {
   background: #74b49b;
   image-rendering: crisp-edges;
   image-rendering: pixelated;
+}
+
+.gamecast-screen.is-v2 .gamecast-pixel-stage,
+.gamecast-screen.is-v2 .gamecast-pixel-canvas {
+  aspect-ratio: 4 / 3;
+}
+
+.gamecast-screen.is-v2[data-gamecast2-debug-anchors="1"] .gamecast-player-label,
+.gamecast-screen.is-v2[data-gamecast2-debug-anchors="1"] .gamecast-action-burst {
+  display: none;
 }
 
 .gamecast-dom-overlay {

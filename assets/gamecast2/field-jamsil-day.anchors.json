@@ -1,0 +1,115 @@
+{
+  "fieldId": "field-jamsil-day",
+  "name": "잠실 낮",
+  "image": "field-jamsil-day.png",
+  "design": {
+    "width": 960,
+    "height": 720
+  },
+  "markerCount": 153,
+  "anchors": {
+    "home": {
+      "x": 480.0,
+      "y": 617.0,
+      "scale": 1.01
+    },
+    "first": {
+      "x": 801.0,
+      "y": 428.0,
+      "scale": 0.87
+    },
+    "second": {
+      "x": 480.0,
+      "y": 330.0,
+      "scale": 0.8
+    },
+    "third": {
+      "x": 162.0,
+      "y": 428.0,
+      "scale": 0.87
+    },
+    "mound": {
+      "x": 480.0,
+      "y": 407.0,
+      "scale": 0.85
+    },
+    "P": {
+      "x": 480.0,
+      "y": 414.0,
+      "scale": 0.86
+    },
+    "C": {
+      "x": 480.0,
+      "y": 646.0,
+      "scale": 1.03
+    },
+    "1B": {
+      "x": 746.0,
+      "y": 456.0,
+      "scale": 0.89
+    },
+    "2B": {
+      "x": 592.0,
+      "y": 400.0,
+      "scale": 0.85
+    },
+    "3B": {
+      "x": 214.0,
+      "y": 456.0,
+      "scale": 0.89
+    },
+    "SS": {
+      "x": 368.0,
+      "y": 400.0,
+      "scale": 0.85
+    },
+    "LF": {
+      "x": 282.0,
+      "y": 279.0,
+      "scale": 0.76
+    },
+    "CF": {
+      "x": 480.0,
+      "y": 231.0,
+      "scale": 0.73
+    },
+    "RF": {
+      "x": 678.0,
+      "y": 279.0,
+      "scale": 0.76
+    },
+    "leftPole": {
+      "x": 42.0,
+      "y": 252.0,
+      "scale": 0.74
+    },
+    "rightPole": {
+      "x": 918.0,
+      "y": 252.0,
+      "scale": 0.74
+    },
+    "scoreboardTl": {
+      "x": 401.0,
+      "y": 64.0,
+      "scale": 0.62
+    }
+  },
+  "paths": {
+    "bases": [
+      "home",
+      "first",
+      "second",
+      "third",
+      "home"
+    ],
+    "outfield": [
+      "LF",
+      "CF",
+      "RF"
+    ],
+    "poles": [
+      "leftPole",
+      "rightPole"
+    ]
+  }
+}

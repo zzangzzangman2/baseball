@@ -8,12 +8,20 @@ import path from "node:path";
 // 사용:
 //   node tools/capture_gamecast_shots.mjs [출력폴더] [랩URL]
 //   node tools/capture_gamecast_shots.mjs burst [출력폴더] [랩URL]
+//   node tools/capture_gamecast_shots.mjs anchors [출력폴더] [랩URL]
 // 정적 서버가 떠 있어야 한다 (python -m http.server 5177)
-const MODE = process.argv[2] === "burst" ? "burst" : "shots";
-const OUT = MODE === "burst" ? (process.argv[3] ?? "reports/gamecast-burst") : (process.argv[2] ?? "reports/gamecast-shots");
+const REQUESTED_MODE = ["burst", "anchors"].includes(process.argv[2]) ? process.argv[2] : "shots";
+const MODE = REQUESTED_MODE;
+const OUT = MODE === "burst"
+  ? (process.argv[3] ?? "reports/gamecast-burst")
+  : MODE === "anchors"
+    ? (process.argv[3] ?? "reports/gamecast-anchors")
+    : (process.argv[2] ?? "reports/gamecast-shots");
 const BASE = MODE === "burst"
   ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=phaser&team=lg&days=3&fullscreen=1&holds=0&speed=1&fps=1")
-  : (process.argv[3] ?? "http://127.0.0.1:5177/gamecast-lab.html");
+  : MODE === "anchors"
+    ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=v2&debug=anchors&field=field-gocheok-dome&team=kiwoom&days=3&fullscreen=1&holds=0&speed=1")
+    : (process.argv[3] ?? "http://127.0.0.1:5177/gamecast-lab.html");
 const PORT = 9223;
 mkdirSync(OUT, { recursive: true });
 
@@ -207,6 +215,37 @@ if (MODE === "burst") {
   };
   writeFileSync(path.join(OUT, "burst-summary.json"), JSON.stringify({ checklist, samples }, null, 2));
   console.log("checklist", JSON.stringify(checklist));
+  ws.close();
+  proc.kill();
+  managedServer?.close();
+  console.log("done");
+  process.exit(0);
+}
+
+if (MODE === "anchors") {
+  await go(BASE, 3200);
+  await assertGamecastReady();
+  await evalJs(scopedEval("const c=[...root.querySelectorAll('canvas')].find(c=>c.getBoundingClientRect().width>0); c && c.scrollIntoView({block:'center'}); return 1;"));
+  const meta = await evalJs(scopedEval(`
+    const screen = root.querySelector("[data-gamecast-screen]");
+    const canvas = root.querySelector("[data-gamecast-canvas]");
+    const anchors = screen?.__gamecast2Anchors?.anchors ?? {};
+    const keys = Object.keys(anchors).sort();
+    return {
+      engine: screen?.dataset?.gamecastEngineCurrent ?? "",
+      field: screen?.dataset?.gamecast2Field ?? "",
+      anchorCount: Number(screen?.dataset?.gamecast2AnchorCount ?? 0),
+      keys,
+      canvasPixelW: Number(canvas?.dataset?.pixelW ?? 0),
+      canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0)
+    };
+  `));
+  if (meta.engine !== "v2" || meta.anchorCount < 15 || meta.canvasPixelW !== 960 || meta.canvasPixelH !== 720) {
+    throw new Error(`Gamecast v2 anchors failed: ${JSON.stringify(meta)}`);
+  }
+  writeFileSync(path.join(OUT, "anchors-summary.json"), JSON.stringify(meta, null, 2));
+  await shot("anchors.png");
+  console.log("anchors", JSON.stringify(meta));
   ws.close();
   proc.kill();
   managedServer?.close();

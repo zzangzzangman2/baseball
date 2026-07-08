@@ -1,0 +1,115 @@
+{
+  "fieldId": "field-jamsil-night",
+  "name": "잠실 밤",
+  "image": "field-jamsil-night.png",
+  "design": {
+    "width": 960,
+    "height": 720
+  },
+  "markerCount": 153,
+  "anchors": {
+    "home": {
+      "x": 480.0,
+      "y": 622.0,
+      "scale": 1.01
+    },
+    "first": {
+      "x": 744.0,
+      "y": 428.0,
+      "scale": 0.87
+    },
+    "second": {
+      "x": 480.0,
+      "y": 358.0,
+      "scale": 0.82
+    },
+    "third": {
+      "x": 216.0,
+      "y": 428.0,
+      "scale": 0.87
+    },
+    "mound": {
+      "x": 480.0,
+      "y": 441.0,
+      "scale": 0.88
+    },
+    "P": {
+      "x": 480.0,
+      "y": 448.0,
+      "scale": 0.88
+    },
+    "C": {
+      "x": 480.0,
+      "y": 650.0,
+      "scale": 1.03
+    },
+    "1B": {
+      "x": 708.0,
+      "y": 456.0,
+      "scale": 0.89
+    },
+    "2B": {
+      "x": 590.0,
+      "y": 416.0,
+      "scale": 0.86
+    },
+    "3B": {
+      "x": 252.0,
+      "y": 456.0,
+      "scale": 0.89
+    },
+    "SS": {
+      "x": 370.0,
+      "y": 416.0,
+      "scale": 0.86
+    },
+    "LF": {
+      "x": 294.0,
+      "y": 287.0,
+      "scale": 0.77
+    },
+    "CF": {
+      "x": 480.0,
+      "y": 245.0,
+      "scale": 0.74
+    },
+    "RF": {
+      "x": 666.0,
+      "y": 287.0,
+      "scale": 0.77
+    },
+    "leftPole": {
+      "x": 18.0,
+      "y": 254.0,
+      "scale": 0.74
+    },
+    "rightPole": {
+      "x": 942.0,
+      "y": 254.0,
+      "scale": 0.74
+    },
+    "scoreboardTl": {
+      "x": 394.0,
+      "y": 86.0,
+      "scale": 0.62
+    }
+  },
+  "paths": {
+    "bases": [
+      "home",
+      "first",
+      "second",
+      "third",
+      "home"
+    ],
+    "outfield": [
+      "LF",
+      "CF",
+      "RF"
+    ],
+    "poles": [
+      "leftPole",
+      "rightPole"
+    ]
+  }
+}

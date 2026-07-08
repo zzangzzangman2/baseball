@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "design": {
+    "width": 960,
+    "height": 720
+  },
+  "fields": [
+    {
+      "id": "field-jamsil-day",
+      "name": "잠실 낮",
+      "image": "field-jamsil-day.png",
+      "anchors": "field-jamsil-day.anchors.json"
+    },
+    {
+      "id": "field-jamsil-night",
+      "name": "잠실 밤",
+      "image": "field-jamsil-night.png",
+      "anchors": "field-jamsil-night.anchors.json"
+    },
+    {
+      "id": "field-gocheok-dome",
+      "name": "고척 돔",
+      "image": "field-gocheok-dome.png",
+      "anchors": "field-gocheok-dome.anchors.json"
+    }
+  ]
+}

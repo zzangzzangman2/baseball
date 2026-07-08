@@ -1,6 +1,7 @@
 // 게임캐스트 QA 랩: 온보딩/프리시즌을 건너뛰고 정규시즌 경기 관전을 즉시 연다.
 // 사용: gamecast-lab.html 접속. 쿼리 옵션 —
-//   ?engine=canvas|phaser  렌더러 강제 (기본 phaser)
+//   ?engine=canvas|phaser|v2  렌더러 강제 (기본 phaser)
+//   ?debug=anchors           v2 앵커 오버레이 표시
 //   ?days=N                개막 후 N일 추가 진행 (기본 3)
 //   ?fullscreen=0          큰 화면 자동 열기 끄기
 //   ?team=lg|doosan|...    구단 선택 (기본 lg)

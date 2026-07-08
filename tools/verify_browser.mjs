@@ -1364,6 +1364,48 @@ async function checkGamecastLab() {
   assert(mobileProbe.overflowPx <= 1, `랩 모바일 수평 overflow ${mobileProbe.overflowPx}px`, "src/styles.css");
   assert(mobileProbe.activeSpeed === "0.5", `랩 ?speed=0.5가 반영되지 않았습니다: ${JSON.stringify(mobileProbe)}`, "src/gamecastLab.js");
 
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false
+  });
+  loadEvent = cdp.once("Page.loadEventFired");
+  await cdp.send("Page.navigate", { url: `${labUrl}?engine=v2&debug=anchors&field=field-gocheok-dome&team=kiwoom&days=3&fullscreen=1&holds=0&qa=lab-v2-anchors-${Date.now()}` });
+  await loadEvent;
+  await waitForGamecastLabModal();
+  await delay(900);
+  const anchorProbe = await evaluateInBrowser(`
+    (() => {
+      const screen = document.querySelector("[data-gamecast-modal] [data-gamecast-screen]");
+      const canvas = document.querySelector("[data-gamecast-modal] [data-gamecast-canvas].gamecast-pixel-canvas");
+      const anchors = screen?.__gamecast2Anchors?.anchors ?? {};
+      const rect = canvas?.getBoundingClientRect();
+      const keys = Object.keys(anchors).sort();
+      const required = ["home", "first", "second", "third", "mound", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "leftPole", "rightPole", "scoreboardTl"];
+      return {
+        engine: screen?.dataset?.gamecastEngineCurrent ?? "",
+        field: screen?.dataset?.gamecast2Field ?? "",
+        anchorCount: Number(screen?.dataset?.gamecast2AnchorCount ?? 0),
+        keys,
+        missing: required.filter((key) => !keys.includes(key)),
+        canvasPixelW: Number(canvas?.dataset?.pixelW ?? 0),
+        canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0),
+        canvasWidth: Math.round(rect?.width ?? 0),
+        canvasHeight: Math.round(rect?.height ?? 0),
+        baseDirectionOk: Number(anchors.first?.x ?? 0) > Number(anchors.home?.x ?? 0) && Number(anchors.third?.x ?? 0) < Number(anchors.home?.x ?? 0),
+        depthOk: Number(anchors.CF?.y ?? 999) < Number(anchors.LF?.y ?? 0) && Number(anchors.LF?.y ?? 999) < Number(anchors.third?.y ?? 0),
+        pitcherOk: Number(anchors.P?.y ?? 999) > Number(anchors.mound?.y ?? 0)
+      };
+    })()
+  `);
+  assert(anchorProbe.engine === "v2", `v2 엔진이 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/ui.js");
+  assert(anchorProbe.field === "field-gocheok-dome", `v2 필드 선택이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
+  assert(anchorProbe.anchorCount >= 15 && anchorProbe.missing.length === 0, `v2 앵커가 부족합니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
+  assert(anchorProbe.canvasPixelW === 960 && anchorProbe.canvasPixelH === 720, `v2 필드 해상도 계약이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.canvasWidth > 0 && anchorProbe.canvasHeight > 0, `v2 캔버스가 보이지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.baseDirectionOk && anchorProbe.depthOk && anchorProbe.pitcherOk, `v2 앵커 배치가 어긋났습니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
+
   return [
     `desktop ${Math.round(desktopProbe.cssWidth)}x${Math.round(desktopProbe.cssHeight)}`,
     `feed ${desktopProbe.feedCount}/${desktopProbe.totalEvents}`,
@@ -1373,7 +1415,8 @@ async function checkGamecastLab() {
     "pause/step OK",
     `playfeel ball ${playFeelProbe.ballFrames}/${playFeelSamples.length}`,
     `midview ${viewportSweep.map((probe) => probe.width).join("/")}`,
-    `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`
+    `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`,
+    `v2 anchors ${anchorProbe.anchorCount}`
   ].join(", ");
 }
 

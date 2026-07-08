@@ -66,6 +66,11 @@ import {
   mountGamecastPhaser
 } from "./gamecastPhaser.js";
 
+import {
+  canUseGamecast2,
+  mountGamecast2
+} from "./gamecast2/index.js";
+
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },
   kt: { shortName: "KT", city: "수원", color: "#231f20" },
@@ -5105,6 +5110,7 @@ function renderGamecastEngineToggle(engine) {
     <div class="gamecast-engine-toggle" aria-label="중계 엔진">
       ${[
         { value: "phaser", label: "Phaser" },
+        { value: "v2", label: "v2" },
         { value: "canvas", label: "Canvas" }
       ].map((option) => `
         <button class="gamecast-engine-button ${selected === option.value ? "is-active" : ""}" data-gamecast-engine="${option.value}" type="button" aria-pressed="${selected === option.value ? "true" : "false"}">${option.label}</button>
@@ -5114,7 +5120,8 @@ function renderGamecastEngineToggle(engine) {
 }
 
 function normalizeGamecastEngine(value) {
-  return value === "canvas" ? "canvas" : GAMECAST_DEFAULT_ENGINE;
+  if (value === "canvas" || value === "phaser" || value === "v2") return value;
+  return GAMECAST_DEFAULT_ENGINE;
 }
 
 function renderGamecastMatchup(event) {
@@ -5788,8 +5795,15 @@ function initGamecastPixelScreen(root, appState = null) {
     };
 
     const phaserScreen = screen.classList.contains("gamecast-screen-large");
+    if (engine === "v2" && phaserScreen && canUseGamecast2()) {
+      const controller = createGamecastPhaserController({ ...controllerOptions, renderer: "v2" });
+      if (controller) {
+        controllers.push(controller);
+        continue;
+      }
+    }
     if (engine === "phaser" && phaserScreen && canUseGamecastPhaser()) {
-      const controller = createGamecastPhaserController(controllerOptions);
+      const controller = createGamecastPhaserController({ ...controllerOptions, renderer: "phaser" });
       if (controller) {
         controllers.push(controller);
         continue;
@@ -5797,7 +5811,7 @@ function initGamecastPixelScreen(root, appState = null) {
     }
 
     if (typeof canvas.getContext !== "function") continue;
-    screen.classList.remove("is-phaser", "is-phaser-active");
+    screen.classList.remove("is-phaser", "is-phaser-active", "is-v2", "is-v2-active");
     screen.classList.add("is-canvas");
     screen.dataset.gamecastEngineCurrent = "canvas";
 
@@ -5908,7 +5922,7 @@ function createGamecastPalette(ballparkProfile = null) {
   };
 }
 
-function createGamecastPhaserController({ screen, stage, canvas, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [] }) {
+function createGamecastPhaserController({ screen, stage, canvas, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [], renderer = "phaser" }) {
   const normalizedSequence = normalizeGamecastSequenceForPlayback(sequence);
   const palette = createGamecastPalette(normalizedSequence.ballparkProfile);
   const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
@@ -5948,7 +5962,9 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
   };
   if (state.done) state.elapsedMs = gamecastTotalDuration(state.sequence);
 
-  const phaser = mountGamecastPhaser({
+  const rendererEngine = renderer === "v2" ? "v2" : "phaser";
+  const mountRenderer = rendererEngine === "v2" ? mountGamecast2 : mountGamecastPhaser;
+  const rendererHandle = mountRenderer({
     screen,
     stage,
     canvas,
@@ -5969,7 +5985,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     onFrame(frame) {
       state.currentFrame = frame;
       syncGamecastDom(state, frame);
-      phaser.setSpeed(gamecastEffectivePlaybackRate(state, frame));
+      rendererHandle.setSpeed(gamecastEffectivePlaybackRate(state, frame));
       maybeHoldGamecastPlayback(state, frame, applyHold);
     },
     onImpact(frame) {
@@ -5985,7 +6001,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     }
   });
 
-  if (!phaser) return null;
+  if (!rendererHandle) return null;
 
   const renderHoldFrame = () => {
     const frame = buildGamecastFrameState(state, false);
@@ -6008,11 +6024,11 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
       lastHoldKey: state.lastHoldKey
     });
     if (state.paused) {
-      phaser.pause();
+      rendererHandle.pause();
       renderHoldFrame();
     } else if (shouldRunGamecastPlayback(state)) {
-      phaser.setSpeed(gamecastEffectivePlaybackRate(state));
-      phaser.resume();
+      rendererHandle.setSpeed(gamecastEffectivePlaybackRate(state));
+      rendererHandle.resume();
     }
     syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
   };
@@ -6021,7 +6037,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     const hold = normalizeGamecastHold(state.hold);
     if (hold?.resumeElapsedMs !== null && hold?.resumeElapsedMs !== undefined) {
       state.elapsedMs = Math.min(gamecastTotalDuration(state.sequence), hold.resumeElapsedMs);
-      phaser.seek?.(state.elapsedMs);
+      rendererHandle.seek?.(state.elapsedMs);
     }
     state.hold = {
       type: "resume",
@@ -6043,8 +6059,8 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
       persistGamecastPlayback(state, { paused: false, hold: null, elapsedMs: state.elapsedMs });
       syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
       if (shouldRunGamecastPlayback(state)) {
-        phaser.setSpeed(gamecastEffectivePlaybackRate(state));
-        phaser.resume();
+        rendererHandle.setSpeed(gamecastEffectivePlaybackRate(state));
+        rendererHandle.resume();
       }
     }, GAMECAST_RESUME_COUNTDOWN_MS);
   };
@@ -6055,15 +6071,15 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     clearResumeTimer();
     if (hold?.resumeElapsedMs !== null && hold?.resumeElapsedMs !== undefined) {
       state.elapsedMs = Math.min(gamecastTotalDuration(state.sequence), hold.resumeElapsedMs);
-      phaser.seek?.(state.elapsedMs);
+      rendererHandle.seek?.(state.elapsedMs);
     }
     state.paused = false;
     state.hold = null;
     persistGamecastPlayback(state, { paused: false, hold: null, elapsedMs: state.elapsedMs });
     syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
     if (shouldRunGamecastPlayback(state)) {
-      phaser.setSpeed(gamecastEffectivePlaybackRate(state));
-      phaser.resume();
+      rendererHandle.setSpeed(gamecastEffectivePlaybackRate(state));
+      rendererHandle.resume();
     }
     return true;
   };
@@ -6071,7 +6087,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     const normalizedHold = normalizeGamecastHold(hold);
     if (!normalizedHold || state.done) return false;
     state.lastHoldKey = normalizedHold.key || state.lastHoldKey;
-    phaser.seek?.(state.elapsedMs);
+    rendererHandle.seek?.(state.elapsedMs);
     setPaused(true, normalizedHold);
     return true;
   };
@@ -6102,7 +6118,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
       };
     }
     persistGamecastPlayback(state, { playbackRate: state.playbackRate });
-    phaser.setSpeed(gamecastEffectivePlaybackRate(state));
+    rendererHandle.setSpeed(gamecastEffectivePlaybackRate(state));
     if (isFastGamecastPlayback(state)) resumeImmediatelyFromHold();
     syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
   };
@@ -6125,8 +6141,8 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     state.hold = null;
     state.elapsedMs = gamecastTotalDuration(state.sequence);
     persistGamecastPlayback(state, { done: true, paused: false, hold: null, elapsedMs: state.elapsedMs });
-    phaser.seek?.(state.elapsedMs);
-    phaser.finish();
+    rendererHandle.seek?.(state.elapsedMs);
+    rendererHandle.finish();
     const finalFrame = buildGamecastFrameState(state, true);
     state.currentFrame = finalFrame;
     syncGamecastDom(state, finalFrame);
@@ -6165,8 +6181,8 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
   };
   const onVisibilityChange = () => {
     state.hidden = Boolean(document.hidden);
-    if (state.hidden) phaser.pause();
-    else if (shouldRunGamecastPlayback(state)) phaser.resume();
+    if (state.hidden) rendererHandle.pause();
+    else if (shouldRunGamecastPlayback(state)) rendererHandle.resume();
   };
 
   syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
@@ -6181,8 +6197,8 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
 
   const intersectionObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver((entries) => {
     state.visible = entries.some((entry) => entry.isIntersecting);
-    if (shouldRunGamecastPlayback(state)) phaser.resume();
-    else phaser.pause();
+    if (shouldRunGamecastPlayback(state)) rendererHandle.resume();
+    else rendererHandle.pause();
   }, { threshold: 0.05 }) : null;
   intersectionObserver?.observe(screen);
 
@@ -6191,9 +6207,9 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     document.addEventListener("keydown", onKeyDown);
   }
 
-  screen.classList.add("is-phaser-active");
+  screen.classList.add(rendererEngine === "v2" ? "is-v2-active" : "is-phaser-active");
   if (state.paused) {
-    phaser.pause();
+    rendererHandle.pause();
     renderHoldFrame();
     syncGamecastPlaybackControls(state, speedControls, pauseControls, stepControls, skipControls);
   }
@@ -6202,7 +6218,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     cleanup() {
       persistGamecastPlayback(state);
       clearResumeTimer();
-      phaser.cleanup();
+      rendererHandle.cleanup();
       intersectionObserver?.disconnect();
       for (const button of speedControls) button.removeEventListener("click", onSpeedClick);
       for (const button of pauseControls) button.removeEventListener("click", onPauseClick);
@@ -6216,7 +6232,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
         document.removeEventListener("keydown", onKeyDown);
       }
       if (state.shakeTimer) window.clearTimeout(state.shakeTimer);
-      screen.classList.remove("is-shaking", "is-phaser-active");
+      screen.classList.remove("is-shaking", "is-phaser-active", "is-v2-active");
       if (state.playerLabel) state.playerLabel.classList.remove("is-visible", "is-scoring");
       syncGamecastActionBurst(state.actionBurst, null);
       for (const item of state.feedItems ?? []) item.classList.remove("is-live");
