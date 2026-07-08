@@ -272,6 +272,7 @@ async function main() {
   await runCheck("다음 경기 보기/시뮬레이션 플로우", checkNextUserGameFlow);
   await runCheck("선수 누적 기록 모델", checkPlayerSeasonStats);
   await runCheck("경기 박스스코어/eventLog", checkGameBoxScoreEventLog);
+  await runCheck("하프이닝 경기 AI/작전", checkHalfInningGameAiTactics);
   await runCheck("로테이션/불펜 운용 snapshot", checkPitchingSnapshotUsage);
   await runCheck("수동 투수 운용 우선 적용", checkManualPitchingPlan);
   await runCheck("운영 깊이 v0: 개인성/전략/스카우트/서사", checkManagementDepthV0);
@@ -891,6 +892,7 @@ function checkPlayerSeasonStats() {
   const battingPa = sumNumbers(players, ({ player }) => player.seasonStats.batting.plateAppearances);
   const pitcherBf = sumNumbers(players, ({ player }) => player.seasonStats.pitching.battersFaced);
   const pitchingOuts = sumNumbers(players, ({ player }) => player.seasonStats.pitching.inningsOuts);
+  const boxPitchingOuts = sumNumbers(state.lastGames, (game) => gamePitchingOuts(game));
   const hittersWithPa = players.filter(({ player }) => player.seasonStats.batting.plateAppearances > 0).length;
   const pitchersWithOuts = players.filter(({ player }) => player.seasonStats.pitching.inningsOuts > 0).length;
 
@@ -898,14 +900,30 @@ function checkPlayerSeasonStats() {
   assert(teamRuns === pitchingRuns, `팀 득점 ${teamRuns}과 투수 실점 ${pitchingRuns}이 다릅니다.`, MODULE_PATHS.engine);
   assert(battingPa === pitcherBf, `타석 ${battingPa}과 투수 상대타자 ${pitcherBf}가 다릅니다.`, MODULE_PATHS.engine);
   assert(
-    pitchingOuts === state.gamesPlayed * 54,
-    `투수 아웃카운트 ${pitchingOuts}, 기대값 ${state.gamesPlayed * 54}`,
+    pitchingOuts === boxPitchingOuts,
+    `투수 아웃카운트 ${pitchingOuts}, 박스스코어 합계 ${boxPitchingOuts}`,
     MODULE_PATHS.engine
   );
   assert(hittersWithPa >= 80, `하루 진행 후 타석 기록 보유 타자 ${hittersWithPa}명`, MODULE_PATHS.engine);
   assert(pitchersWithOuts >= 10, `하루 진행 후 이닝 기록 보유 투수 ${pitchersWithOuts}명`, MODULE_PATHS.engine);
 
-  return `타자 ${hittersWithPa}명/투수 ${pitchersWithOuts}명 기록, 득점 ${teamRuns}, PA ${battingPa}`;
+  return `타자 ${hittersWithPa}명/투수 ${pitchersWithOuts}명 기록, 득점 ${teamRuns}, PA ${battingPa}, 투수아웃 ${pitchingOuts}`;
+}
+
+function gamePitchingOuts(game) {
+  return sumArray([
+    ...((game?.boxScore?.pitching?.away ?? []).map((line) => safeInteger(line.inningsOuts))),
+    ...((game?.boxScore?.pitching?.home ?? []).map((line) => safeInteger(line.inningsOuts)))
+  ]);
+}
+
+function expectedPitchingOutsForSide(game, side) {
+  const flow = game?.gameFlow;
+  if (!flow?.interleaved || !Array.isArray(flow.halfInnings)) return 27;
+  const battingSide = side === "away" ? "home" : "away";
+  return sumArray(flow.halfInnings
+    .filter((half) => half.side === battingSide)
+    .map((half) => safeInteger(half.outs)));
 }
 
 function checkGameBoxScoreEventLog() {
@@ -971,6 +989,21 @@ function checkGameBoxScoreEventLog() {
     if (safeInteger(boxScore.totals?.plateAppearances) !== paEvents.length) {
       problems.push(`${game.id}: PA 이벤트 ${paEvents.length}/${boxScore.totals?.plateAppearances}`);
     }
+    if (boxScore.linescore.innings?.length !== lineAway.runsByInning?.length || boxScore.linescore.innings?.length !== lineHome.runsByInning?.length) {
+      problems.push(`${game.id}: 이닝 헤더/득점 배열 길이 불일치`);
+    }
+    if (game.gameFlow?.interleaved !== true) {
+      problems.push(`${game.id}: 하프이닝 인터리브 flow 누락`);
+    }
+    if (game.gameFlow?.bottomSkipped) {
+      const bottomEvents = paEvents.filter((event) => event.side === "home" && safeInteger(event.inning) === safeInteger(game.gameFlow.inningsPlayed));
+      if (bottomEvents.length > 0) problems.push(`${game.id}: 홈 리드 후 말 공격이 진행됨`);
+    }
+    if (game.gameFlow?.walkOff) {
+      if (game.homeScore <= game.awayScore || !paEvents.some((event) => event.walkOff)) {
+        problems.push(`${game.id}: 끝내기 flow/event 불일치`);
+      }
+    }
     if (!game.ballpark?.parkId) {
       problems.push(`${game.id}: ballpark 컨텍스트 누락`);
     } else {
@@ -1004,6 +1037,12 @@ function checkGameBoxScoreEventLog() {
       if (!Object.hasOwn(event, "battedBallType") || !Object.hasOwn(event, "doublePlay") || !Object.hasOwn(event, "reachedOnError")) {
         problems.push(`${game.id}: PA ${event.sequence} KBO 타구/수비 확장 필드 누락`);
       }
+      if (!event.half || !["top", "bottom"].includes(event.half)) {
+        problems.push(`${game.id}: PA ${event.sequence} 초/말 half 누락`);
+      }
+      if (!event.scoreBefore || !event.scoreAfter) {
+        problems.push(`${game.id}: PA ${event.sequence} 점수 스냅샷 누락`);
+      }
       if (!event.ballparkId || !event.ballparkName) {
         problems.push(`${game.id}: PA ${event.sequence} 구장 컨텍스트 누락`);
       }
@@ -1030,6 +1069,57 @@ function checkGameBoxScoreEventLog() {
   const totalErrors = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.errors);
   const totalDoublePlays = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.doublePlays);
   return `game.final ${state.eventLog.length}개, 박스스코어 ${state.lastGames.length}경기, PA 이벤트 ${totalPaEvents}개, 실책 ${totalErrors}, 병살 ${totalDoublePlays}`;
+}
+
+function checkHalfInningGameAiTactics() {
+  ensureImportsReady();
+  const state = dataModule.createInitialState();
+  advanceToRegularSeason(state);
+  for (const team of state.teams) {
+    const saved = engineModule.commitGameInterventionPlan(state, {
+      teamId: team.id,
+      preset: "aggressive",
+      pinchHit: "power",
+      bunt: "aggressive",
+      bullpenHook: "quick"
+    });
+    assert(saved.ok, `작전 저장 실패: ${team.id}/${saved.message}`, MODULE_PATHS.engine);
+  }
+
+  const games = [];
+  for (let day = 0; day < 7; day += 1) {
+    engineModule.simulateDay(state);
+    games.push(...(state.lastGames ?? []));
+  }
+
+  const events = games.flatMap((game) => game.plateAppearanceEvents ?? []);
+  const sacrificeEvents = events.filter((event) => event.outcome === "sacrificeBunt" && event.sacrifice === true);
+  const pinchHitEvents = events.filter((event) => event.pinchHit?.pinchHitterId);
+  const saveSituationEvents = events.filter((event) => event.saveSituation === true);
+  const scoreAwareCloserEvents = saveSituationEvents.filter((event) => {
+    const game = games.find((entry) => entry.id === event.gameId);
+    const side = event.defenseTeamId === game?.awayTeamId ? "away" : "home";
+    const line = (game?.boxScore?.pitching?.[side] ?? []).find((entry) => String(entry.playerId) === String(event.pitcherId));
+    return line?.role === "CL";
+  });
+  const skippedBottomGames = games.filter((game) => game.gameFlow?.bottomSkipped).length;
+  const walkOffGames = games.filter((game) => game.gameFlow?.walkOff).length;
+  const interleavedGames = games.filter((game) => game.gameFlow?.interleaved === true).length;
+  const gamesWithDynamicOuts = games.filter((game) => {
+    const awayExpected = expectedPitchingOutsForSide(game, "away");
+    const homeExpected = expectedPitchingOutsForSide(game, "home");
+    return awayExpected !== 27 || homeExpected !== 27;
+  }).length;
+
+  assert(games.length >= 20, `경기 AI 샘플 부족: ${games.length}`, MODULE_PATHS.engine);
+  assert(interleavedGames === games.length, `인터리브 경기 ${interleavedGames}/${games.length}`, MODULE_PATHS.engine);
+  assert(skippedBottomGames + walkOffGames + gamesWithDynamicOuts > 0, "9회말 생략/끝내기/연장 아웃 변형이 감지되지 않았습니다.", MODULE_PATHS.engine);
+  assert(saveSituationEvents.length > 0, "세이브 상황 이벤트가 감지되지 않았습니다.", MODULE_PATHS.engine);
+  assert(scoreAwareCloserEvents.length > 0, `세이브 상황에서 CL 등판이 없습니다. saveSituationEvents=${saveSituationEvents.length}`, MODULE_PATHS.engine);
+  assert(sacrificeEvents.length > 0, "공격 작전에서 희생번트 이벤트가 발생하지 않았습니다.", MODULE_PATHS.engine);
+  assert(pinchHitEvents.length > 0, "경기 작전에서 실제 대타 교체 이벤트가 발생하지 않았습니다.", MODULE_PATHS.engine);
+
+  return `경기 ${games.length}개, 희생번트 ${sacrificeEvents.length}, 대타 ${pinchHitEvents.length}, 세이브상황 CL ${scoreAwareCloserEvents.length}/${saveSituationEvents.length}, 9회말 생략 ${skippedBottomGames}, 끝내기 ${walkOffGames}`;
 }
 
 function checkPitchingSnapshotUsage() {
@@ -1115,8 +1205,9 @@ function checkPitchingSnapshotUsage() {
           : event.defenseTeamId === game.homeTeamId
       ).length;
 
-      if (outs !== 27) {
-        problems.push(`${game.id}/${side}: 투수 아웃 ${outs}/27`);
+      const expectedOuts = expectedPitchingOutsForSide(game, side);
+      if (outs !== expectedOuts) {
+        problems.push(`${game.id}/${side}: 투수 아웃 ${outs}/${expectedOuts}`);
       }
       if (starters.length !== 1) {
         problems.push(`${game.id}/${side}: 선발 라인 ${starters.length}`);
