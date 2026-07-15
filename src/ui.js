@@ -31,6 +31,7 @@ import {
   initializeSecondaryDraft,
   markMailRead,
   rememberManagerAction,
+  resolveDefensiveThrowTarget,
   resolveMailDecision,
   simulateDay,
   simulateDays,
@@ -67,12 +68,14 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-hq-80-runner-depth-20260715-r5";
+} from "./gamecastPhaser.js?v=gamecast-arm-pitch-20260715-r15";
 
 import {
   canUseGamecast2,
+  getGamecast2PlayDurationMs,
+  getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-hq-80-runner-depth-20260715-r5";
+} from "./gamecast2/index.js?v=gamecast-arm-pitch-20260715-r15";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },
@@ -176,7 +179,7 @@ const GAMECAST_ABILITY_TIERS = [
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
 const GAMECAST_PLAYBACK_COUNT = 8;
 const GAMECAST_WATCH_PA_MS = 2600;
-const GAMECAST_WATCH_GAP_MS = 340;
+export const GAMECAST_WATCH_GAP_MS = 1400;
 const GAMECAST_PA_MS = 850;
 const GAMECAST_PA_GAP_MS = 120;
 const GAMECAST_SPEED_OPTIONS = [0.5, 1, 1.5, 2, 4];
@@ -184,6 +187,11 @@ const GAMECAST_RESUME_COUNTDOWN_MS = 400;
 const GAMECAST_HOLD_LEVERAGE_THRESHOLD = 0.55;
 const GAMECAST_SCORE_SLOW_RATE = 0.35;
 const GAMECAST_FAST_BALL_RATE = 1.5;
+const GAMECAST_RUN_MS_PER_BASE = 1400;
+const GAMECAST_SLIDE_MS = 270;
+const GAMECAST_WALK_PITCH_STARTS = Object.freeze([0]);
+const GAMECAST_WALK_PITCH_RELEASE_OFFSET = 0.065;
+const GAMECAST_WALK_PITCH_SPAN = 0.2;
 const GAMECAST_DEFAULT_ENGINE = "v2";
 // Ballpark dimensions are visual rendering data only. Sources:
 // Jamsil: venue listings commonly publish LF/RF 100m, CF 125m.
@@ -5511,14 +5519,39 @@ function gamecastMatchupResult(event) {
   if (!event) return "-";
   const runs = Number(event.runs ?? 0);
   if (event.doublePlay) return "병살";
-  if (event.outcome === "homeRun") return runs > 1 ? `${formatNumber(runs)}점 HR` : "홈런!";
+  if (event.outcome === "homeRun") return runs > 1 ? `${formatNumber(runs)}점 홈런` : "홈런";
   if (["single", "double", "triple"].includes(event.outcome)) {
-    return `${outcomeLabel(event.outcome)}${runs > 0 ? ` +${formatNumber(runs)}` : ""}`;
+    return `${gamecastResultDisplayText(event)}${runs > 0 ? ` +${formatNumber(runs)}` : ""}`;
   }
-  if (event.outcome === "walk") return "볼넷";
+  if (["walk", "strikeout", "error", "sacrificeBunt"].includes(event.outcome)) {
+    return gamecastResultDisplayText(event);
+  }
+  if (event.outcome === "out") {
+    const result = gamecastResultDisplayText(event);
+    return event.fieldingPosition ? `${result} · ${event.fieldingPosition}` : result;
+  }
+  return outcomeLabel(event.outcome) || "-";
+}
+
+export function gamecastResultDisplayText(event) {
+  if (!event) return "-";
+  const battedBallType = String(event.battedBallType ?? "").toLowerCase();
+  const flyPrefix = battedBallType.includes("fly") ? "뜬공 " : "";
+  if (event.doublePlay) return "병살";
+  if (event.outcome === "single") return `${flyPrefix}안타`;
+  if (event.outcome === "double") return `${flyPrefix}2루타`;
+  if (event.outcome === "triple") return `${flyPrefix}3루타`;
+  if (event.outcome === "homeRun") return "홈런";
   if (event.outcome === "strikeout") return "삼진";
-  if (event.outcome === "error") return "실책 출루";
-  if (event.outcome === "out") return event.fieldingPosition ? `${event.fieldingPosition} 아웃` : "아웃";
+  if (event.outcome === "walk") return "볼넷";
+  if (event.outcome === "error") return "실책";
+  if (event.outcome === "sacrificeBunt") return "희생번트";
+  if (event.outcome === "out") {
+    if (battedBallType.includes("fly")) return "뜬공 아웃";
+    if (battedBallType.includes("line")) return "직선타 아웃";
+    if (battedBallType.includes("ground")) return "땅볼 아웃";
+    return "아웃";
+  }
   return outcomeLabel(event.outcome) || "-";
 }
 
@@ -5562,7 +5595,7 @@ function renderGamecastPixelStage(instanceId, engine = GAMECAST_DEFAULT_ENGINE, 
         </div>
       </div>
       <span class="gamecast-player-label" data-gamecast-player-label></span>
-      <span class="gamecast-action-burst" data-gamecast-action-burst></span>
+      <span class="gamecast-action-burst" data-gamecast-action-burst data-gamecast-result-banner role="status" aria-live="polite"></span>
       <div class="gamecast-pause-overlay" data-gamecast-pause-overlay hidden>
         <span data-gamecast-pause-kicker>HOLD</span>
         <strong data-gamecast-pause-title>일시정지</strong>
@@ -5699,7 +5732,13 @@ function buildGamecastSequence(game, state) {
     stepMode: Boolean(state.ui?.gamecastStepMode),
     holdsEnabled: state.settings?.gamecastHolds !== false && state.ui?.gamecastHolds !== false,
     soundEnabled: state.ui?.gamecastSound !== false && gamecastSoundEnabled,
-    events: tail.map((event) => normalizeGamecastEvent(event, state, gamecastContext))
+    events: tail.map((event) => {
+      const normalized = normalizeGamecastEvent(event, state, gamecastContext);
+      return {
+        ...normalized,
+        gamecastDurationMs: getGamecast2PlayDurationMs(normalized)
+      };
+    })
   };
 }
 
@@ -5790,8 +5829,11 @@ function gamecastPlaybackSequenceId(sequence) {
   ].join("|");
 }
 
-function gamecastTotalDuration(sequence) {
-  return Math.max(0, Number(sequence?.events?.length ?? 0)) * gamecastEventDuration(sequence);
+export function gamecastTotalDuration(sequence) {
+  return (sequence?.events ?? []).reduce(
+    (total, event) => total + gamecastEventDuration(sequence, event),
+    0
+  );
 }
 
 function getGamecastPlaybackView(sequence, fallbackEvents, state) {
@@ -5810,16 +5852,15 @@ function getGamecastPlaybackView(sequence, fallbackEvents, state) {
     };
   }
 
-  const slotMs = gamecastEventDuration(sequence);
   const totalMs = gamecastTotalDuration(sequence);
   const elapsedMs = Math.max(0, Math.min(totalMs, Number(sequence.initialElapsedMs ?? 0)));
   const done = Boolean(sequence.done) || elapsedMs >= totalMs;
-  const currentIndex = done
-    ? sequence.events.length - 1
-    : Math.max(0, Math.min(sequence.events.length - 1, Math.floor(elapsedMs / Math.max(1, slotMs))));
-  const localMs = done ? slotMs : elapsedMs - currentIndex * slotMs;
+  const timing = gamecastPlaybackPosition(sequence, elapsedMs);
+  const currentIndex = done ? sequence.events.length - 1 : timing.index;
+  const currentTiming = done ? gamecastEventTiming(sequence, currentIndex) : timing;
+  const localMs = done ? currentTiming.slotMs : currentTiming.localMs;
   const currentEvent = sequence.events[currentIndex] ?? null;
-  const revealCurrent = done || localMs > Math.max(80, Number(sequence.paMs ?? GAMECAST_WATCH_PA_MS)) * gamecastResultRevealProgress(currentEvent);
+  const revealCurrent = done || localMs > currentTiming.playMs * gamecastResultRevealProgress(currentEvent);
   const feedEndIndex = revealCurrent ? currentIndex : currentIndex - 1;
   return {
     feedEvents: feedEndIndex >= 0 ? sequence.events.slice(0, feedEndIndex + 1) : [],
@@ -5854,6 +5895,15 @@ function normalizeGamecastEvent(event, state, gamecastContext = null) {
   const defenderProfile = resolveGamecastPlayerProfile(gamecastContext, defenderId, event?.defenderName, state, defenseTeam);
   const defenseProfilesByPosition = resolveGamecastDefenseProfiles(gamecastContext, defenseTeam, state);
   const fieldingPosition = resolveGamecastDefenderFieldingKey(defenderId, defenseProfilesByPosition, event?.fieldingPosition);
+  const defensiveThrowTarget = Object.prototype.hasOwnProperty.call(event ?? {}, "defensiveThrowTarget")
+    ? event?.defensiveThrowTarget ?? null
+    : resolveDefensiveThrowTarget({
+        ...event,
+        outcome: String(event?.outcome ?? "out"),
+        battedBallType: String(event?.battedBallType ?? ""),
+        fieldingPosition,
+        scoredRunners
+      });
   const baseRunnerProfilesBefore = resolveGamecastBaseRunnerProfiles(event?.baseRunnerIdsBefore, gamecastContext, state, offenseTeam);
   const baseRunnerProfilesAfter = resolveGamecastBaseRunnerProfiles(event?.baseRunnerIdsAfter, gamecastContext, state, offenseTeam);
   const teamColor = normalizeHexColor(getTeamColor(offenseTeam), side === "home" ? "#c64b74" : "#315288");
@@ -5893,6 +5943,7 @@ function normalizeGamecastEvent(event, state, gamecastContext = null) {
     battedBallType: String(event?.battedBallType ?? ""),
     fieldingPosition,
     recordedFieldingPosition: String(event?.fieldingPosition ?? ""),
+    defensiveThrowTarget,
     doublePlay: Boolean(event?.doublePlay),
     reachedOnError: Boolean(event?.reachedOnError),
     ballparkName: String(event?.ballparkName ?? ""),
@@ -5998,6 +6049,7 @@ function gamecastProfileFromPlayer(player) {
       player,
       position === "C" ? ["defense", "range", "arm", "catching", "catching"] : ["defense", "range", "arm"]
     ),
+    arm: Math.max(20, Math.min(200, Math.round((Number(player?.arm ?? player?.defense ?? 10) || 10) * 10))),
     running: gamecastCompositeProfileAbility(player, ["speed", "baserunning", "stealing"])
   };
 }
@@ -6268,7 +6320,7 @@ function gamecastOutcomeClass(outcome) {
   if (["single", "double", "triple"].includes(outcome)) return "is-hit";
   if (outcome === "walk") return "is-walk";
   if (outcome === "error") return "is-error";
-  if (outcome === "strikeout" || outcome === "out") return "is-out";
+  if (outcome === "strikeout" || outcome === "out" || outcome === "sacrificeBunt") return "is-out";
   return "is-ball";
 }
 
@@ -7154,9 +7206,10 @@ function normalizeGamecastSequenceForPlayback(sequence) {
     soundEnabled: sequence?.soundEnabled !== false,
     events: Array.isArray(sequence?.events) ? sequence.events : []
   };
-  normalized.initialElapsedMs = Math.min(gamecastTotalDuration(normalized), normalized.initialElapsedMs);
+  normalized.totalMs = gamecastTotalDuration(normalized);
+  normalized.initialElapsedMs = Math.min(normalized.totalMs, normalized.initialElapsedMs);
   if (normalized.done) {
-    normalized.initialElapsedMs = gamecastTotalDuration(normalized);
+    normalized.initialElapsedMs = normalized.totalMs;
     normalized.paused = false;
     normalized.hold = null;
   }
@@ -7183,8 +7236,54 @@ function normalizeGamecastSequenceBallpark(profile) {
   };
 }
 
-function gamecastEventDuration(sequence) {
-  return Math.max(80, Number(sequence?.paMs ?? GAMECAST_PA_MS)) + Math.max(0, Number(sequence?.gapMs ?? GAMECAST_PA_GAP_MS));
+export function gamecastEventPlayDuration(sequence, event = null) {
+  const fallback = Math.max(80, Number(sequence?.paMs ?? GAMECAST_PA_MS));
+  const authored = Number(event?.gamecastDurationMs);
+  if (String(sequence?.mode ?? "") === "watch" && Number.isFinite(authored) && authored >= 80) {
+    return authored;
+  }
+  return fallback;
+}
+
+function gamecastEventDuration(sequence, event = null) {
+  return gamecastEventPlayDuration(sequence, event)
+    + Math.max(0, Number(sequence?.gapMs ?? GAMECAST_PA_GAP_MS));
+}
+
+function gamecastEventTiming(sequence, index) {
+  const events = sequence?.events ?? [];
+  const safeIndex = Math.max(0, Math.min(events.length - 1, Math.floor(Number(index) || 0)));
+  let startMs = 0;
+  for (let cursor = 0; cursor < safeIndex; cursor += 1) {
+    startMs += gamecastEventDuration(sequence, events[cursor]);
+  }
+  const event = events[safeIndex] ?? null;
+  const playMs = gamecastEventPlayDuration(sequence, event);
+  const gapMs = Math.max(0, Number(sequence?.gapMs ?? GAMECAST_PA_GAP_MS));
+  const slotMs = playMs + gapMs;
+  return { index: safeIndex, event, startMs, playMs, gapMs, slotMs, endMs: startMs + slotMs };
+}
+
+export function gamecastPlaybackPosition(sequence, elapsedMs) {
+  const events = sequence?.events ?? [];
+  if (!events.length) {
+    return { index: -1, event: null, startMs: 0, playMs: 0, gapMs: 0, slotMs: 0, endMs: 0, localMs: 0 };
+  }
+  const totalMs = gamecastTotalDuration(sequence);
+  const elapsed = Math.max(0, Math.min(totalMs, Number(elapsedMs) || 0));
+  let startMs = 0;
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    const playMs = gamecastEventPlayDuration(sequence, event);
+    const gapMs = Math.max(0, Number(sequence?.gapMs ?? GAMECAST_PA_GAP_MS));
+    const slotMs = playMs + gapMs;
+    const endMs = startMs + slotMs;
+    if (elapsed < endMs || index === events.length - 1) {
+      return { index, event, startMs, playMs, gapMs, slotMs, endMs, localMs: elapsed - startMs };
+    }
+    startMs = endMs;
+  }
+  return gamecastEventTiming(sequence, events.length - 1);
 }
 
 function sanitizeGamecastSpeed(value) {
@@ -7812,12 +7911,34 @@ function drawPixelBroadcastBug(ctx, palette, frame) {
 }
 
 // balls/strikes are a broadcast-flavor build-up (engine resolves a PA in one roll, no pitch count); outs are real
-function gamecastPitchCount(frame) {
+export function gamecastPitchCount(frame) {
+  if (frame.event?.outcome === "walk") return { balls: 3, strikes: 0 };
   const t = Math.max(0, Math.min(1, Number(frame.progress ?? 0) / 0.68));
   const outcome = frame.event?.outcome;
-  if (outcome === "walk") return { balls: Math.min(3, Math.floor(t * 4)), strikes: Math.min(2, Math.floor(t * 2)) };
-  if (outcome === "strikeout") return { balls: Math.min(2, Math.floor(t * 2)), strikes: Math.min(2, Math.floor(t * 3)) };
+  // Walks and strikeouts each show only the decisive pitch. Preload the legal
+  // count so ball four / strike three reads correctly without replaying the PA.
+  if (outcome === "strikeout") return { balls: 0, strikes: 2 };
   return { balls: Math.min(2, Math.floor(t * 2.4)), strikes: Math.min(2, Math.floor(t * 2.2)) };
+}
+
+export function gamecastWalkPitchState(progress) {
+  const normalized = Math.max(0, Math.min(1, Number(progress) || 0));
+  for (let index = GAMECAST_WALK_PITCH_STARTS.length - 1; index >= 0; index -= 1) {
+    const startT = GAMECAST_WALK_PITCH_STARTS[index];
+    const endT = startT + GAMECAST_WALK_PITCH_SPAN;
+    if (normalized < startT || normalized > endT) continue;
+    const releaseT = startT + GAMECAST_WALK_PITCH_RELEASE_OFFSET;
+    return {
+      pitchNumber: 4,
+      startT,
+      releaseT,
+      endT,
+      localT: (normalized - startT) / GAMECAST_WALK_PITCH_SPAN,
+      released: normalized >= releaseT,
+      ballT: Math.max(0, Math.min(1, (normalized - releaseT) / Math.max(0.001, endT - releaseT)))
+    };
+  }
+  return null;
 }
 
 function drawPixelCountRow(ctx, palette, x, y, filled, total, onColor) {
@@ -7870,9 +7991,13 @@ function gamecastJumbotronText(event) {
   if (!event) return "LIVE";
   if (event.doublePlay) return "DP";
   if (event.outcome === "homeRun") return "HR";
-  if (["single", "double", "triple", "error"].includes(event.outcome)) return "HIT";
+  if (event.outcome === "single") return "1B";
+  if (event.outcome === "double") return "2B";
+  if (event.outcome === "triple") return "3B";
+  if (event.outcome === "error") return "E";
   if (event.outcome === "strikeout") return "K";
   if (event.outcome === "walk") return "BB";
+  if (event.outcome === "sacrificeBunt") return "SAC";
   if (event.outcome === "out") return "OUT";
   return "LIVE";
 }
@@ -7887,6 +8012,18 @@ function gamecastJumbotronTextForFrame(frame) {
   if (event.outcome === "walk") return "COUNT";
   if (event.outcome === "strikeout") return "PITCH";
   return "LIVE";
+}
+
+function gamecastHudTextForFrame(frame) {
+  const event = frame?.event;
+  if (!event) return "LIVE";
+  if (frame?.done || gamecastFrameResultRevealed(frame)) return gamecastResultDisplayText(event);
+  const progress = Number(frame.progress ?? 0);
+  if (progress < gamecastPitchEnd(event) - 0.04) return "투구";
+  if (isBattedBallOutcome(event.outcome)) return "타구 진행";
+  if (event.outcome === "walk") return "볼 카운트";
+  if (event.outcome === "strikeout") return "투구";
+  return "판정 중";
 }
 
 function drawPixelScoreDigits(ctx, palette, x, y, value, color) {
@@ -7946,6 +8083,9 @@ function miniPixelTextWidth(text) {
 
 function miniPixelLetterMap() {
   return {
+    "1": ["010", "110", "010", "010", "111"],
+    "2": ["110", "001", "111", "100", "111"],
+    "3": ["110", "001", "111", "001", "110"],
     A: ["010", "101", "111", "101", "101"],
     B: ["110", "101", "110", "101", "110"],
     C: ["111", "100", "100", "100", "111"],
@@ -8168,7 +8308,11 @@ function drawPixelThrowLine(ctx, palette, line) {
   const t = Math.max(0, Math.min(1, Number(line.t ?? 0)));
   const ball = positionAlongPath([line.from, line.to], t);
   const previous = positionAlongPath([line.from, line.to], Math.max(0, t - 0.08));
-  drawPixelBall(ctx, palette, withGamecastBallVector(ball, previous, { kind: "throw", size: 1, opacity: flicker }), palette.base);
+  drawPixelBall(ctx, palette, withGamecastBallVector(ball, previous, {
+    kind: "throw",
+    size: gamecastBallDisplaySize("throw"),
+    opacity: flicker
+  }), palette.base);
 }
 
 function drawPixelContactBurst(ctx, palette, burst) {
@@ -8358,7 +8502,11 @@ function drawPixelUmpire(ctx, palette, frame) {
 function drawPixelPitchTunnel(ctx, palette, event, progress, pitchEnd) {
   const bases = gamecastBasePositions();
   const target = pitchTargetForEvent(event, bases);
-  const t = Math.max(0, Math.min(1, progress / Math.max(0.01, pitchEnd)));
+  const walkPitch = event?.outcome === "walk" ? gamecastWalkPitchState(progress) : null;
+  if (event?.outcome === "walk" && !walkPitch?.released) return;
+  const t = walkPitch
+    ? walkPitch.ballT
+    : Math.max(0, Math.min(1, progress / Math.max(0.01, pitchEnd)));
   for (let index = 0; index < 7; index += 1) {
     const p = Math.max(0, t - index * 0.09);
     if (p <= 0) continue;
@@ -8481,9 +8629,9 @@ function gamecastDefensiveAlignment() {
   const bases = gamecastBasePositions();
   const plate = gamecastHomePlateCluster();
   return [
-    { key: "LF", position: { x: gamecastX(31), y: gamecastY(47) }, frame: 1 },
-    { key: "CF", position: { x: gamecastX(60), y: gamecastY(34) }, frame: 2 },
-    { key: "RF", position: { x: gamecastX(89), y: gamecastY(47) }, frame: 0 },
+    { key: "LF", position: { x: gamecastX(31), y: gamecastY(42) }, frame: 1 },
+    { key: "CF", position: { x: gamecastX(60), y: gamecastY(29) }, frame: 2 },
+    { key: "RF", position: { x: gamecastX(89), y: gamecastY(42) }, frame: 0 },
     { key: "SS", position: { x: gamecastX(46), y: gamecastY(63) }, frame: 1 },
     { key: "2B", position: { x: gamecastX(73), y: gamecastY(62) }, frame: 0 },
     { key: "3B", position: { x: gamecastX(37), y: gamecastY(70) }, frame: 2 },
@@ -8614,9 +8762,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
     };
   }
 
-  const paMs = Math.max(80, Number(seq.paMs ?? GAMECAST_PA_MS));
-  const slotMs = gamecastEventDuration(seq);
-  const totalMs = events.length * slotMs;
+  const totalMs = gamecastTotalDuration(seq);
   if (forceFinal || state.prefersReducedMotion || state.elapsedMs >= totalMs) {
     const last = events[events.length - 1];
     return {
@@ -8644,21 +8790,24 @@ function buildGamecastFrameState(state, forceFinal = false) {
       baseCallout: null,
       inningSlate: null,
       ballparkProfile: seq.ballparkProfile,
+      playbackDurationMs: gamecastEventPlayDuration(seq, last),
       progress: 1
     };
   }
 
-  const index = Math.min(events.length - 1, Math.floor(state.elapsedMs / slotMs));
-  const localMs = state.elapsedMs - index * slotMs;
-  const event = events[index];
+  const timing = gamecastPlaybackPosition(seq, state.elapsedMs);
+  const index = timing.index;
+  const localMs = timing.localMs;
+  const event = timing.event;
   const nextEvent = events[index + 1] ?? null;
-  const gapMs = Math.max(0, Number(seq.gapMs ?? GAMECAST_PA_GAP_MS));
+  const paMs = timing.playMs;
+  const gapMs = timing.gapMs;
   const rawProgress = Math.max(0, Math.min(1, localMs / paMs));
   const gapProgress = localMs > paMs && gapMs > 0
     ? Math.max(0, Math.min(1, (localMs - paMs) / gapMs))
     : 0;
   const leverage = gamecastLeverageScore(seq, events, index);
-  const progress = gapProgress > 0 ? 1 : gamecastTempoProgress(event, rawProgress, leverage, state.stepMode);
+  const progress = gapProgress > 0 ? 1 : gamecastTempoProgress(event, rawProgress, leverage, state.stepMode, seq.mode);
   const resultRevealProgress = gamecastResultRevealProgress(event);
   const scoreRevealProgress = gamecastScoreRevealProgress(event);
   const resultRevealed = gapProgress > 0 || progress >= resultRevealProgress;
@@ -8718,7 +8867,10 @@ function buildGamecastFrameState(state, forceFinal = false) {
     rawProgress,
     gapProgress,
     bridge,
-    leverage
+    leverage,
+    playbackDurationMs: paMs,
+    eventStartMs: timing.startMs,
+    eventEndMs: timing.endMs
   };
 }
 
@@ -8739,18 +8891,22 @@ function gamecastLeverageScore(seq, events, index) {
   return Math.max(0, Math.min(1, score));
 }
 
-function gamecastTempoProgress(event, rawProgress, leverage, stepMode = false) {
+function gamecastTempoProgress(event, rawProgress, leverage, stepMode = false, mode = "summary") {
   const raw = Math.max(0, Math.min(1, Number(rawProgress) || 0));
+  if (String(mode) === "watch") return raw;
   const lev = Math.max(0, Math.min(1, Number(leverage) || 0));
   const lowLeverageOut = event?.outcome === "out" && lev < 0.25 && Number(event?.runs ?? 0) <= 0;
   if (lowLeverageOut && !stepMode) return Math.min(1, raw * 1.18);
   return raw;
 }
 
-function gamecastEffectivePlaybackRate(state, frame = null) {
+export function gamecastEffectivePlaybackRate(state, frame = null) {
   if (state?.paused || state?.done) return 0;
   const rate = sanitizeGamecastSpeed(state?.playbackRate);
   const activeFrame = frame ?? state?.currentFrame;
+  if ((activeFrame?.resultRevealed || activeFrame?.bridge) && state?.sequence?.mode === "watch") {
+    return Math.min(rate, 1);
+  }
   if (rate >= 4 && gamecastCriticalBallPhase(activeFrame)) {
     return Math.min(rate, GAMECAST_FAST_BALL_RATE);
   }
@@ -8764,7 +8920,8 @@ function gamecastCriticalBallPhase(frame) {
   const event = frame?.event;
   if (!event || frame.done) return false;
   const progress = Number(frame.progress ?? 0);
-  const pitchStarts = event.outcome === "walk" ? [0, 0.2, 0.4] : event.outcome === "strikeout" ? [0, 0.23, 0.46] : [0];
+  if (event.outcome === "walk") return Boolean(gamecastWalkPitchState(progress));
+  const pitchStarts = [0];
   if (pitchStarts.some((start) => progress >= start && progress <= start + 0.22)) return true;
   return isBattedBallOutcome(event.outcome) && progress < gamecastBallFlightEnd(event);
 }
@@ -8779,9 +8936,9 @@ function maybeHoldGamecastPlayback(state, frame, applyHold) {
   const event = events[eventIndex] ?? frame.event;
   const nextEvent = events[eventIndex + 1] ?? null;
   const totalMs = gamecastTotalDuration(state.sequence);
-  const slotMs = gamecastEventDuration(state.sequence);
-  const holdElapsedMs = Math.max(0, Math.min(totalMs, (eventIndex + 1) * slotMs - 1));
-  const resumeElapsedMs = Math.max(0, Math.min(totalMs, (eventIndex + 1) * slotMs + 1));
+  const timing = gamecastEventTiming(state.sequence, eventIndex);
+  const holdElapsedMs = Math.max(0, Math.min(totalMs, timing.endMs - 1));
+  const resumeElapsedMs = Math.max(0, Math.min(totalMs, timing.endMs + 1));
   const allowAutomaticHolds = state.holdsEnabled !== false && !isFastGamecastPlayback(state);
   const setBoundaryHoldTime = () => {
     state.elapsedMs = holdElapsedMs;
@@ -8804,7 +8961,7 @@ function maybeHoldGamecastPlayback(state, frame, applyHold) {
         type: "leverage",
         key,
         eventIndex,
-        resumeElapsedMs: Math.max(0, Math.min(totalMs, eventIndex * slotMs + 1)),
+        resumeElapsedMs: Math.max(0, Math.min(totalMs, timing.startMs + 1)),
         title: "승부처",
         detail: gamecastHoldSituationDetail(event),
         action: "승부 보기 ▶"
@@ -8846,7 +9003,7 @@ function gamecastHoldSituationDetail(event) {
 function buildGamecastBaseCallout(event, progress) {
   if (!event) return null;
   const isSafeOutcome = ["single", "double", "triple", "walk", "error"].includes(event.outcome);
-  const isOutOutcome = event.outcome === "out" || event.doublePlay;
+  const isOutOutcome = ["out", "sacrificeBunt"].includes(event.outcome) || event.doublePlay;
   const reveal = gamecastResultRevealProgress(event);
   const start = Math.max(0.5, reveal - 0.1);
   const end = Math.min(0.98, reveal + 0.1);
@@ -8868,7 +9025,7 @@ function buildGamecastBaseCallout(event, progress) {
 function gamecastCalloutAnchor(event) {
   const bases = gamecastBasePositions();
   if (event?.doublePlay) return bases.second;
-  if (event?.outcome === "out") {
+  if (["out", "sacrificeBunt"].includes(event?.outcome)) {
     const fieldingKey = normalizeFieldingPosition(event.fieldingPosition);
     const battedType = String(event.battedBallType ?? "");
     if (["LF", "CF", "RF"].includes(fieldingKey) || battedType === "flyBall" || battedType === "lineDrive") {
@@ -8893,8 +9050,9 @@ function buildGamecastInningSlate(event, progress) {
 }
 
 function buildGamecastBridgeSlate(event, nextEvent, gapProgress) {
-  const t = Math.max(0, Math.min(1, Number(gapProgress) || 0));
-  if (!event || !nextEvent || t <= 0) return null;
+  const raw = Math.max(0, Math.min(1, Number(gapProgress) || 0));
+  if (!event || !nextEvent || raw < 0.82) return null;
+  const t = Math.max(0, Math.min(1, (raw - 0.82) / 0.18));
   const changingSide = event.inning !== nextEvent.inning || event.side !== nextEvent.side || event.inningEnded;
   return {
     text: changingSide ? "CHANGE" : "NEXT",
@@ -8902,66 +9060,63 @@ function buildGamecastBridgeSlate(event, nextEvent, gapProgress) {
   };
 }
 
-function buildGamecastActionBurst(event, progress) {
+export function buildGamecastActionBurst(event, progress) {
   if (!event) return null;
-  const profile = gamecastBurstProfile(event.outcome);
+  const profile = gamecastBurstProfile(event);
   const start = Math.max(gamecastResultRevealProgress(event), gamecastPitchEnd(event) + profile.delay);
-  const end = Math.max(profile.end, Math.min(1, start + 0.22));
+  const end = 1;
   if (progress < start || progress > end) return null;
 
   const t = Math.max(0, Math.min(1, (progress - start) / Math.max(0.01, end - start)));
   const popIn = easeOutBack(Math.min(1, t / 0.28));
-  const hold = t < 0.72 ? 1 : Math.max(0, (1 - t) / 0.28);
+  const motionHold = t < 0.55 ? 1 : Math.max(0, (1 - t) / 0.45);
   const bounce = Math.sin(Math.min(1, t * 1.2) * Math.PI);
-  const text = gamecastBurstText(event.outcome);
+  const text = gamecastBurstText(event);
   if (!text) return null;
 
   return {
     text,
-    className: gamecastBurstClass(event.outcome),
+    className: gamecastBurstClass(event),
     x: profile.x,
     y: profile.y,
-    opacity: Math.max(0, Math.min(1, t < 0.1 ? t / 0.1 : hold)),
+    opacity: Math.max(0, Math.min(1, t < 0.1 ? t / 0.1 : 1)),
     scaleX: profile.baseScale + popIn * profile.pop + bounce * 0.1,
     scaleY: profile.baseScale + popIn * profile.pop * 0.82 - bounce * 0.08,
-    shakeX: Math.round(Math.sin(t * Math.PI * profile.shakeRate) * profile.shake * hold),
-    shakeY: Math.round(Math.cos(t * Math.PI * (profile.shakeRate - 1)) * profile.shake * 0.36 * hold),
-    rotate: Math.sin(t * Math.PI * (profile.shakeRate - 2)) * profile.tilt * hold,
-    impact: Math.max(0, Math.min(1, Math.sin(Math.min(1, t * 1.35) * Math.PI))) * hold
+    shakeX: Math.round(Math.sin(t * Math.PI * profile.shakeRate) * profile.shake * motionHold),
+    shakeY: Math.round(Math.cos(t * Math.PI * (profile.shakeRate - 1)) * profile.shake * 0.36 * motionHold),
+    rotate: Math.sin(t * Math.PI * (profile.shakeRate - 2)) * profile.tilt * motionHold,
+    impact: Math.max(0, Math.min(1, Math.sin(Math.min(1, t * 1.35) * Math.PI))) * motionHold
   };
 }
 
-function gamecastBurstProfile(outcome) {
+function gamecastBurstProfile(event) {
+  const outcome = event?.outcome;
   if (outcome === "homeRun") {
-    return { delay: 0.01, end: 0.98, x: 50, y: 30, baseScale: 0.62, pop: 1.1, shake: 11, shakeRate: 15, tilt: 5 };
+    return { delay: 0.01, end: 0.995, x: 50, y: 13, baseScale: 0.82, pop: 0.58, shake: 3, shakeRate: 10, tilt: 1.5 };
   }
   if (outcome === "strikeout") {
-    return { delay: 0.03, end: 0.88, x: 53, y: 42, baseScale: 0.68, pop: 0.82, shake: 7, shakeRate: 13, tilt: 4 };
+    return { delay: 0.03, end: 0.995, x: 50, y: 13, baseScale: 0.84, pop: 0.48, shake: 2, shakeRate: 8, tilt: 1 };
   }
   if (outcome === "walk") {
-    return { delay: 0.04, end: 0.86, x: 54, y: 42, baseScale: 0.7, pop: 0.66, shake: 4, shakeRate: 9, tilt: 2.5 };
+    return { delay: 0.04, end: 0.995, x: 50, y: 13, baseScale: 0.84, pop: 0.42, shake: 1, shakeRate: 7, tilt: 0.8 };
   }
   if (outcome === "out") {
-    return { delay: 0.04, end: 0.86, x: 55, y: 39, baseScale: 0.68, pop: 0.72, shake: 7, shakeRate: 12, tilt: 4 };
+    return { delay: 0.04, end: 0.995, x: 50, y: 13, baseScale: 0.84, pop: 0.44, shake: event?.doublePlay ? 3 : 1, shakeRate: 8, tilt: 1 };
   }
-  return { delay: 0.02, end: 0.9, x: 56, y: 36, baseScale: 0.66, pop: 0.9, shake: 8, shakeRate: 14, tilt: 4.5 };
+  return { delay: 0.02, end: 0.995, x: 50, y: 13, baseScale: 0.84, pop: 0.5, shake: 2, shakeRate: 9, tilt: 1 };
 }
 
-function gamecastBurstText(outcome) {
-  if (outcome === "homeRun") return "홈런!";
-  if (outcome === "triple") return "3루타!";
-  if (outcome === "double") return "2루타!";
-  if (outcome === "single" || outcome === "error") return "안타!";
-  if (outcome === "strikeout") return "삼진!";
-  if (outcome === "walk") return "볼넷!";
-  if (outcome === "out") return "아웃!";
-  return "";
+function gamecastBurstText(event) {
+  const text = gamecastResultDisplayText(event);
+  return text && text !== "-" ? `${text}!` : "";
 }
 
-function gamecastBurstClass(outcome) {
+function gamecastBurstClass(event) {
+  const outcome = event?.outcome;
   if (outcome === "homeRun") return "is-homer";
-  if (["single", "double", "triple", "error"].includes(outcome)) return "is-hit";
-  if (outcome === "strikeout" || outcome === "out") return "is-out";
+  if (["single", "double", "triple"].includes(outcome)) return "is-hit";
+  if (outcome === "error") return "is-error";
+  if (outcome === "strikeout" || outcome === "out" || outcome === "sacrificeBunt") return "is-out";
   if (outcome === "walk") return "is-walk";
   return "";
 }
@@ -8994,7 +9149,7 @@ function buildBatterSprite(event, progress, palette) {
   const batted = isBattedBallOutcome(event.outcome);
   const runnerStart = gamecastRunnerMoveStart(event);
   if ((advance > 0 || event.outcome === "walk") && progress >= runnerStart) return null;
-  if (event.outcome === "out" && progress >= runnerStart) return null;
+  if (["out", "sacrificeBunt"].includes(event.outcome) && progress >= runnerStart) return null;
   let pose = "stance";
   if (progress >= pitchEnd - 0.08 && progress < pitchEnd + 0.01) pose = "load";
   else if (progress >= pitchEnd + 0.01 && progress < pitchEnd + 0.16) {
@@ -9085,12 +9240,17 @@ function shortenGamecastPlayerName(name) {
 }
 
 function baseOccupancyDuringMove(event, progress) {
-  const advance = gamecastAdvanceCount(event.outcome);
-  const moveStart = gamecastRunnerMoveStart(event);
-  const moveEnd = gamecastRunnerMoveEnd(event);
-  if (progress < moveStart || advance <= 0) return event.basesBefore;
-  if (progress >= moveEnd) return event.basesAfter;
-  return event.basesBefore.map((occupied, index) => occupied && progress < (moveStart + 0.05 + index * 0.04));
+  const transitions = gamecastRunnerTransitions(event);
+  if (transitions.length === 0) return progress >= gamecastResultRevealProgress(event) ? event.basesAfter : event.basesBefore;
+  const occupancy = [...event.basesBefore];
+  for (const transition of transitions) {
+    const timing = gamecastRunnerTransitionTiming(event, transition);
+    if (transition.fromBase > 0 && progress >= timing.startT) occupancy[transition.fromBase - 1] = false;
+    if (!transition.out && transition.toBase > 0 && transition.toBase < 4 && progress >= timing.endT) {
+      occupancy[transition.toBase - 1] = true;
+    }
+  }
+  return occupancy;
 }
 
 function scoreForGamecastFrame(seq, events, currentIndex, includeCurrent) {
@@ -9117,15 +9277,9 @@ function outsInInning(value) {
 }
 
 function buildRunnerSprites(event, progress, palette) {
-  const advance = gamecastAdvanceCount(event.outcome);
-  if (event.outcome === "strikeout") return [];
-  const moveStart = gamecastRunnerMoveStart(event);
-  const moveEnd = gamecastRunnerMoveEnd(event);
-  if (progress < moveStart || progress >= moveEnd) return [];
-
-  const moveT = Math.max(0, Math.min(1, (progress - moveStart) / Math.max(0.01, moveEnd - moveStart)));
+  const transitions = gamecastRunnerTransitions(event);
+  if (transitions.length === 0) return [];
   const walking = event.outcome === "walk";
-  const eased = walking ? easeInOutCubic(moveT) : easeOutCubic(moveT);
   const runners = [];
   const runnerColor = event.teamColor ?? palette.runner;
   const trailColor = event.teamTrailColor ?? palette.runnerL;
@@ -9134,62 +9288,129 @@ function buildRunnerSprites(event, progress, palette) {
   const accentColor = event.teamAccentColor ?? runnerColor;
   const uniformNumber = event.hitterUniformNumber;
 
-  if (advance > 0) {
-    event.basesBefore.forEach((occupied, index) => {
-      if (!occupied) return;
-      const startBase = index + 1;
-      const targetBase = Math.min(4, startBase + advance);
-      const runnerProfile = event.baseRunnerProfilesBefore?.[index] ?? null;
-      const runnerAbility = gamecastAbilityVisual(runnerProfile);
-      runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, runnerColor, trailColor, moveT, "runner", {
-        jerseyColor,
-        jerseyShadow,
-        accentColor,
-        uniformNumber: gamecastProfileUniformNumber(runnerProfile, runnerProfile?.name ?? "", runnerProfile?.id ?? ""),
-        ability: runnerAbility,
-        pose: walking ? "walk" : "run",
-        trail: !walking,
-        allowSlide: !walking && event.outcome !== "homeRun"
-      }));
-    });
-    const batterTarget = Math.min(4, advance);
-    runners.push(makeRunnerSprite(gamecastBatterPathTo(batterTarget), eased, runnerColor, trailColor, moveT, "batter", {
+  for (const transition of transitions) {
+    const timing = gamecastRunnerTransitionTiming(event, transition);
+    if (progress < timing.startT || progress >= timing.endT) continue;
+    const moveT = Math.max(0, Math.min(1, (progress - timing.startT) / Math.max(0.01, timing.endT - timing.startT)));
+    const eased = walking ? easeInOutCubic(moveT) : easeOutCubic(moveT);
+    const runnerProfile = transition.role === "batter"
+      ? null
+      : event.baseRunnerProfilesBefore?.[transition.fromBase - 1] ?? null;
+    const runnerAbility = transition.role === "batter" ? event.hitterAbility : gamecastAbilityVisual(runnerProfile);
+    const path = transition.role === "batter"
+      ? gamecastBatterPathTo(transition.toBase)
+      : gamecastPathBetween(transition.fromBase, transition.toBase);
+    runners.push(makeRunnerSprite(path, eased, runnerColor, trailColor, moveT, transition.role, {
       jerseyColor,
       jerseyShadow,
       accentColor,
-      uniformNumber,
-      ability: event.hitterAbility,
+      uniformNumber: transition.role === "batter"
+        ? uniformNumber
+        : gamecastProfileUniformNumber(runnerProfile, runnerProfile?.name ?? "", runnerProfile?.id ?? ""),
+      ability: runnerAbility,
       pose: walking ? "walk" : "run",
       trail: !walking,
-      allowSlide: !walking && event.outcome !== "homeRun" && batterTarget > 1
+      allowSlide: !walking && event.outcome !== "homeRun" && (timing.slide || transition.out)
     }));
-    return runners;
+  }
+  return runners;
+}
+
+export function gamecastRunnerTransitions(event) {
+  if (!event || event.outcome === "strikeout") return [];
+  const beforeIds = Array.from({ length: 3 }, (_, index) => String(event.baseRunnerIdsBefore?.[index] ?? ""));
+  const afterIds = Array.from({ length: 3 }, (_, index) => String(event.baseRunnerIdsAfter?.[index] ?? ""));
+  const afterBaseById = new Map();
+  afterIds.forEach((id, index) => {
+    if (id) afterBaseById.set(id, index + 1);
+  });
+  const scoredIds = new Set((event.scoredRunners ?? [])
+    .map((runner) => String(runner?.id ?? runner?.runnerId ?? runner ?? ""))
+    .filter(Boolean));
+  const transitions = [];
+
+  for (let index = 0; index < 3; index += 1) {
+    const occupied = Boolean(event.basesBefore?.[index] || beforeIds[index]);
+    if (!occupied) continue;
+    const fromBase = index + 1;
+    const id = beforeIds[index];
+    let toBase = id && scoredIds.has(id) ? 4 : id ? afterBaseById.get(id) : null;
+    let out = false;
+    if (!toBase && event.doublePlay && fromBase === 1) {
+      toBase = 2;
+      out = true;
+    }
+    if (!toBase && !id) {
+      const openAfterBase = (event.basesAfter ?? [])
+        .map((value, afterIndex) => value ? afterIndex + 1 : 0)
+        .find((base) => base > fromBase);
+      toBase = openAfterBase || null;
+    }
+    if (Number.isInteger(toBase) && (toBase > fromBase || out)) {
+      transitions.push({ id: id || `runner-${fromBase}`, role: "runner", fromBase, toBase, out });
+    }
   }
 
-  const bases = gamecastBasePositions();
-  const batterStart = gamecastHomePlateCluster().batter;
-  const outT = Math.min(1, moveT * 1.3);
-  runners.push({
-    position: {
-      x: Math.round(lerp(batterStart.x, bases.home.x + gamecastSize(7), outT)),
-      y: Math.round(lerp(batterStart.y, bases.home.y - gamecastSize(3), outT))
-    },
-    trail: [],
-    color: runnerColor,
-    jerseyColor,
-    jerseyShadow,
-    accentColor,
-    uniformNumber,
-    runFrame: Math.floor(moveT * 12) % 4,
-    squash: progress > 0.55,
-    role: "batter",
-    pose: "run",
-    animationKey: "run",
-    animationT: moveT * 2,
-    animationLoop: true,
-    ...gamecastAbilitySpriteFields(event.hitterAbility, true)
-  });
-  return runners;
+  const hitterId = String(event.hitterId ?? "");
+  const recordedBatterBase = hitterId ? afterIds.indexOf(hitterId) + 1 : 0;
+  const caughtOut = gamecastCaughtBattedOut(event);
+  let batterTarget = recordedBatterBase;
+  let batterOut = false;
+  if (!batterTarget && event.outcome === "homeRun") batterTarget = 4;
+  if (!batterTarget && !caughtOut && (["out", "sacrificeBunt"].includes(event.outcome) || event.doublePlay)) {
+    batterTarget = 1;
+    batterOut = true;
+  }
+  if (!batterTarget && !caughtOut) batterTarget = gamecastAdvanceCount(event.outcome);
+  if (batterTarget > 0 && !caughtOut) {
+    transitions.push({ id: hitterId || "batter", role: "batter", fromBase: 0, toBase: batterTarget, out: batterOut });
+  }
+  return transitions;
+}
+
+export function gamecastRunnerTransitionTiming(event, transition) {
+  const durationMs = Math.max(1, Number(event?.gamecastDurationMs) || getGamecast2PlayDurationMs(event));
+  const distance = Math.max(1, Number(transition?.toBase ?? 0) - Number(transition?.fromBase ?? 0));
+  const tagUp = transition?.role === "runner" && gamecastCaughtBattedOut(event);
+  const authoredStartMs = transition?.role === "runner"
+    ? getGamecast2RunnerStartMs(event, { tagUp })
+    : null;
+  const hasAuthoredStart = authoredStartMs !== null
+    && authoredStartMs !== undefined
+    && Number.isFinite(Number(authoredStartMs));
+  const fallbackStartT = tagUp ? gamecastFieldingCatchProgress(event) + 0.015 : gamecastRunnerMoveStart(event);
+  const startT = Math.max(0, Math.min(
+    0.975,
+    hasAuthoredStart ? Number(authoredStartMs) / durationMs : fallbackStartT
+  ));
+  const slide = event?.outcome !== "homeRun"
+    && (distance >= 2 || (transition?.role === "runner" && Boolean(transition?.out)));
+  if (transition?.role === "batter" && event?.outcome === "homeRun") {
+    const endT = Math.min(0.985, Math.max(startT + 0.01, 0.94));
+    return {
+      startT,
+      endT,
+      durationMs: Math.max(1, (endT - startT) * durationMs),
+      distance,
+      slide: false,
+      tagUp: false
+    };
+  }
+  const motionMs = distance * GAMECAST_RUN_MS_PER_BASE + (slide ? GAMECAST_SLIDE_MS : 0);
+  return {
+    startT,
+    endT: Math.min(0.985, startT + motionMs / durationMs),
+    durationMs: motionMs,
+    distance,
+    slide,
+    tagUp
+  };
+}
+
+function gamecastCaughtBattedOut(event) {
+  if (event?.outcome !== "out" || event?.doublePlay) return false;
+  const battedBallType = String(event?.battedBallType ?? "").toLowerCase();
+  return battedBallType.includes("fly") || battedBallType.includes("line");
 }
 
 function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner", options = {}) {
@@ -9236,6 +9457,27 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner"
 function buildBallSprite(event, progress) {
   const bases = gamecastBasePositions();
   const pitchEnd = gamecastPitchEnd(event);
+  if (event.outcome === "walk") {
+    const pitch = gamecastWalkPitchState(progress);
+    if (!pitch?.released) return null;
+    const target = pitchTargetForEvent(event, bases);
+    const currentT = easeOutCubic(pitch.ballT);
+    const previousT = easeOutCubic(Math.max(0, pitch.ballT - 0.08));
+    const current = {
+      x: Math.round(lerp(bases.mound.x, target.x, currentT)),
+      y: Math.round(lerp(bases.mound.y, target.y, currentT))
+    };
+    const previous = {
+      x: Math.round(lerp(bases.mound.x, target.x, previousT)),
+      y: Math.round(lerp(bases.mound.y, target.y, previousT))
+    };
+    return withGamecastBallVector(current, previous, {
+      kind: "pitch",
+      pitchNumber: pitch.pitchNumber,
+      size: gamecastBallDisplaySize("pitch", event),
+      opacity: 1
+    });
+  }
   if (progress < pitchEnd) {
     const t = Math.max(0, Math.min(1, progress / pitchEnd));
     const target = pitchTargetForEvent(event, bases);
@@ -9248,10 +9490,9 @@ function buildBallSprite(event, progress) {
       x: Math.round(lerp(bases.mound.x, target.x, easeOutCubic(previousT))),
       y: Math.round(lerp(bases.mound.y, target.y, easeOutCubic(previousT)))
     };
-    return withGamecastBallVector(current, previous, { kind: "pitch", size: 1.7, opacity: 1 });
+    return withGamecastBallVector(current, previous, { kind: "pitch", size: gamecastBallDisplaySize("pitch", event), opacity: 1 });
   }
-  if (event.outcome === "walk") return progress < gamecastResultRevealProgress(event) - 0.04 ? { ...pitchTargetForEvent(event, bases), kind: "pitch", size: 1.55, opacity: 1 } : null;
-  if (event.outcome === "strikeout") return progress < gamecastResultRevealProgress(event) - 0.04 ? { ...pitchTargetForEvent(event, bases), kind: "pitch", size: 1.55, opacity: 1 } : null;
+  if (event.outcome === "strikeout") return progress < gamecastResultRevealProgress(event) - 0.04 ? { ...pitchTargetForEvent(event, bases), kind: "pitch", size: gamecastBallDisplaySize("held", event), opacity: 1 } : null;
   const flightEnd = gamecastBallFlightEnd(event);
   if (!isBattedBallOutcome(event.outcome) || progress >= flightEnd) return null;
   const t = Math.max(0, Math.min(1, (progress - pitchEnd) / Math.max(0.01, flightEnd - pitchEnd)));
@@ -9259,14 +9500,41 @@ function buildBallSprite(event, progress) {
   const previous = battedBallPoint(event, Math.max(0, t - 0.06));
   return withGamecastBallVector(current, previous, {
     kind: "batted",
-    size: event.outcome === "homeRun" ? 3 : String(event.battedBallType ?? "") === "flyBall" ? 2.2 : 1.8,
+    size: gamecastBallDisplaySize("batted", event),
     opacity: 1
   });
+}
+
+export function gamecastBallDisplaySize(phase, event = null) {
+  if (phase === "throw") return 2.2;
+  if (phase === "held") return 2.1;
+  if (phase === "batted") {
+    if (event?.outcome === "homeRun") return 3.2;
+    const battedBallType = String(event?.battedBallType ?? "").toLowerCase();
+    if (battedBallType.includes("fly") || battedBallType.includes("line")) return 2.7;
+    return 2.4;
+  }
+  return 2.2;
 }
 
 function buildBallTrail(event, progress) {
   const pitchEnd = gamecastPitchEnd(event);
   const bases = gamecastBasePositions();
+  if (event.outcome === "walk") {
+    const pitch = gamecastWalkPitchState(progress);
+    if (!pitch?.released) return [];
+    const target = pitchTargetForEvent(event, bases);
+    return [0.04, 0.09, 0.15].map((offset, index) => {
+      const t = easeOutCubic(Math.max(0, pitch.ballT - offset));
+      return {
+        x: Math.round(lerp(bases.mound.x, target.x, t)),
+        y: Math.round(lerp(bases.mound.y, target.y, t)),
+        size: Math.max(1.2, 2.2 - index * 0.28),
+        opacity: Math.max(0.2, 0.7 - index * 0.14),
+        color: index % 2 ? "#fff8d7" : "#fffefb"
+      };
+    });
+  }
   if (progress < pitchEnd && progress > 0.06) {
     const target = pitchTargetForEvent(event, bases);
     const points = [];
@@ -9341,7 +9609,10 @@ function buildGamecastDefenseSprites(event, progress, palette) {
   const sprites = [];
   if (progress < pitchEnd + 0.09) {
     const bases = gamecastBasePositions();
-    const windT = Math.max(0, Math.min(1, progress / Math.max(0.01, pitchEnd)));
+    const walkPitch = event?.outcome === "walk" ? gamecastWalkPitchState(progress) : null;
+    const windT = event?.outcome === "walk"
+      ? Number(walkPitch?.localT ?? 0)
+      : Math.max(0, Math.min(1, progress / Math.max(0.01, pitchEnd)));
     sprites.push({
       position: { x: bases.mound.x, y: bases.mound.y - gamecastSize(4) - (windT > 0.48 && windT < 0.72 ? 1 : 0) },
       color: event.defenseColor ?? palette.defender,
@@ -9369,6 +9640,10 @@ function buildGamecastDefenseSprites(event, progress, palette) {
   const catchProgress = gamecastFieldingCatchProgress(event);
   const runStart = Math.max(0.34, pitchEnd + 0.06);
   const isHomeRun = event.outcome === "homeRun";
+  const safeFlyHit = gamecastSafeFlyHit(event);
+  const safeFlyLanding = safeFlyHit
+    ? pitchEnd + (gamecastBallFlightEnd(event) - pitchEnd) * 0.72
+    : catchProgress;
   const target = isHomeRun ? gamecastHomeRunFielderSpot(event, ballTarget, fieldingKey) : ballTarget;
   const routeEnd = isHomeRun ? Math.min(catchProgress, gamecastBallFlightEnd(event) - 0.03) : catchProgress;
   const fieldT = Math.max(0, Math.min(1, (progress - runStart) / Math.max(0.01, routeEnd - runStart)));
@@ -9378,11 +9653,17 @@ function buildGamecastDefenseSprites(event, progress, palette) {
   }
   const hardPlay = !isHomeRun && gamecastDifficultFieldingPlay(event, fieldingKey, target, start);
   const directFirstBaseOut = fieldingKey === "1B" && event.outcome === "out" && !event.doublePlay;
-  const throwing = !directFirstBaseOut && progress >= gamecastThrowStartProgress(event) && progress <= gamecastThrowEndProgress(event) && !isHomeRun;
+  const canonicalThrowTarget = gamecastCanonicalThrowTargetKey(event);
+  const hasThrow = canonicalThrowTarget === undefined ? !isHomeRun : Boolean(canonicalThrowTarget);
+  const throwing = hasThrow && !directFirstBaseOut && progress >= gamecastThrowStartProgress(event) && progress <= gamecastThrowEndProgress(event) && !isHomeRun;
   const impactPose = isHomeRun
     ? progress < routeEnd - 0.02 ? "run" : "watch"
     : directFirstBaseOut
       ? progress > catchProgress + 0.08 ? "field" : progress > catchProgress - 0.04 ? "catch" : "run"
+    : safeFlyHit && progress >= safeFlyLanding - 0.02 && progress < catchProgress - 0.03
+      ? "dive"
+      : safeFlyHit && progress >= catchProgress - 0.03 && !throwing
+        ? "field"
     : event.outcome === "error" && progress > catchProgress - 0.02 && progress < catchProgress + 0.12
       ? "dive"
       : hardPlay && progress > catchProgress - 0.06 && progress < catchProgress + 0.06
@@ -9417,7 +9698,7 @@ function buildGamecastDefenseSprites(event, progress, palette) {
 
   if (event.doublePlay) {
     sprites.push(...buildGamecastDoublePlaySprites(event, progress, palette, catchProgress));
-  } else if (fieldingKey !== "1B" && ["out", "single", "double", "error"].includes(event.outcome) && progress >= catchProgress + 0.04 && progress <= resultReveal) {
+  } else if (hasThrow && fieldingKey !== "1B" && ["out", "single", "double", "error"].includes(event.outcome) && progress >= catchProgress + 0.04 && progress <= resultReveal) {
     const firstBase = gamecastBasePositions().first;
     const stretchT = Math.max(0, Math.min(1, (progress - catchProgress - 0.04) / 0.22));
     sprites.push(gamecastSupportFielderSprite(event, palette, "1B", {
@@ -9578,8 +9859,11 @@ function buildGamecastDoublePlaySprites(event, progress, palette, catchProgress)
 function buildGamecastThrowLines(event, progress) {
   if (!isBattedBallOutcome(event?.outcome)) return [];
   if (!["out", "error", "single", "double", "triple"].includes(event.outcome)) return [];
-  const startProgress = gamecastThrowStartProgress(event);
-  const endProgress = gamecastThrowEndProgress(event);
+  const canonicalThrowTarget = gamecastCanonicalThrowTargetKey(event);
+  if (canonicalThrowTarget === null) return [];
+  const throwTiming = gamecastLegacyThrowTiming(event);
+  const startProgress = throwTiming.startT;
+  const endProgress = throwTiming.endT;
   if (progress < startProgress || progress > endProgress) return [];
 
   const target = battedBallGroundPoint(event, 1);
@@ -9593,30 +9877,43 @@ function buildGamecastThrowLines(event, progress) {
   if (event.doublePlay) {
     const split = 0.48;
     if (rawT <= split) {
-      const localT = easeOutCubic(rawT / split);
-      return [{ from, to: bases.second, t: localT, opacity: 1 }];
+      const localT = rawT / split;
+      return [{ from, to: bases.second, t: localT, opacity: 1, armScore: throwTiming.armScore, throwClass: throwTiming.throwClass }];
     }
     const localRaw = (rawT - split) / (1 - split);
     return [{
       from: bases.second,
       to: bases.first,
-      t: easeOutCubic(localRaw),
+      t: localRaw,
+      armScore: throwTiming.armScore,
+      throwClass: throwTiming.throwClass,
       opacity: 1 - Math.max(0, localRaw - 0.72) / 0.28
     }];
   }
-  const throwTarget = event.outcome === "out"
-    ? bases.first
-    : event.outcome === "triple"
-      ? bases.third
-    : event.outcome === "double"
-      ? bases.second
-      : bases.home;
+  const throwTarget = canonicalThrowTarget
+    ? bases[canonicalThrowTarget]
+    : event.outcome === "out"
+      ? bases.first
+      : event.outcome === "triple"
+        ? bases.third
+      : event.outcome === "double"
+        ? bases.second
+        : bases.home;
+  if (!throwTarget) return [];
   return [{
     from,
     to: throwTarget,
-    t: easeOutCubic(rawT),
+    t: rawT,
+    armScore: throwTiming.armScore,
+    throwClass: throwTiming.throwClass,
     opacity: 1 - Math.max(0, rawT - 0.7) / 0.3
   }];
+}
+
+function gamecastCanonicalThrowTargetKey(event) {
+  if (!event || !Object.prototype.hasOwnProperty.call(event, "defensiveThrowTarget")) return undefined;
+  const key = String(event.defensiveThrowTarget ?? "").trim().toLowerCase();
+  return ["first", "second", "third", "home"].includes(key) ? key : null;
 }
 
 function gamecastFirstBasemanCoverPosition(event, progress) {
@@ -9631,76 +9928,140 @@ function gamecastFirstBasemanCoverPosition(event, progress) {
 }
 
 function gamecastPitchEnd(event) {
-  if (event?.outcome === "walk") return 0.42;
-  if (event?.outcome === "strikeout") return 0.38;
+  if (event?.outcome === "walk" || event?.outcome === "strikeout") return 0.2;
   return 0.3;
 }
 
 function gamecastRunnerMoveStart(event) {
-  if (event?.outcome === "walk") return 0.48;
-  if (event?.outcome === "homeRun") return 0.58;
-  if (event?.outcome === "out" || event?.doublePlay) return 0.43;
-  return 0.46;
+  if (gamecastCaughtBattedOut(event)) return gamecastFieldingCatchProgress(event) + 0.015;
+  const durationMs = Math.max(1, Number(event?.gamecastDurationMs) || getGamecast2PlayDurationMs(event));
+  const actionDurationMs = gamecastLegacyActionDurationMs(event);
+  const actionStart = 0.27;
+  return actionStart * actionDurationMs / durationMs;
 }
 
 function gamecastRunnerMoveEnd(event) {
-  if (event?.outcome === "homeRun") return 0.94;
-  if (event?.outcome === "triple") return 0.9;
-  if (event?.outcome === "double") return 0.86;
-  if (event?.outcome === "single" || event?.outcome === "error") return 0.82;
-  if (event?.outcome === "walk") return 0.78;
-  if (event?.doublePlay) return 0.84;
-  if (event?.outcome === "out") return 0.82;
-  return 0.78;
+  const transitions = gamecastRunnerTransitions(event);
+  if (transitions.length === 0) return gamecastRunnerMoveStart(event);
+  return Math.max(...transitions.map((transition) => gamecastRunnerTransitionTiming(event, transition).endT));
 }
 
 function gamecastBallFlightEnd(event) {
   if (event?.outcome === "homeRun") return 0.88;
-  return gamecastNonHomerCatchProgress(event);
+  const arrival = gamecastNonHomerCatchProgress(event);
+  return gamecastSafeFlyHit(event) ? Math.min(0.9, arrival + 0.12) : arrival;
 }
 
 function gamecastFieldingCatchProgress(event) {
   if (event?.outcome === "homeRun") return 0.78;
-  return gamecastNonHomerCatchProgress(event);
+  return gamecastBallFlightEnd(event);
 }
 
 function gamecastNonHomerCatchProgress(event) {
-  const battedType = String(event?.battedBallType ?? "");
-  if (battedType === "groundBall") return 0.62;
-  if (battedType === "lineDrive") return 0.66;
-  if (battedType === "flyBall") return 0.72;
-  return event?.outcome === "out" ? 0.68 : 0.64;
+  const battedType = String(event?.battedBallType ?? "").toLowerCase();
+  const position = String(event?.fieldingPosition ?? "").toUpperCase();
+  const outfield = ["LF", "CF", "RF", "OF"].includes(position);
+  const baseProgress = battedType.includes("ground")
+    ? 0.5
+    : battedType.includes("line")
+      ? 0.54 + (outfield ? 0.02 : 0)
+      : battedType.includes("fly")
+        ? 0.57 + (outfield ? 0.02 : 0)
+        : event?.outcome === "out" ? 0.56 : 0.54;
+  const durationMs = Math.max(1, Number(event?.gamecastDurationMs) || getGamecast2PlayDurationMs(event));
+  return Math.min(0.82, baseProgress * gamecastLegacyActionDurationMs(event) / durationMs);
+}
+
+function gamecastLegacyActionDurationMs(event) {
+  if (event?.outcome === "walk") return 4800;
+  if (event?.outcome === "homeRun") return 5600;
+  if (event?.outcome === "triple") return 6400;
+  if (event?.outcome === "double") return 4400;
+  if (event?.doublePlay) return 4300;
+  if (event?.outcome === "sacrificeBunt") return 3500;
+  if (event?.outcome === "out" && String(event?.battedBallType ?? "").toLowerCase().includes("ground")) return 3500;
+  if (["single", "error", "out"].includes(event?.outcome)) return 3900;
+  return 3400;
 }
 
 function gamecastThrowStartProgress(event) {
-  if (event?.outcome === "homeRun") return 1;
-  return Math.min(0.9, Math.max(
-    gamecastFieldingCatchProgress(event) + 0.08,
-    gamecastBallFlightEnd(event) + 0.01
-  ));
+  return gamecastLegacyThrowTiming(event).startT;
 }
 
 function gamecastThrowEndProgress(event) {
-  const start = gamecastThrowStartProgress(event);
-  const desired = Math.max(start + 0.12, gamecastResultRevealProgress(event) - 0.04);
-  return Math.max(start + 0.08, Math.min(0.96, gamecastResultRevealProgress(event) + 0.08, desired));
+  return gamecastLegacyThrowTiming(event).endT;
+}
+
+function gamecastLegacyThrowTiming(event) {
+  if (event?.outcome === "homeRun") return { startT: 1, endT: 1, armScore: 100, throwClass: "average" };
+  const durationMs = Math.max(1, Number(event?.gamecastDurationMs) || getGamecast2PlayDurationMs(event));
+  const targetKey = gamecastCanonicalThrowTargetKey(event);
+  if (targetKey === null) return { startT: 1, endT: 1, armScore: 100, throwClass: "average" };
+  const fieldingKey = gamecastFieldingKeyForTarget(event, battedBallGroundPoint(event, 1));
+  const armScore = gamecastThrowArmScore(event, fieldingKey);
+  const armT = Math.max(0, Math.min(1, (armScore - 20) / 180));
+  const bases = gamecastBasePositions();
+  const from = battedBallGroundPoint(event, 1);
+  const effectiveTarget = targetKey === undefined
+    ? event?.outcome === "out" ? "first" : event?.outcome === "triple" ? "third" : event?.outcome === "double" ? "second" : "home"
+    : targetKey;
+  const target = bases[effectiveTarget] ?? bases.first;
+  const distance = Math.hypot(Number(target?.x ?? 0) - Number(from?.x ?? 0), Number(target?.y ?? 0) - Number(from?.y ?? 0));
+  const pixelsPerSecond = 380 + armT * 290;
+  const flightMs = Math.max(170, Math.min(620, distance / pixelsPerSecond * 1000));
+  const gatherMs = 190 - armT * 40;
+  let startT = Math.min(0.94, gamecastFieldingCatchProgress(event) + gatherMs / durationMs);
+  let endT = startT + flightMs / durationMs;
+  const targetIndex = { first: 1, second: 2, third: 3, home: 4 }[effectiveTarget] ?? 0;
+  const transitions = gamecastRunnerTransitions(event)
+    .filter((transition) => Number(transition.toBase) === targetIndex)
+    .map((transition) => ({ transition, timing: gamecastRunnerTransitionTiming(event, transition) }));
+  const movement = transitions.find(({ transition }) => transition.out)
+    ?? transitions.sort((a, b) => b.timing.endT - a.timing.endT)[0]
+    ?? null;
+  if (movement?.transition.out) endT = Math.min(endT, movement.timing.endT - 0.015);
+  else if (movement) endT = Math.max(endT, movement.timing.endT + 0.015);
+  endT = Math.min(0.985, endT);
+  startT = Math.min(startT, endT - 0.025);
+  return {
+    startT: Math.max(gamecastFieldingCatchProgress(event) + 0.01, startT),
+    endT,
+    armScore,
+    throwClass: armScore >= 150 ? "strong" : armScore <= 75 ? "weak" : "average"
+  };
+}
+
+function gamecastThrowArmScore(event, key) {
+  const fieldingKey = normalizeFieldingPosition(key);
+  const activeKey = normalizeFieldingPosition(event?.fieldingPosition);
+  const profile = fieldingKey === "P"
+    ? event?.pitcherProfile
+    : fieldingKey === activeKey && event?.defenderProfile
+      ? event.defenderProfile
+      : event?.defenseProfilesByPosition?.[fieldingKey];
+  let score = Number(profile?.arm);
+  if (Number.isFinite(score) && score > 0 && score <= 20) score *= 10;
+  if (!Number.isFinite(score) || score <= 0) score = Number(profile?.fielding ?? profile?.ovr ?? 100);
+  return Math.max(20, Math.min(200, Math.round(Number(score) || 100)));
 }
 
 function gamecastResultRevealProgress(event) {
   if (!event) return 0.82;
-  if (event.outcome === "homeRun") return 0.97;
-  if (event.outcome === "triple") return 0.95;
-  if (event.outcome === "double") return 0.92;
-  if (event.outcome === "single") return 0.87;
-  if (event.outcome === "error") return 0.89;
-  if (event.outcome === "walk") return 0.93;
-  if (event.outcome === "strikeout") return 0.75;
-  if (event.doublePlay) return 0.8;
+  let baseReveal = 0.82;
+  if (event.outcome === "homeRun") baseReveal = 0.97;
+  else if (event.outcome === "triple") baseReveal = 0.95;
+  else if (event.outcome === "double") baseReveal = 0.92;
+  else if (event.outcome === "single") baseReveal = 0.87;
+  else if (event.outcome === "error") baseReveal = 0.89;
+  else if (event.outcome === "walk") baseReveal = 0.62;
+  else if (event.outcome === "strikeout") baseReveal = 0.46;
+  else if (event.doublePlay) baseReveal = 0.8;
   if (event.outcome === "out") {
     const battedBallType = String(event.battedBallType ?? "").toLowerCase();
-    return battedBallType.includes("fly") || battedBallType.includes("line") ? 0.85 : 0.75;
+    baseReveal = battedBallType.includes("fly") || battedBallType.includes("line") ? 0.85 : 0.75;
   }
-  return 0.82;
+  const runnerEnd = gamecastRunnerMoveEnd(event);
+  return Math.min(0.985, Math.max(baseReveal, runnerEnd + (runnerEnd > 0 ? 0.01 : 0)));
 }
 
 function gamecastScoreRevealProgress(event) {
@@ -9742,18 +10103,62 @@ function pitchTargetForEvent(event, bases) {
 }
 
 function isBattedBallOutcome(outcome) {
-  return ["single", "double", "triple", "homeRun", "error", "out"].includes(outcome);
+  return ["single", "double", "triple", "homeRun", "error", "out", "sacrificeBunt"].includes(outcome);
 }
 
-function battedBallPoint(event, t) {
+function gamecastSafeFlyHit(event) {
+  return ["single", "double", "triple"].includes(event?.outcome)
+    && String(event?.battedBallType ?? "").toLowerCase().includes("fly");
+}
+
+export function battedBallPoint(event, t) {
   const bases = gamecastBasePositions();
   const start = { x: bases.home.x + gamecastSize(2), y: bases.home.y - gamecastSize(7) };
   const target = battedBallTarget(event);
-  const eased = easeOutCubic(t);
-  const lift = battedBallLift(event) * Math.sin(t * Math.PI);
+  const normalized = Math.max(0, Math.min(1, Number(t) || 0));
+  if (gamecastSafeFlyHit(event)) {
+    const landingT = 0.72;
+    const landing = {
+      x: Math.round(lerp(start.x, target.x, 0.88)),
+      y: Math.round(lerp(start.y, target.y, 0.88))
+    };
+    if (normalized <= landingT) {
+      const localT = normalized / landingT;
+      const eased = easeOutCubic(localT);
+      const lift = battedBallLift(event) * Math.sin(localT * Math.PI);
+      return {
+        x: Math.round(lerp(start.x, landing.x, eased)),
+        y: Math.round(lerp(start.y, landing.y, eased) - lift)
+      };
+    }
+    const bounceT = (normalized - landingT) / (1 - landingT);
+    const eased = easeOutCubic(bounceT);
+    const bounceLift = Math.abs(Math.sin(bounceT * Math.PI * 2)) * gamecastSize(3) * (1 - bounceT * 0.68);
+    return {
+      x: Math.round(lerp(landing.x, target.x, eased)),
+      y: Math.round(lerp(landing.y, target.y, eased) - bounceLift)
+    };
+  }
+  const flightTarget = gamecastCaughtBattedOut(event)
+    ? gamecastCaughtBallGlovePoint(event, target)
+    : target;
+  const eased = easeOutCubic(normalized);
+  const lift = battedBallLift(event) * Math.sin(normalized * Math.PI);
   return {
-    x: Math.round(lerp(start.x, target.x, eased)),
-    y: Math.round(lerp(start.y, target.y, eased) - lift)
+    x: Math.round(lerp(start.x, flightTarget.x, eased)),
+    y: Math.round(lerp(start.y, flightTarget.y, eased) - lift)
+  };
+}
+
+function gamecastCaughtBallGlovePoint(event, groundTarget) {
+  const type = String(event?.battedBallType ?? "").toLowerCase();
+  const fly = type.includes("fly");
+  return {
+    // Legacy player sprites are rooted at their feet. Finish at the drawn
+    // glove instead of the ground anchor so a caught ball never reads as a
+    // one-hop play. Safe fly hits keep their separate landing/bounce branch.
+    x: Math.round(Number(groundTarget?.x ?? 0) - gamecastSize(1)),
+    y: Math.round(Number(groundTarget?.y ?? 0) - gamecastSize(fly ? 4 : 3))
   };
 }
 
@@ -9851,9 +10256,9 @@ function gamecastFieldingSpot(event) {
     "2B": { x: 73, y: 62 },
     "3B": { x: 29, y: 74 },
     SS: { x: 46, y: 63 },
-    LF: { x: 31, y: 47 },
-    CF: { x: 60, y: 34 },
-    RF: { x: 89, y: 47 }
+    LF: { x: 31, y: 42 },
+    CF: { x: 60, y: 29 },
+    RF: { x: 89, y: 42 }
   };
   return spots[key] ?? null;
 }
@@ -10280,7 +10685,7 @@ function syncGamecastHud(hud, frame) {
   hud.root.classList.toggle("is-scoring", Boolean(frame.scoreFlash));
   hud.root.classList.toggle("is-homer", event?.outcome === "homeRun" && gamecastFrameResultRevealed(frame));
   if (hud.inning) hud.inning.textContent = event ? formatGamecastInningCompact(event) : "FINAL";
-  if (hud.result) hud.result.textContent = event ? gamecastJumbotronTextForFrame(frame) : "END";
+  if (hud.result) hud.result.textContent = event ? gamecastHudTextForFrame(frame) : "종료";
   if (hud.away) hud.away.textContent = formatNumber(frame.score?.away ?? 0);
   if (hud.home) hud.home.textContent = formatNumber(frame.score?.home ?? 0);
 
@@ -10606,10 +11011,10 @@ function drawPixelBall(ctx, palette, position, color) {
   const previousAlpha = ctx.globalAlpha;
   ctx.globalAlpha = Math.max(0, Math.min(1, Number(position.opacity ?? 1)));
   drawPixelBallWake(ctx, palette, position, color);
-  const size = Math.max(2, Math.round(Number(position.size ?? 1)));
+  const size = Math.max(3, Math.round(Number(position.size ?? 1)));
   const r = size + 1;
   // bright halo (diamond, not a hard square) so the ball pops without a boxy dark border
-  ctx.globalAlpha = Math.max(0, Math.min(1, Number(position.opacity ?? 1))) * 0.5;
+  ctx.globalAlpha = Math.max(0, Math.min(1, Number(position.opacity ?? 1))) * 0.72;
   ctx.fillStyle = palette.ballGlow;
   ctx.fillRect(x - r, y, r * 2 + 1, 1);
   ctx.fillRect(x, y - r, 1, r * 2 + 1);

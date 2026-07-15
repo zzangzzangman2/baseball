@@ -101,7 +101,9 @@ const PLAYER_LEGACY_ANIMATIONS = {
   catcher: { frames: ["catcher"], durations: [160] }
 };
 const SPRITE_ASSET_ROOT = "./assets/gamecast";
-export const GAMECAST_SPRITE_ASSET_REVISION = "20260715-runner-depth-1";
+export const GAMECAST_SPRITE_ASSET_REVISION = "20260715-force-clarity-5";
+export const GAMECAST_THROW_BALL_SIZE = 1.25;
+export const GAMECAST_BALL_MIN_RENDER_SCALE = 1.2;
 
 export function gamecastSpriteAssetUrl(url) {
   const qaToken = typeof window !== "undefined"
@@ -401,6 +403,8 @@ function finishRuntime(runtime, frame = null) {
 }
 
 function getRuntimeTotalMs(runtime) {
+  const authoredTotal = Number(runtime.sequence?.totalMs);
+  if (Number.isFinite(authoredTotal) && authoredTotal >= 0) return authoredTotal;
   const events = runtime.sequence?.events?.length ?? 0;
   const paMs = Math.max(80, Number(runtime.sequence?.paMs ?? 850));
   const gapMs = Math.max(0, Number(runtime.sequence?.gapMs ?? 120));
@@ -1480,7 +1484,7 @@ function drawThrowLines(scene, graphics, runtime, frame) {
     drawLine(graphics, runtime, line.from, current, palette.throw, opacity * 0.82, 1);
     drawGamecastBall(scene, graphics, runtime, {
       ...current,
-      size: 0.82,
+      size: GAMECAST_THROW_BALL_SIZE,
       opacity,
       velocityX: Number(line.to?.x ?? 0) - Number(line.from?.x ?? 0),
       velocityY: Number(line.to?.y ?? 0) - Number(line.from?.y ?? 0)
@@ -1519,7 +1523,7 @@ function drawGamecastBall(scene, graphics, runtime, ball, color) {
   rect(graphics, runtime, ball.x - glow, ball.y, glow * 2, 1, color, 0.16);
   rect(graphics, runtime, ball.x, ball.y - glow, 1, glow * 2, color, 0.16);
   const metrics = runtime.metrics;
-  const size = Math.max(1.05, Math.min(1.85, Number(ball.size ?? 1) * 0.68));
+  const size = Math.max(GAMECAST_BALL_MIN_RENDER_SCALE, Math.min(1.95, Number(ball.size ?? 1) * 0.68));
   const image = acquirePooledImage(scene, "balls", scene.ballSpriteLayer, "gamecast-props", frame);
   if (!image) {
     return;

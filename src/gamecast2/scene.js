@@ -6,9 +6,9 @@ import {
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-hq-80-runner-depth-20260715-r5";
-import { compilePlayTimeline } from "./timeline.js?v=gamecast-hq-80-runner-depth-20260715-r5";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-hq-80-runner-depth-20260715-r5";
+} from "./assets.js?v=gamecast-arm-pitch-20260715-r15";
+import { compilePlayTimeline } from "./timeline.js?v=gamecast-arm-pitch-20260715-r15";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-arm-pitch-20260715-r15";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -17,6 +17,8 @@ const PLAYER_ATLAS_ROOT = "./assets/gamecast";
 const PLAYER_ATLAS_FRAME_SIZE = 128;
 const PLAYER_ATLAS_BASELINE_Y = 120;
 const PLAYER_ATLAS_NATIVE_DISPLAY_SIZE = 80;
+export const GAMECAST2_BALL_TEXTURE_SIZE = 20;
+export const GAMECAST2_BALL_MIN_RENDER_SCALE = 0.95;
 const PLAYER_ATLAS_VISUAL_SCALE = 7 / 6;
 const PLAYER_SCALE_CENTER = 0.9;
 const PLAYER_SCALE_COMPRESSION = 0.25;
@@ -120,6 +122,7 @@ export function mountGamecast2(options) {
     metrics: null
   };
 
+  prepareGamecast2LoadingSurface(runtime);
   runtime.metrics = calculateMetrics(runtime);
   applyCanvasContract(runtime);
 
@@ -139,6 +142,7 @@ export function mountGamecast2(options) {
     create() {
       createScene(this, runtime);
       renderRuntimeFrame(runtime, runtime.prefersReducedMotion);
+      runtime.screen.dataset.gamecast2PaintReady = "1";
       if (runtime.prefersReducedMotion || !runtime.sequence?.events?.length) {
         finishRuntime(runtime);
       }
@@ -153,7 +157,7 @@ export function mountGamecast2(options) {
     canvas: runtime.canvas,
     width: runtime.metrics.bufferW,
     height: runtime.metrics.bufferH,
-    backgroundColor: "#07120f",
+    transparent: true,
     pixelArt: true,
     roundPixels: true,
     antialias: false,
@@ -225,17 +229,56 @@ export function mountGamecast2(options) {
       runtime.screen.removeAttribute("data-gamecast2-particle-tone");
       runtime.screen.removeAttribute("data-gamecast2-visible-ability-underlays");
       runtime.screen.removeAttribute("data-gamecast2-timeline-template");
+      runtime.screen.removeAttribute("data-gamecast2-timeline-duration-ms");
+      runtime.screen.removeAttribute("data-gamecast2-playback-duration-ms");
+      runtime.screen.removeAttribute("data-gamecast2-batted-ball-type");
+      runtime.screen.removeAttribute("data-gamecast2-outcome");
+      runtime.screen.removeAttribute("data-gamecast2-batter-run-ms");
+      runtime.screen.removeAttribute("data-gamecast2-batter-bases");
+      runtime.screen.removeAttribute("data-gamecast2-event-id");
+      runtime.screen.removeAttribute("data-gamecast2-progress");
       runtime.screen.removeAttribute("data-gamecast2-player-atlas");
       runtime.screen.removeAttribute("data-gamecast2-native-display-size");
       runtime.screen.removeAttribute("data-gamecast2-asset-revision");
       runtime.screen.removeAttribute("data-gamecast2-first-anchor");
       runtime.screen.removeAttribute("data-gamecast2-middle-infield");
       runtime.screen.removeAttribute("data-gamecast2-base-occupant-distance");
+      runtime.screen.removeAttribute("data-gamecast2-loading-surface");
+      runtime.screen.removeAttribute("data-gamecast2-paint-ready");
+      runtime.screen.removeAttribute("data-gamecast2-ball-render-size");
+      runtime.screen.removeAttribute("data-gamecast2-fly-resolution");
+      runtime.screen.removeAttribute("data-gamecast2-fly-cue-visible");
+      runtime.screen.removeAttribute("data-gamecast2-throw-arm-score");
+      runtime.screen.removeAttribute("data-gamecast2-throw-arc");
+      runtime.screen.removeAttribute("data-gamecast2-throw-flight-ms");
+      runtime.screen.removeAttribute("data-gamecast2-throw-ordering");
+      if (runtime.stage) {
+        runtime.stage.style.removeProperty("background-image");
+        runtime.stage.style.removeProperty("background-position");
+        runtime.stage.style.removeProperty("background-repeat");
+        runtime.stage.style.removeProperty("background-size");
+      }
+      runtime.canvas?.style?.removeProperty("background");
       delete runtime.screen.__gamecast2Anchors;
       delete runtime.screen.__gamecast2Players;
       delete runtime.screen.__gamecast2Frame;
     }
   };
+}
+
+export function prepareGamecast2LoadingSurface(runtime) {
+  const fieldImageUrl = String(runtime?.field?.imageUrl ?? "").trim();
+  if (runtime?.stage && fieldImageUrl) {
+    runtime.stage.style.backgroundImage = `url("${fieldImageUrl.replaceAll('"', '%22')}")`;
+    runtime.stage.style.backgroundPosition = "center";
+    runtime.stage.style.backgroundRepeat = "no-repeat";
+    runtime.stage.style.backgroundSize = "100% 100%";
+  }
+  if (runtime?.canvas?.style) runtime.canvas.style.background = "transparent";
+  if (runtime?.screen?.dataset) {
+    runtime.screen.dataset.gamecast2LoadingSurface = fieldImageUrl ? "field-poster" : "field-color";
+    runtime.screen.dataset.gamecast2PaintReady = "0";
+  }
 }
 
 function calculateMetrics(runtime) {
@@ -291,6 +334,7 @@ function applyCanvasContract(runtime) {
   if (canvas.height !== metrics.bufferH) canvas.height = metrics.bufferH;
   canvas.style.width = `${metrics.cssW}px`;
   canvas.style.height = `${metrics.cssH}px`;
+  canvas.style.background = "transparent";
   canvas.style.imageRendering = "pixelated";
   if (stage) {
     stage.style.width = `${metrics.cssW}px`;
@@ -330,6 +374,16 @@ function createScene(scene, runtime) {
   }).setDepth(101).setOrigin(0, 0);
   scene.abilityGraphics = scene.add.graphics().setDepth(500);
   scene.fxGraphics = scene.add.graphics().setDepth(27000);
+  scene.flyResolutionGraphics = scene.add.graphics().setDepth(28500);
+  scene.flyResolutionText = scene.add.text(0, 0, "", {
+    fontFamily: 'Arial Black, "Malgun Gothic", "Noto Sans KR", sans-serif',
+    fontSize: "22px",
+    fontStyle: "bold",
+    color: "#ffffff",
+    stroke: "#07120f",
+    strokeThickness: 5,
+    resolution: 1
+  }).setDepth(28501).setOrigin(0.5, 0.5).setVisible(false);
   scene.anchorGraphics = scene.add.graphics().setDepth(30000);
   scene.anchorLabels = [];
 
@@ -472,6 +526,7 @@ function sortStaticPlayers(scene) {
 function updateGamecast2Playback(runtime, frame = null) {
   const play = updateStaticPlayerIdle(runtime, frame);
   updateBallFlight(runtime, frame);
+  updateFlyBallResolutionCue(runtime, frame, play);
   updateCodeScoreboard(runtime, frame);
   updatePixelEffects(runtime, frame, play);
   updateHomeRunCamera(runtime, frame);
@@ -698,6 +753,7 @@ function buildVisualPlay(runtime, frame = null) {
   const catchTime = fieldingCatchTime(event);
   const throwStart = throwStartTime(event);
   const throwEnd = throwEndTime(event);
+  const defensiveThrowTarget = throwTargetForEvent(event, anchors);
   const battedTarget = batted ? battedBallTargetForEvent(event, anchors) : null;
   const fielderKey = batted ? fieldingKeyForEvent(event, anchors, battedTarget) : "";
   const fieldSpot = fielderKey ? fieldingSpotForEvent(event, anchors, fielderKey) : null;
@@ -754,7 +810,8 @@ function buildVisualPlay(runtime, frame = null) {
           fielderKey
         )
       : null;
-    if (position && progress < (homeRun ? 0.96 : throwEnd)) movingDefenseCount = 1;
+    const defenseMotionEnd = homeRun ? 0.96 : defensiveThrowTarget ? throwEnd : Math.min(0.96, catchTime + 0.08);
+    if (position && progress < defenseMotionEnd) movingDefenseCount = 1;
     const pose = homeRun
       ? progress < routeStart
         ? "ready"
@@ -765,14 +822,16 @@ function buildVisualPlay(runtime, frame = null) {
         ? "ready"
         : progress < catchTime
           ? (Math.floor(progress * 18) % 2 ? "run1" : "run2")
-          : progress < throwStart
-            ? "catch"
-            : progress < throwEnd
-              ? "throw"
-              : "ready";
+          : !defensiveThrowTarget
+            ? progress < catchTime + 0.08 ? "catch" : "ready"
+            : progress < throwStart
+              ? "catch"
+              : progress < throwEnd
+                ? "throw"
+                : "ready";
     actors.set(fielderKey, {
       pose,
-      position: progress >= routeStart && progress < (homeRun ? 0.96 : throwEnd) ? position : null,
+      position: progress >= routeStart && progress < defenseMotionEnd ? position : null,
       angle: !homeRun && pose === "throw" ? (fieldSpot.x < Number(anchors.home?.x ?? 480) ? -7 : 7) : 0,
       shadowPose: fielderShadowPose(event, progress, catchTime, pose)
     });
@@ -1056,23 +1115,96 @@ function updateBallFlight(runtime, frame = null) {
   scene.ballTrail.clear();
   if (!ball) {
     scene.ballSprite.setVisible(false);
+    runtime.screen.dataset.gamecast2BallRenderSize = "0";
     return;
   }
   const sx = runtime.metrics.drawScaleX;
   const sy = runtime.metrics.drawScaleY;
-  const scale = Math.max(0.7, Math.min(sx, sy) * Number(ball.scale ?? 1));
+  const scale = Math.max(
+    GAMECAST2_BALL_MIN_RENDER_SCALE,
+    Math.min(sx, sy) * Math.max(1, Number(ball.scale ?? 1))
+  );
   scene.ballSprite
     .setVisible(true)
     .setPosition(ball.x * sx, ball.y * sy)
     .setScale(scale)
     .setDepth(Math.round(ball.y * 10) + 12000);
+  runtime.screen.dataset.gamecast2BallRenderSize = String(Math.round(scene.ballSprite.displayWidth));
   if (ball.trail?.length > 1) {
-    scene.ballTrail.lineStyle(Math.max(1, Math.round(2 * Math.min(sx, sy))), 0xfff6c7, 0.72);
-    scene.ballTrail.beginPath();
-    scene.ballTrail.moveTo(ball.trail[0].x * sx, ball.trail[0].y * sy);
-    for (const point of ball.trail.slice(1)) scene.ballTrail.lineTo(point.x * sx, point.y * sy);
-    scene.ballTrail.strokePath();
+    const drawTrailPath = () => {
+      scene.ballTrail.beginPath();
+      scene.ballTrail.moveTo(ball.trail[0].x * sx, ball.trail[0].y * sy);
+      for (const point of ball.trail.slice(1)) scene.ballTrail.lineTo(point.x * sx, point.y * sy);
+      scene.ballTrail.strokePath();
+    };
+    scene.ballTrail.lineStyle(Math.max(3, Math.round(5 * Math.min(sx, sy))), 0x07120f, 0.64);
+    drawTrailPath();
+    scene.ballTrail.lineStyle(Math.max(2, Math.round(2.5 * Math.min(sx, sy))), 0xffffff, 0.94);
+    drawTrailPath();
+    scene.ballTrail.lineStyle(Math.max(1, Math.round(1.2 * Math.min(sx, sy))), 0xffe39a, 1);
+    drawTrailPath();
   }
+}
+
+export function gamecast2FlyResolutionCue(timeline, progress) {
+  const fielding = timeline?.meta?.fielding;
+  const resolution = String(fielding?.resolution ?? "");
+  if (!["caught-fly", "safe-fly-drop"].includes(resolution)) return null;
+  const startT = Number(fielding?.ballLandingT ?? fielding?.ballArrivalT ?? 1);
+  const pickupT = Number(fielding?.fielderArrivalT ?? startT);
+  const endT = resolution === "caught-fly"
+    ? Math.min(Number(timeline?.resultAt ?? 1), startT + 0.16)
+    : Math.min(Number(timeline?.resultAt ?? 1), Math.max(startT + 0.18, pickupT + 0.07));
+  const normalizedProgress = clamp01(progress);
+  if (normalizedProgress < startT || normalizedProgress > endT) return null;
+  const pointName = String(fielding?.landingPoint ?? "landing");
+  const point = timeline?.points?.[pointName] ?? timeline?.points?.landing;
+  if (!point) return null;
+  return {
+    resolution,
+    label: resolution === "caught-fly" ? "OUT" : "SAFE HIT",
+    color: resolution === "caught-fly" ? 0xe5484d : 0x22c55e,
+    point: { ...point },
+    localT: clamp01((normalizedProgress - startT) / Math.max(0.001, endT - startT))
+  };
+}
+
+function updateFlyBallResolutionCue(runtime, frame = null, play = null) {
+  const scene = runtime.scene;
+  const graphics = scene?.flyResolutionGraphics;
+  const label = scene?.flyResolutionText;
+  if (!graphics || !label) return;
+  graphics.clear();
+  label.setVisible(false);
+  const timeline = play?.timeline;
+  const cue = !frame?.done
+    ? gamecast2FlyResolutionCue(timeline, Number(frame?.progress ?? 0))
+    : null;
+  const resolution = String(timeline?.meta?.fielding?.resolution ?? "");
+  runtime.screen.dataset.gamecast2FlyResolution = resolution;
+  runtime.screen.dataset.gamecast2FlyCueVisible = cue ? "1" : "0";
+  if (!cue) return;
+
+  const sx = runtime.metrics.drawScaleX;
+  const sy = runtime.metrics.drawScaleY;
+  const minScale = Math.min(sx, sy);
+  const rise = Math.sin(cue.localT * Math.PI) * 18;
+  const x = Math.round(cue.point.x * sx);
+  const y = Math.round((cue.point.y - 42 - rise) * sy);
+  const width = Math.max(94, Math.round((cue.label === "OUT" ? 92 : 142) * minScale));
+  const height = Math.max(34, Math.round(42 * minScale));
+  graphics.fillStyle(0x07120f, 0.9);
+  graphics.fillRoundedRect(x - width / 2 - 4, y - height / 2 - 4, width + 8, height + 8, 9);
+  graphics.fillStyle(cue.color, 0.98);
+  graphics.fillRoundedRect(x - width / 2, y - height / 2, width, height, 7);
+  graphics.lineStyle(Math.max(2, Math.round(3 * minScale)), 0xffffff, 0.95);
+  graphics.strokeRoundedRect(x - width / 2, y - height / 2, width, height, 7);
+  label
+    .setVisible(true)
+    .setText(cue.label)
+    .setPosition(x, y)
+    .setFontSize(Math.max(18, Math.round(22 * minScale)))
+    .setScale(1 + Math.sin(cue.localT * Math.PI) * 0.08);
 }
 
 function updateCodeScoreboard(runtime, frame = null) {
@@ -1341,11 +1473,12 @@ function updateHomeRunCamera(runtime, frame = null) {
     }
   }
 
-  // Camera panning keeps the cinematic cue without rescaling every source pixel.
-  // Any non-1 zoom can turn a valid 32-step actor scale into half-pixel output.
+  // Keep the full authored field locked to the viewport. At zoom 1 the field
+  // texture exactly matches the canvas, so centerOn() exposes the renderer's
+  // black clear area along the opposite edge during a tracked hit.
   const snappedZoom = 1;
   camera.setZoom?.(snappedZoom);
-  camera.centerOn?.(Math.round(centerX), Math.round(centerY));
+  camera.setScroll?.(0, 0);
   runtime.gamecast2CameraState = {
     zoom: snappedZoom,
     x: centerX / Math.max(0.01, runtime.metrics.drawScaleX),
@@ -1413,6 +1546,13 @@ function buildBallState(runtime, frame = null) {
     };
   }
   const throwTarget = throwTargetForEvent(event, anchors);
+  if (!throwTarget) {
+    return {
+      ...play.fieldSpot,
+      scale: 0.74,
+      trail: []
+    };
+  }
   const t = easeInOutCubic(clamp01((progress - throwStart) / Math.max(0.01, throwEnd - throwStart)));
   return {
     ...lerpPoint(play.fieldSpot, throwTarget, t),
@@ -1442,12 +1582,25 @@ function buildTimelineBallState(timeline, progress, event) {
 function timelineBallPoint(cue, points, localT) {
   const route = (cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
   if (route.length === 0) return cue.at && points?.[cue.at] ? { ...points[cue.at] } : null;
-  const point = route.length === 1 ? { ...route[0] } : pointAlongTimelineRoute(route, localT);
+  const routeT = cue.flightProfile === "hang"
+    ? flyBallHangProgress(localT)
+    : clamp01(localT);
+  const point = route.length === 1 ? { ...route[0] } : pointAlongTimelineRoute(route, routeT);
+  if (cue.bounce === true && route.length >= 2) {
+    const bounceCount = Math.max(1, Number(cue.bounces ?? 1));
+    const bounceHeight = Math.abs(Math.sin(clamp01(localT) * Math.PI * bounceCount));
+    point.y -= bounceHeight * (1 - clamp01(localT) * 0.72) * 16;
+  }
   const arc = Math.max(0, Number(cue.arc ?? 0));
   if (arc > 0 && route.length >= 2) {
-    point.y -= Math.sin(clamp01(localT) * Math.PI) * Math.min(190, 8 + arc * 132);
+    point.y -= Math.sin(routeT * Math.PI) * Math.min(190, 8 + arc * 132);
   }
   return point;
+}
+
+function flyBallHangProgress(progress) {
+  const t = clamp01(progress);
+  return clamp01(0.5 + 4 * Math.pow(t - 0.5, 3));
 }
 
 function exposeMotionDebug(runtime, frame = null) {
@@ -1487,27 +1640,58 @@ function exposeMotionDebug(runtime, frame = null) {
   const baseOccupantDistance = baseOccupantDistances.length > 0
     ? Math.max(...baseOccupantDistances)
     : -1;
+  const batterRunCue = play.timeline?.tracks?.batter?.find((cue) => cue.phase === "batter-run") ?? null;
+  const batterRunMs = batterRunCue
+    ? (Number(batterRunCue.endT) - Number(batterRunCue.t)) * Number(frame?.playbackDurationMs ?? 0)
+    : 0;
+  const throwCue = (play.timeline?.tracks?.ball ?? []).find((cue) => (
+    ["fielding-throw", "relay-throw"].includes(String(cue.phase ?? ""))
+    && Number(frame?.progress ?? 0) >= Number(cue.t ?? 0)
+    && Number(frame?.progress ?? 0) <= Number(cue.endT ?? cue.t ?? 0)
+  )) ?? (play.timeline?.tracks?.ball ?? []).find((cue) => ["fielding-throw", "relay-throw"].includes(String(cue.phase ?? ""))) ?? null;
   runtime.screen.dataset.gamecast2MovingDefenseCount = String(play.movingDefenseCount ?? 0);
   runtime.screen.dataset.gamecast2BallVisible = ballVisible ? "1" : "0";
   runtime.screen.dataset.gamecast2PositionViolations = String(positionGuard.violations.length);
   runtime.screen.dataset.gamecast2RenderScaleSpread = renderScaleSpread.toFixed(4);
   runtime.screen.dataset.gamecastAbilityUnderlays = String(runtime.gamecast2RatingTokens?.length ?? 0);
   runtime.screen.dataset.gamecast2TimelineTemplate = String(play.timeline?.template ?? "fallback");
+  runtime.screen.dataset.gamecast2TimelineDurationMs = String(Number(play.timeline?.durationMs ?? 0));
+  runtime.screen.dataset.gamecast2PlaybackDurationMs = String(Number(frame?.playbackDurationMs ?? 0));
+  runtime.screen.dataset.gamecast2BattedBallType = String(frame?.event?.battedBallType ?? "");
+  runtime.screen.dataset.gamecast2Outcome = String(frame?.event?.outcome ?? "");
+  runtime.screen.dataset.gamecast2BatterRunMs = batterRunMs.toFixed(0);
+  runtime.screen.dataset.gamecast2BatterBases = String(Number(batterRunCue?.basesAdvanced ?? 0));
+  runtime.screen.dataset.gamecast2EventId = String(frame?.event?.id ?? "");
+  runtime.screen.dataset.gamecast2Progress = Number(frame?.progress ?? 0).toFixed(4);
   runtime.screen.dataset.gamecast2FieldingReceiver = receiverKey;
   runtime.screen.dataset.gamecast2FieldingTarget = receiverTargetKey;
   runtime.screen.dataset.gamecast2ReceiverDistance = receiverDistance < 0 ? "-1" : receiverDistance.toFixed(3);
   runtime.screen.dataset.gamecast2BaseOccupantDistance = baseOccupantDistance < 0 ? "-1" : baseOccupantDistance.toFixed(3);
+  runtime.screen.dataset.gamecast2ThrowArmScore = String(Number(throwCue?.armScore ?? 0));
+  runtime.screen.dataset.gamecast2ThrowArc = Number(throwCue?.arc ?? 0).toFixed(3);
+  runtime.screen.dataset.gamecast2ThrowFlightMs = String(Number(throwCue?.flightMs ?? 0));
+  runtime.screen.dataset.gamecast2ThrowOrdering = String(throwCue?.ordering ?? "none");
   runtime.screen.__gamecast2Frame = {
     eventId: String(frame?.event?.id ?? ""),
     outcome: String(frame?.event?.outcome ?? ""),
+    battedBallType: String(frame?.event?.battedBallType ?? ""),
     progress: Number(frame?.progress ?? 0),
+    playbackDurationMs: Number(frame?.playbackDurationMs ?? 0),
+    batterRunMs,
     movingDefenseCount: play.movingDefenseCount ?? 0,
     ballVisible,
     positionGuard,
     timeline: play.timeline ? {
       template: play.timeline.template,
       durationMs: play.timeline.durationMs,
+      playbackDurationMs: Number(frame?.playbackDurationMs ?? 0),
       resultAt: play.timeline.resultAt,
+      throw: throwCue ? {
+        armScore: Number(throwCue.armScore ?? 0),
+        arc: Number(throwCue.arc ?? 0),
+        flightMs: Number(throwCue.flightMs ?? 0),
+        ordering: String(throwCue.ordering ?? "neutral")
+      } : null,
       invariants: play.timeline.meta?.invariants ?? {}
     } : null,
     ratingTokens: runtime.gamecast2RatingTokens ?? [],
@@ -1550,7 +1734,7 @@ function throwEndTime(event) {
 }
 
 function isBattedBallOutcome(outcome) {
-  return ["single", "double", "triple", "homeRun", "out", "error"].includes(String(outcome ?? ""));
+  return ["single", "double", "triple", "homeRun", "out", "error", "sacrificeBunt"].includes(String(outcome ?? ""));
 }
 
 function fieldingKeyForEvent(event, anchors, target = null) {
@@ -1612,6 +1796,11 @@ function battedBallTargetForEvent(event, anchors) {
 }
 
 function throwTargetForEvent(event, anchors) {
+  if (event && Object.prototype.hasOwnProperty.call(event, "defensiveThrowTarget")) {
+    const key = String(event.defensiveThrowTarget ?? "").trim().toLowerCase();
+    if (!["first", "second", "third", "home"].includes(key)) return null;
+    return anchors[key] ?? null;
+  }
   if (event?.outcome === "triple") return anchors.third ?? anchors.second ?? anchors.first ?? anchors.home;
   if (event?.outcome === "double") return anchors.second ?? anchors.first ?? anchors.home;
   return anchors.first ?? anchors.home ?? { x: 720, y: 420 };
@@ -1853,10 +2042,23 @@ function eventNoise(event, salt = 0) {
   return ((hash >>> 0) / 4294967295) * 2 - 1;
 }
 
-function derivePlateActor(anchors, role) {
-  const home = anchors.home;
-  const first = anchors.first;
-  const mound = anchors.mound;
+export function derivePlateActor(anchors, role) {
+  const authored = role === "batter" ? anchors?.batter : null;
+  if (authored) {
+    const x = Number(authored.x);
+    const y = Number(authored.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      return {
+        x,
+        y,
+        scale: Math.max(0.5, Number(authored.scale ?? 1))
+      };
+    }
+  }
+
+  const home = anchors?.home;
+  const first = anchors?.first;
+  const mound = anchors?.mound;
   if (!home || !first || !mound) return null;
 
   const toFirst = normalizeVector(first.x - home.x, first.y - home.y);
@@ -2181,14 +2383,19 @@ function makePlayerTexture(scene, key, colors, pose) {
 function makeBallTexture(scene, key, palette = {}) {
   if (scene.textures.exists(key)) return;
   const graphics = scene.make.graphics({ x: 0, y: 0, add: false });
-  graphics.fillStyle(hexToColor(palette.ballGlow ?? "#fff8d7", "#fff8d7"), 0.42);
-  graphics.fillCircle(8, 8, 6);
+  const center = GAMECAST2_BALL_TEXTURE_SIZE / 2;
+  graphics.fillStyle(hexToColor(palette.ballGlow ?? "#fff8d7", "#fff8d7"), 0.52);
+  graphics.fillCircle(center, center, 9);
+  graphics.fillStyle(0x07120f, 0.96);
+  graphics.fillCircle(center, center, 5);
   graphics.fillStyle(0xffffff, 1);
-  graphics.fillCircle(8, 8, 3);
+  graphics.fillCircle(center, center, 4);
+  graphics.fillStyle(hexToColor(palette.ballGlow ?? "#fff8d7", "#fff8d7"), 1);
+  graphics.fillCircle(center - 1, center - 1, 2);
   graphics.fillStyle(hexToColor(palette.ballSeam ?? "#d92f42", "#d92f42"), 1);
-  graphics.fillRect(6, 7, 1, 3);
-  graphics.fillRect(10, 7, 1, 3);
-  graphics.generateTexture(key, 16, 16);
+  graphics.fillRect(center - 3, center - 1, 1, 3);
+  graphics.fillRect(center + 2, center - 1, 1, 3);
+  graphics.generateTexture(key, GAMECAST2_BALL_TEXTURE_SIZE, GAMECAST2_BALL_TEXTURE_SIZE);
   graphics.destroy();
 }
 
@@ -2347,6 +2554,8 @@ function finishRuntime(runtime, frame = null) {
 
 function getRuntimeTotalMs(runtime) {
   const events = runtime.sequence?.events ?? [];
+  const authoredTotal = Number(runtime.sequence?.totalMs);
+  if (Number.isFinite(authoredTotal) && authoredTotal >= 0) return authoredTotal;
   const paMs = Math.max(80, Number(runtime.sequence?.paMs ?? 0));
   const gapMs = Math.max(0, Number(runtime.sequence?.gapMs ?? 0));
   return events.length * (paMs + gapMs);

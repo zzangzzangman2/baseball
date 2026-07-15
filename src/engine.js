@@ -6435,9 +6435,24 @@ function resolvePlateAppearance({ hitter, pitcher, defenseQuality, defenseContex
   if (roll < walkRate) return { type: "walk", isAtBat: false, bases: 0 };
   if (roll < walkRate + strikeoutRate) return { type: "strikeout", isAtBat: true, bases: 0 };
   if (roll < walkRate + strikeoutRate + homeRunRate) return { type: "homeRun", isAtBat: true, bases: 4, battedBallType: "flyBall", ballpark: weather?.ballpark };
-  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate) return { type: "triple", isAtBat: true, bases: 3, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, ballpark: weather?.ballpark };
-  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate + doubleRate) return { type: "double", isAtBat: true, bases: 2, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, ballpark: weather?.ballpark };
-  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate + doubleRate + singleRate) return { type: "single", isAtBat: true, bases: 1, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, ballpark: weather?.ballpark };
+  const battedBallHitContext = {
+    battedBallType,
+    fielding,
+    weather,
+    defenseContext,
+    seed,
+    plateAppearance,
+    hitter
+  };
+  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate) {
+    return resolveBattedBallHitOutcome("triple", battedBallHitContext);
+  }
+  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate + doubleRate) {
+    return resolveBattedBallHitOutcome("double", battedBallHitContext);
+  }
+  if (roll < walkRate + strikeoutRate + homeRunRate + tripleRate + doubleRate + singleRate) {
+    return resolveBattedBallHitOutcome("single", battedBallHitContext);
+  }
 
   const errorRate = fieldingErrorRate({ fielding, hitter, battedBallType });
   if (rollUnit(seed, side, "fielding-error", plateAppearance, hitter.id, fielding.defender?.id ?? fielding.position) < errorRate) {
@@ -6445,7 +6460,16 @@ function resolvePlateAppearance({ hitter, pitcher, defenseQuality, defenseContex
   }
 
   const doublePlay = shouldTurnDoublePlay({ bases, outs, hitter, pitcher, defenseContext, seed, plateAppearance, side, battedBallType });
-  return { type: "out", isAtBat: true, bases: 0, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, doublePlay, ballpark: weather?.ballpark };
+  return {
+    type: "out",
+    isAtBat: true,
+    bases: 0,
+    battedBallType,
+    fieldingPosition: fielding.position,
+    defender: fielding.defender,
+    doublePlay,
+    ballpark: weather?.ballpark
+  };
 }
 
 function managerPlateAppearanceAdjustment(gamePlan, hitter, bases, outs) {
@@ -6559,16 +6583,166 @@ function fieldingErrorRate({ fielding, hitter, battedBallType }) {
 }
 
 function shouldTurnDoublePlay({ bases, outs, hitter, pitcher, defenseContext, seed, plateAppearance, side, battedBallType }) {
-  if (battedBallType !== "groundBall" || outs % 3 > 1 || !bases?.[0]) return false;
+  if (!isGroundBallForceSituation({ bases, outs, battedBallType })) return false;
+  const rate = groundBallDoublePlayProbability({ hitter, pitcher, defenseContext });
+  return rollUnit(seed, side, "double-play", plateAppearance, hitter?.id ?? "", bases[0]?.id ?? "") < rate;
+}
+
+function isGroundBallForceSituation({ bases, outs, battedBallType }) {
+  return battedBallType === "groundBall" && safeNumber(outs) % 3 <= 1 && Boolean(bases?.[0]);
+}
+
+export function groundBallDoublePlayProbability({ hitter, pitcher, defenseContext } = {}) {
   const speed = safeNumber(hitter?.speed, 10);
   const baserunning = safeNumber(hitter?.baserunning, speed);
   const movement = safeNumber(pitcher?.movement, 10);
   const infield = safeNumber(defenseContext?.doublePlayQuality, defenseContext?.infieldQuality);
-  const rate = clamp(0.085 + (infield - 10) * 0.008 + (movement - 10) * 0.004 - (speed + baserunning - 20) * 0.0042, 0.035, 0.24);
-  return rollUnit(seed, side, "double-play", plateAppearance, hitter?.id ?? "", bases[0]?.id ?? "") < rate;
+  return clamp(
+    0.23
+      + (infield - 10) * 0.008
+      + (movement - 10) * 0.004
+      - (speed + baserunning - 20) * 0.006,
+    0.08,
+    0.46
+  );
 }
 
-function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed, plateAppearance }) {
+export function canAdvanceFirstToThirdOnSingle(outcome) {
+  if (String(outcome?.outcome ?? outcome?.type ?? "") !== "single") return false;
+  return canProduceExtraBaseHitFromBattedBall(outcome);
+}
+
+export function canAdvanceSecondToHomeOnSingle(outcome) {
+  if (String(outcome?.outcome ?? outcome?.type ?? "") !== "single") return false;
+  return canProduceExtraBaseHitFromBattedBall(outcome);
+}
+
+export function canScoreThirdOnCaughtOut(outcome) {
+  if (String(outcome?.outcome ?? outcome?.type ?? "") !== "out") return false;
+  return canProduceExtraBaseHitFromBattedBall(outcome);
+}
+
+export function canScoreThirdOnGroundForceOut(event) {
+  if (String(event?.outcome ?? event?.type ?? "") !== "out") return false;
+  if (!String(event?.battedBallType ?? "").toLowerCase().includes("ground")) return false;
+  const beforeIds = normalizedBaseRunnerIds(event?.baseRunnerIdsBefore);
+  if (!beforeIds.every(Boolean)) return false;
+  const outsBefore = safeNumber(event?.outsBefore ?? event?.outs) % 3;
+  return event?.doublePlay ? outsBefore === 0 : outsBefore <= 1;
+}
+
+export function singleSecondToHomeProbability({ runner, outs = 0, defender = null } = {}) {
+  return runnerAdvanceProbability({
+    runner,
+    outs,
+    defender,
+    base: 0.36,
+    speedWeight: 0.009,
+    baserunningWeight: 0.007,
+    twoOutBonus: 0.11,
+    armWeight: 0.012,
+    min: 0.16,
+    max: 0.82
+  });
+}
+
+export function singleFirstToThirdProbability({ runner, outs = 0, defender = null } = {}) {
+  return runnerAdvanceProbability({
+    runner,
+    outs,
+    defender,
+    base: 0.13,
+    speedWeight: 0.006,
+    baserunningWeight: 0.013,
+    twoOutBonus: 0.08,
+    armWeight: 0.01,
+    min: 0.08,
+    max: 0.72
+  });
+}
+
+export function doubleFirstToHomeProbability({ runner, outs = 0, defender = null } = {}) {
+  return runnerAdvanceProbability({
+    runner,
+    outs,
+    defender,
+    base: 0.23,
+    speedWeight: 0.009,
+    baserunningWeight: 0.01,
+    twoOutBonus: 0.12,
+    armWeight: 0.012,
+    min: 0.14,
+    max: 0.86
+  });
+}
+
+function runnerAdvanceProbability({ runner, outs, defender, base, speedWeight, baserunningWeight, twoOutBonus, armWeight, min, max }) {
+  const speed = safeNumber(runner?.speed, 10);
+  const baserunning = safeNumber(runner?.baserunning, speed);
+  const arm = safeNumber(defender?.arm, 10);
+  return clamp(
+    base
+      + speed * speedWeight
+      + baserunning * baserunningWeight
+      + (safeNumber(outs) % 3 === 2 ? twoOutBonus : 0)
+      - (arm - 10) * armWeight,
+    min,
+    max
+  );
+}
+
+export function canProduceExtraBaseHitFromBattedBall(outcome) {
+  const battedBallType = String(outcome?.battedBallType ?? "").toLowerCase();
+  if (!battedBallType.includes("line") && !battedBallType.includes("fly")) return false;
+  const fieldingPosition = String(outcome?.fieldingPosition ?? "").toUpperCase();
+  return ["LF", "CF", "RF", "OF"].includes(fieldingPosition);
+}
+
+export function canProduceTripleFromBattedBall(outcome) {
+  return canProduceExtraBaseHitFromBattedBall(outcome);
+}
+
+function resolveBattedBallHitOutcome(requestedType, context) {
+  return {
+    ...normalizeExtraBaseHitContext({ ...context, requestedType }),
+    isAtBat: true,
+    ballpark: context.weather?.ballpark
+  };
+}
+
+export function normalizeExtraBaseHitContext(context) {
+  const requestedType = String(context?.requestedType ?? "single");
+  const requestedBases = requestedType === "triple" ? 3 : requestedType === "double" ? 2 : 1;
+  let resolvedBattedBallType = context?.battedBallType;
+  let resolvedFielding = context?.fielding;
+  const extraBaseHitAllowed = requestedBases === 1 || canProduceExtraBaseHitFromBattedBall({
+    battedBallType: resolvedBattedBallType,
+    fieldingPosition: resolvedFielding?.position
+  });
+  if (!extraBaseHitAllowed) {
+    const token = String(resolvedBattedBallType ?? "").toLowerCase();
+    if (token.includes("line")) resolvedBattedBallType = "lineDrive";
+    else if (token.includes("fly") || requestedType === "triple") resolvedBattedBallType = "flyBall";
+    else resolvedBattedBallType = "lineDrive";
+    resolvedFielding = chooseFieldingTarget(
+      context.defenseContext,
+      "outfield",
+      context.seed,
+      context.plateAppearance,
+      context.hitter,
+      "OF"
+    );
+  }
+  return {
+    type: requestedType,
+    bases: requestedBases,
+    battedBallType: resolvedBattedBallType,
+    fieldingPosition: resolvedFielding?.position,
+    defender: resolvedFielding?.defender
+  };
+}
+
+export function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed, plateAppearance }) {
   const advancement = {
     runs: 0,
     earnedRuns: 0,
@@ -6615,11 +6789,21 @@ function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed, plate
   if (outcome.type === "out") {
     if (outcome.doublePlay && outs % 3 <= 1 && bases[0]) {
       advancement.outs = Math.min(2, 3 - (outs % 3));
-      bases[0] = null;
+      applyGroundBallDoublePlay(bases, outs, scoreRunner);
+      return advancement;
+    }
+    if (isGroundBallForceSituation({ bases, outs, battedBallType: outcome.battedBallType })) {
+      advancement.outs = 1;
+      applyGroundBallForceAdvance(bases, scoreRunner);
       return advancement;
     }
     advancement.outs = 1;
-    if (outs % 3 < 2 && bases[2] && rollUnit(seed, "sac-fly", plateAppearance, hitter.id) < 0.1) {
+    if (
+      outs % 3 < 2
+      && bases[2]
+      && canScoreThirdOnCaughtOut(outcome)
+      && rollUnit(seed, "sac-fly", plateAppearance, hitter.id) < 0.1
+    ) {
       scoreRunner(bases[2], true);
       bases[2] = null;
     }
@@ -6652,12 +6836,22 @@ function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed, plate
     bases[2] = null;
     scoreRunner(third, true);
     if (second) {
-      const secondScores = rollUnit(seed, "single-second", plateAppearance, second.id) < 0.52 + safeNumber(second.speed, 10) * 0.008;
+      const secondScores = canAdvanceSecondToHomeOnSingle(outcome)
+        && rollUnit(seed, "single-second", plateAppearance, second.id) < singleSecondToHomeProbability({
+          runner: second,
+          outs,
+          defender: outcome.defender
+        });
       if (secondScores) scoreRunner(second, true);
       else placeRunner(bases, 2, second, scoreRunner);
     }
     if (first) {
-      const firstToThird = rollUnit(seed, "single-first", plateAppearance, first.id) < 0.22 + safeNumber(first.baserunning, first.speed) * 0.013;
+      const firstToThird = canAdvanceFirstToThirdOnSingle(outcome)
+        && rollUnit(seed, "single-first", plateAppearance, first.id) < singleFirstToThirdProbability({
+          runner: first,
+          outs,
+          defender: outcome.defender
+        });
       placeRunner(bases, firstToThird ? 2 : 1, first, scoreRunner);
     }
     return advancement;
@@ -6671,7 +6865,11 @@ function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed, plate
     scoreRunner(third, true);
     scoreRunner(second, true);
     if (first) {
-      const firstScores = rollUnit(seed, "double-first", plateAppearance, first.id) < 0.32 + safeNumber(first.speed, 10) * 0.011;
+      const firstScores = rollUnit(seed, "double-first", plateAppearance, first.id) < doubleFirstToHomeProbability({
+        runner: first,
+        outs,
+        defender: outcome.defender
+      });
       if (firstScores) scoreRunner(first, true);
       else placeRunner(bases, 2, first, scoreRunner);
     }
@@ -6696,6 +6894,35 @@ function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed, plate
   }
 
   return advancement;
+}
+
+function applyGroundBallForceAdvance(bases, scoreRunner) {
+  const original = [...bases];
+  let forceChainEnd = 0;
+  while (forceChainEnd < 2 && original[forceChainEnd + 1]) {
+    forceChainEnd += 1;
+  }
+
+  bases[0] = null;
+  bases[1] = null;
+  bases[2] = null;
+  for (let index = forceChainEnd + 1; index < original.length; index += 1) {
+    bases[index] = original[index];
+  }
+  for (let index = 0; index <= forceChainEnd; index += 1) {
+    if (index === 2) scoreRunner(original[index], true);
+    else bases[index + 1] = original[index];
+  }
+}
+
+function applyGroundBallDoublePlay(bases, outs, scoreRunner) {
+  const [first, second, third] = bases;
+  bases[0] = null;
+  if (!first || safeNumber(outs) % 3 !== 0 || !second) return;
+
+  bases[1] = null;
+  bases[2] = second;
+  if (third) scoreRunner(third, false);
 }
 
 function placeRunner(bases, targetBase, runner, scoreRunner) {
@@ -6984,11 +7211,73 @@ function addPlateAppearanceEvent(result, input) {
     sacrifice: input.outcome.type === "sacrificeBunt",
     walkOff: Boolean(input.walkOff)
   };
+  event.defensiveThrowTarget = resolveDefensiveThrowTarget(event);
 
   result.plateAppearanceEvents.push(event);
   if (event.runs > 0) {
     result.scoringEvents.push(event);
   }
+}
+
+const DEFENSIVE_THROW_BASE_BY_INDEX = Object.freeze([null, "first", "second", "third", "home"]);
+
+export function resolveDefensiveThrowTarget(event) {
+  const outcome = String(event?.outcome ?? "");
+  const battedBallType = String(event?.battedBallType ?? "").toLowerCase();
+
+  if (!["single", "double", "triple", "out", "sacrificeBunt"].includes(outcome)) return null;
+  if (outcome === "sacrificeBunt") return "first";
+
+  if (outcome === "out") {
+    if (event?.doublePlay) return "second";
+    if (battedBallType.includes("ground")) return "first";
+    if (battedBallType.includes("fly") || battedBallType.includes("line")) {
+      return leadExistingRunnerThrowTarget(event);
+    }
+    return "first";
+  }
+
+  const leadRunnerTarget = leadExistingRunnerThrowTarget(event);
+  if (leadRunnerTarget) return leadRunnerTarget;
+  if (outcome === "double") return "second";
+  if (outcome === "triple") return "third";
+
+  // A single with no existing runner advancing is already safely in hand.
+  // Do not invent a throw home (or a futile force throw to first).
+  return null;
+}
+
+function leadExistingRunnerThrowTarget(event) {
+  const beforeIds = normalizedBaseRunnerIds(event?.baseRunnerIdsBefore);
+  const afterIds = normalizedBaseRunnerIds(event?.baseRunnerIdsAfter);
+  const afterBaseById = new Map();
+  afterIds.forEach((id, index) => {
+    if (id) afterBaseById.set(id, index + 1);
+  });
+  const scoredIds = new Set(
+    (Array.isArray(event?.scoredRunners) ? event.scoredRunners : [])
+      .map((runner) => String(runner?.id ?? runner?.runnerId ?? runner ?? "").trim())
+      .filter(Boolean)
+  );
+  const advances = [];
+
+  beforeIds.forEach((id, index) => {
+    if (!id) return;
+    const fromBase = index + 1;
+    const toBase = scoredIds.has(id) ? 4 : afterBaseById.get(id);
+    if (Number.isInteger(toBase) && toBase > fromBase) {
+      advances.push({ fromBase, toBase });
+    }
+  });
+
+  const lead = advances.sort((a, b) => b.toBase - a.toBase || b.fromBase - a.fromBase)[0];
+  return lead ? DEFENSIVE_THROW_BASE_BY_INDEX[lead.toBase] : null;
+}
+
+function normalizedBaseRunnerIds(value) {
+  return Array.from({ length: 3 }, (_, index) => String(
+    Array.isArray(value) ? value[index] ?? "" : ""
+  ).trim());
 }
 
 function applyPitcherDecisions({ awayRuns, homeRuns, awayLines, homeLines, awayPitchers, homePitchers }) {
@@ -7399,6 +7688,7 @@ function snapshotGamecastPlayer(player) {
       player,
       position === "C" ? ["defense", "range", "arm", "catching", "catching"] : ["defense", "range", "arm"]
     ),
+    arm: clamp(Math.round(safeNumber(player?.arm, player?.defense ?? 10) * 10), 20, 200),
     running: gamecastCompositeAbility(player, ["speed", "baserunning", "stealing"])
   };
 }

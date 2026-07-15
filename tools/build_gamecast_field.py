@@ -48,9 +48,9 @@ FIELD_MARKERS: Dict[str, Dict[str, Tuple[int, int]]] = {
         "2B": (592, 347),
         "3B": (236, 438),
         "SS": (368, 347),
-        "LF": (260, 306),
-        "CF": (480, 264),
-        "RF": (700, 306),
+        "LF": (245, 270),
+        "CF": (480, 230),
+        "RF": (715, 270),
         "leftPole": (42, 252),
         "rightPole": (918, 252),
         "scoreboardTl": (401, 64),
@@ -67,9 +67,9 @@ FIELD_MARKERS: Dict[str, Dict[str, Tuple[int, int]]] = {
         "2B": (590, 361),
         "3B": (264, 430),
         "SS": (370, 361),
-        "LF": (282, 312),
-        "CF": (480, 274),
-        "RF": (678, 312),
+        "LF": (260, 280),
+        "CF": (480, 240),
+        "RF": (700, 280),
         "leftPole": (18, 254),
         "rightPole": (942, 254),
         "scoreboardTl": (394, 86),
@@ -86,13 +86,23 @@ FIELD_MARKERS: Dict[str, Dict[str, Tuple[int, int]]] = {
         "2B": (589, 388),
         "3B": (272, 430),
         "SS": (371, 388),
-        "LF": (286, 318),
-        "CF": (480, 282),
-        "RF": (674, 318),
+        "LF": (270, 295),
+        "CF": (480, 260),
+        "RF": (690, 295),
         "leftPole": (25, 247),
         "rightPole": (935, 247),
         "scoreboardTl": (404, 84),
     },
+}
+
+# Batter boxes are painted differently in each source field and are not part
+# of the base-path marker set. Keep an explicit foot anchor inside the visible
+# right-handed batter's box so rebuilding the field cannot reintroduce the
+# old home-to-first geometric approximation.
+FIELD_BATTER_ANCHORS: Dict[str, Tuple[int, int]] = {
+    "field-jamsil-day": (516, 622),
+    "field-jamsil-night": (513, 600),
+    "field-gocheok-dome": (507, 614),
 }
 
 FIELD_NAMES = {
@@ -222,6 +232,13 @@ def build_anchor_payload(field_id: str, found: Dict[str, List[Tuple[int, int]]])
             "x": round(x, 2),
             "y": round(y, 2),
             "scale": depth_scale(y),
+        }
+    if field_id in FIELD_BATTER_ANCHORS:
+        batter_x, batter_y = FIELD_BATTER_ANCHORS[field_id]
+        anchors["batter"] = {
+            "x": float(batter_x),
+            "y": float(batter_y),
+            "scale": depth_scale(batter_y),
         }
     return {
         "fieldId": field_id,

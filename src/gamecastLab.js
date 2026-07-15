@@ -10,7 +10,7 @@
 //   ?holds=0               자동 홀드 끄기
 import { createInitialState } from "./data.js";
 import { simulateDay, resolveMailDecision } from "./engine.js";
-import { mountApp } from "./ui.js?v=gamecast-hq-80-runner-depth-20260715-r5";
+import { mountApp } from "./ui.js?v=gamecast-arm-pitch-20260715-r15";
 
 const params = new URLSearchParams(window.location.search);
 const state = createInitialState();

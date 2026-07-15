@@ -1766,11 +1766,16 @@ async function checkGamecastLab() {
       const rect = canvas?.getBoundingClientRect();
       const scanlineStyle = screen ? getComputedStyle(screen, "::after") : null;
       const keys = Object.keys(anchors).sort();
-      const required = ["home", "first", "second", "third", "mound", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "leftPole", "rightPole", "scoreboardTl"];
+      const required = ["home", "batter", "first", "second", "third", "mound", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "leftPole", "rightPole", "scoreboardTl"];
       const defenseRequired = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
       const defenderKeys = (players.defenders ?? []).map((actor) => actor.fieldingKey || actor.key).sort();
       const outfieldScales = (players.defenders ?? []).filter((actor) => actor.isOutfielder).map((actor) => Number(actor.scale ?? 0));
       const infieldScales = (players.defenders ?? []).filter((actor) => !actor.isOutfielder && actor.fieldingKey !== "P" && actor.fieldingKey !== "C").map((actor) => Number(actor.scale ?? 0));
+      const authoredBatter = anchors.batter ?? null;
+      const staticBatter = (players.actors ?? []).find((actor) => actor.key === "batter" && !actor.isTransient) ?? null;
+      const batterAnchorDistance = authoredBatter && staticBatter
+        ? Math.hypot(Number(staticBatter.x) - Number(authoredBatter.x), Number(staticBatter.y) - Number(authoredBatter.y))
+        : -1;
       const motionFrame = screen?.__gamecast2Frame ?? null;
       const particleState = motionFrame?.particles ?? null;
       const cameraState = motionFrame?.camera ?? null;
@@ -1784,7 +1789,7 @@ async function checkGamecastLab() {
           url.includes("/assets/gamecast/player-") ||
           url.includes("/assets/gamecast/props")
         );
-      const expectedAssetRevision = "20260715-runner-depth-1";
+      const expectedAssetRevision = "20260715-force-clarity-5";
       const middleDepths = [
         [anchors.SS, anchors.second, anchors.third],
         [anchors["2B"], anchors.second, anchors.first]
@@ -1801,6 +1806,9 @@ async function checkGamecastLab() {
         nativeDisplaySize: Number(screen?.dataset?.gamecast2NativeDisplaySize ?? 0),
         assetRevision: screen?.dataset?.gamecast2AssetRevision ?? "",
         firstAnchorSignature: screen?.dataset?.gamecast2FirstAnchor ?? "",
+        authoredBatter,
+        staticBatter,
+        batterAnchorDistance,
         middleInfieldSignature: screen?.dataset?.gamecast2MiddleInfield ?? "",
         baseOccupantDistance: Number(screen?.dataset?.gamecast2BaseOccupantDistance ?? -1),
         assetRevisionOk: gamecastAssetUrls.length >= 8 && gamecastAssetUrls.every((url) => {
@@ -1809,6 +1817,8 @@ async function checkGamecastLab() {
         }),
         middleDepths,
         timelineTemplate: screen?.dataset?.gamecast2TimelineTemplate ?? "",
+        timelineDurationMs: Number(screen?.dataset?.gamecast2TimelineDurationMs ?? 0),
+        playbackDurationMs: Number(screen?.dataset?.gamecast2PlaybackDurationMs ?? 0),
         scoreboardVisible: screen?.dataset?.gamecast2Scoreboard === "1",
         scoreboardState: motionFrame?.scoreboard ?? null,
         cameraZoom: Number(screen?.dataset?.gamecast2CameraZoom ?? NaN),
@@ -1867,8 +1877,14 @@ async function checkGamecastLab() {
   assert(anchorProbe.playerAtlas === "128-day", `v2 128px day atlas가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.nativeDisplaySize === 80, `v2 native display atlas가 80px가 아닙니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.timelineTemplate && anchorProbe.timelineTemplate !== "fallback", `v2 timeline template가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/timeline.js");
-  assert(anchorProbe.assetRevision === "20260715-runner-depth-1" && anchorProbe.assetRevisionOk, `v2 assets are not cache-revisioned: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
+  assert(
+    anchorProbe.timelineDurationMs >= 3200 && anchorProbe.playbackDurationMs === anchorProbe.timelineDurationMs,
+    `v2 watch playback ignores the authored timeline duration: ${JSON.stringify(anchorProbe)}`,
+    "src/ui.js"
+  );
+  assert(anchorProbe.assetRevision === "20260715-force-clarity-5" && anchorProbe.assetRevisionOk, `v2 assets are not cache-revisioned: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
   assert(anchorProbe.firstAnchorSignature === "724,445", `v2 loaded a stale first-base anchor: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-gocheok-dome.anchors.json");
+  assert(anchorProbe.batterAnchorDistance >= 0 && anchorProbe.batterAnchorDistance <= 0.01, `v2 batter is outside the authored box anchor: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-gocheok-dome.anchors.json");
   assert(anchorProbe.middleInfieldSignature === "388,388" && anchorProbe.middleDepths.every((depth) => depth >= 8 && depth <= 16), `v2 middle infield depth is wrong: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-gocheok-dome.anchors.json");
   assert(anchorProbe.baseOccupantDistance < 0 || anchorProbe.baseOccupantDistance <= 0.01, `v2 stationary runner is not planted on a base: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(

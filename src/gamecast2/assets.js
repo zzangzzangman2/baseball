@@ -2,7 +2,7 @@ export const GAMECAST2_DESIGN_W = 960;
 export const GAMECAST2_DESIGN_H = 720;
 
 const FIELD_ROOT = "./assets/gamecast2";
-export const GAMECAST2_ASSET_REVISION = "20260715-runner-depth-1";
+export const GAMECAST2_ASSET_REVISION = "20260715-force-clarity-5";
 
 export function gamecast2AssetUrl(url) {
   const separator = String(url).includes("?") ? "&" : "?";

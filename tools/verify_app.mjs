@@ -12,6 +12,7 @@ import {
   GAMECAST_SPRITE_ASSET_REVISION,
   gamecastSpriteAssetUrl
 } from "../src/gamecastPhaser.js";
+import { getGamecast2RunnerStartMs } from "../src/gamecast2/timeline.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -263,6 +264,7 @@ const warnings = [];
 const results = [];
 let dataModule;
 let engineModule;
+let uiModule;
 let rostersModule;
 let ratingsModule;
 let systemsModule;
@@ -300,6 +302,7 @@ async function main() {
   await runCheck("다음 경기 보기/시뮬레이션 플로우", checkNextUserGameFlow);
   await runCheck("선수 누적 기록 모델", checkPlayerSeasonStats);
   await runCheck("경기 박스스코어/eventLog", checkGameBoxScoreEventLog);
+  await runCheck("타구별 비정상 장타/진루 차단", checkBattedBallExtraBaseRules);
   await runCheck("게임캐스트 v3 모션 아틀라스", checkGamecastMotionAtlas);
   await runCheck("게임캐스트 v2 선언형 타임라인", verifyGamecastTimeline);
   await runCheck("하프이닝 경기 AI/작전", checkHalfInningGameAiTactics);
@@ -363,7 +366,7 @@ async function checkModuleImports() {
   systemsModule = await importModule(MODULE_PATHS.systems);
   frontOfficeModule = await importModule(MODULE_PATHS.frontOffice);
   saveModule = await importModule(MODULE_PATHS.save);
-  const uiModule = await importModule(MODULE_PATHS.ui);
+  uiModule = await importModule(MODULE_PATHS.ui);
 
   assertExport(dataModule, "createInitialState", MODULE_PATHS.data);
   assertExport(engineModule, "simulateDay", MODULE_PATHS.engine);
@@ -968,6 +971,7 @@ function checkGameBoxScoreEventLog() {
   let ballparkContextSeen = false;
   let paSchemaCount = 0;
   let gamecastProfileCount = 0;
+  let legalExtraBaseHits = 0;
   const expectedDefenseKeys = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 
   if (!Array.isArray(state.eventLog)) {
@@ -1013,12 +1017,15 @@ function checkGameBoxScoreEventLog() {
         problems.push(`${game.id}: gamecast player registry key mismatch`);
         break;
       }
-      for (const key of ["ovr", "batting", "pitching", "fielding", "running"]) {
+      for (const key of ["ovr", "batting", "pitching", "fielding", "running", "arm"]) {
         const value = Number(profile[key]);
         if (!Number.isFinite(value) || value < 0 || value > 200) {
           problems.push(`${game.id}: gamecast profile ${profile.id} ${key}=${profile[key]}`);
           break;
         }
+      }
+      if (Number(profile.arm) < 20) {
+        problems.push(`${game.id}: gamecast profile ${profile.id} arm was not preserved (${profile.arm})`);
       }
     }
     for (const teamId of [game.awayTeamId, game.homeTeamId]) {
@@ -1051,6 +1058,13 @@ function checkGameBoxScoreEventLog() {
     }
     if (sumArray(homeBatting.map((line) => line.hits)) !== lineHome.hits) {
       problems.push(`${game.id}: 홈 타자 안타 합계 불일치`);
+    }
+    const eventDoubles = paEvents.filter((event) => event.outcome === "double").length;
+    const eventTriples = paEvents.filter((event) => event.outcome === "triple").length;
+    const battingDoubles = sumArray([...awayBatting, ...homeBatting].map((line) => safeInteger(line.doubles)));
+    const battingTriples = sumArray([...awayBatting, ...homeBatting].map((line) => safeInteger(line.triples)));
+    if (eventDoubles !== battingDoubles || eventTriples !== battingTriples) {
+      problems.push(`${game.id}: PA/타자 장타 합계 불일치 2루타 ${eventDoubles}/${battingDoubles}, 3루타 ${eventTriples}/${battingTriples}`);
     }
     if (safeInteger(boxScore.totals?.plateAppearances) !== paEvents.length) {
       problems.push(`${game.id}: PA 이벤트 ${paEvents.length}/${boxScore.totals?.plateAppearances}`);
@@ -1136,6 +1150,81 @@ function checkGameBoxScoreEventLog() {
       if (!event.ballparkId || !event.ballparkName) {
         problems.push(`${game.id}: PA ${event.sequence} 구장 컨텍스트 누락`);
       }
+      const runnerFromFirst = String(event.baseRunnerIdsBefore?.[0] ?? "");
+      const runnerFromSecond = String(event.baseRunnerIdsBefore?.[1] ?? "");
+      const runnerFromThird = String(event.baseRunnerIdsBefore?.[2] ?? "");
+      const scoredRunnerIds = new Set((event.scoredRunners ?? []).map((runner) => String(runner?.id ?? "")));
+      const battedBallType = String(event.battedBallType ?? "").toLowerCase();
+      const fieldingPosition = String(event.fieldingPosition ?? "").toUpperCase();
+      const hitterId = String(event.hitterId ?? "");
+      const expectedThrowTarget = engineModule.resolveDefensiveThrowTarget(event);
+      if (!Object.prototype.hasOwnProperty.call(event, "defensiveThrowTarget")) {
+        problems.push(`${game.id}: PA ${event.sequence} defensiveThrowTarget missing`);
+      } else if (event.defensiveThrowTarget !== expectedThrowTarget) {
+        problems.push(`${game.id}: PA ${event.sequence} throw target ${event.defensiveThrowTarget}/${expectedThrowTarget}`);
+      }
+      const batterDestination = hitterId
+        ? (event.baseRunnerIdsAfter ?? []).map(String).indexOf(hitterId) + 1
+        : 0;
+      const infieldHandled = ["P", "C", "1B", "2B", "3B", "SS", "IF"].includes(fieldingPosition);
+      const isExtraBaseHit = ["double", "triple"].includes(event.outcome);
+      if (
+        event.outcome === "single"
+        && battedBallType.includes("ground")
+        && runnerFromFirst
+        && String(event.baseRunnerIdsAfter?.[2] ?? "") === runnerFromFirst
+      ) {
+        problems.push(`${game.id}: PA ${event.sequence} 땅볼 단타에서 1루 주자가 3루까지 진루`);
+      }
+      if (
+        event.outcome === "single"
+        && runnerFromSecond
+        && scoredRunnerIds.has(runnerFromSecond)
+        && !engineModule.canAdvanceSecondToHomeOnSingle(event)
+      ) {
+        problems.push(`${game.id}: PA ${event.sequence} non-outfield single scored runner from second`);
+      }
+      if (
+        event.outcome === "out"
+        && runnerFromThird
+        && scoredRunnerIds.has(runnerFromThird)
+        && !engineModule.canScoreThirdOnCaughtOut(event)
+        && !engineModule.canScoreThirdOnGroundForceOut(event)
+      ) {
+        problems.push(`${game.id}: PA ${event.sequence} non-caught-out scored runner from third`);
+      }
+      if (
+        battedBallType.includes("ground")
+        && batterDestination >= 2
+      ) {
+        problems.push(`${game.id}: PA ${event.sequence} 땅볼 타자주자가 ${batterDestination}루까지 진루`);
+      }
+      if (
+        isExtraBaseHit
+        && (battedBallType.includes("ground") || infieldHandled)
+      ) {
+        problems.push(`${game.id}: PA ${event.sequence} ${event.battedBallType}/${fieldingPosition} 타구에 ${event.outcome} 배정`);
+      } else if (
+        isExtraBaseHit
+        && (battedBallType.includes("line") || battedBallType.includes("fly"))
+        && ["LF", "CF", "RF", "OF"].includes(fieldingPosition)
+      ) {
+        legalExtraBaseHits += 1;
+      }
+      if (isExtraBaseHit) {
+        const expectedDestination = event.outcome === "triple" ? 3 : 2;
+        if (batterDestination !== expectedDestination) {
+          problems.push(`${game.id}: PA ${event.sequence} ${event.outcome} 타자주자 목적지 ${batterDestination}/${expectedDestination}루`);
+        }
+        if (!engineModule.canProduceExtraBaseHitFromBattedBall(event)) {
+          problems.push(`${game.id}: PA ${event.sequence} ${event.outcome} 정규화 후에도 장타 컨텍스가 적법하지 않음`);
+        }
+        const defenderId = String(event.defenderId ?? "");
+        const assignedOutfielderId = String(gamecast?.defenseByTeamId?.[event.defenseTeamId]?.[fieldingPosition] ?? "");
+        if (defenderId && assignedOutfielderId && defenderId !== assignedOutfielderId) {
+          problems.push(`${game.id}: PA ${event.sequence} ${fieldingPosition} 수비수/${event.defenderName} 컨텍스가 불일치`);
+        }
+      }
       if ((event.basesAfter ?? []).filter(Boolean).length >= 2) {
         multiRunnerBaseStateSeen = true;
       }
@@ -1148,6 +1237,9 @@ function checkGameBoxScoreEventLog() {
   if (!ballparkContextSeen) {
     problems.push("경기 구장 컨텍스트가 감지되지 않음");
   }
+  if (paSchemaCount > 0 && legalExtraBaseHits === 0) {
+    problems.push("땅볼/내야 장타 정규화 후 정상 외야 2·3루타까지 사라짐");
+  }
 
   assert(
     problems.length === 0,
@@ -1158,7 +1250,659 @@ function checkGameBoxScoreEventLog() {
   const totalPaEvents = sumNumbers(state.lastGames, (game) => game.plateAppearanceEvents.length);
   const totalErrors = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.errors);
   const totalDoublePlays = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.doublePlays);
-  return `game.final ${state.eventLog.length}개, 박스스코어 ${state.lastGames.length}경기, PA 이벤트 ${totalPaEvents}개, 실책 ${totalErrors}, 병살 ${totalDoublePlays}`;
+  return `game.final ${state.eventLog.length}개, 박스스코어 ${state.lastGames.length}경기, PA 이벤트 ${totalPaEvents}개, 정상 외야 장타 ${legalExtraBaseHits}개, 실책 ${totalErrors}, 병살 ${totalDoublePlays}`;
+}
+
+function checkBattedBallExtraBaseRules() {
+  ensureImportsReady();
+  assert(
+    typeof engineModule.applyPlateAppearanceOutcome === "function"
+      && typeof engineModule.resolveDefensiveThrowTarget === "function",
+    "Base-advancement or defensive-throw resolver export is missing.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    typeof uiModule.gamecastRunnerTransitions === "function"
+      && typeof uiModule.gamecastRunnerTransitionTiming === "function",
+    "Legacy Canvas/Phaser runner-transition exports are missing.",
+    MODULE_PATHS.ui
+  );
+
+  const tagUpEvent = {
+    outcome: "out",
+    hitterId: "tag-batter",
+    battedBallType: "flyBall",
+    fieldingPosition: "RF",
+    basesBefore: [false, false, true],
+    basesAfter: [false, false, false],
+    baseRunnerIdsBefore: ["", "", "tag-runner"],
+    baseRunnerIdsAfter: ["", "", ""],
+    scoredRunners: [{ id: "tag-runner" }],
+    gamecastDurationMs: 5000
+  };
+  const tagTransitions = uiModule.gamecastRunnerTransitions(tagUpEvent);
+  const tagTransition = tagTransitions.find((transition) => transition.id === "tag-runner");
+  const tagTiming = uiModule.gamecastRunnerTransitionTiming(tagUpEvent, tagTransition);
+  const authoredTagStartT = getGamecast2RunnerStartMs(tagUpEvent, { tagUp: true }) / tagUpEvent.gamecastDurationMs;
+  assert(
+    tagTransitions.length === 1
+      && tagTransition?.fromBase === 3
+      && tagTransition?.toBase === 4
+      && !tagTransitions.some((transition) => transition.role === "batter")
+      && tagTiming.tagUp
+      && Math.abs(tagTiming.startT - authoredTagStartT) < 0.000001
+      && tagTiming.durationMs === 1400
+      && tagTiming.endT <= 0.985,
+    `caught-out tag-up transition is invalid: ${JSON.stringify(tagTransitions)}/${JSON.stringify(tagTiming)}`,
+    MODULE_PATHS.ui
+  );
+  const cappedTagTiming = uiModule.gamecastRunnerTransitionTiming(
+    { ...tagUpEvent, gamecastDurationMs: 1000 },
+    tagTransition
+  );
+  assert(
+    cappedTagTiming.startT < cappedTagTiming.endT && cappedTagTiming.endT <= 0.985,
+    `runner timing escaped the reveal-safe range: ${JSON.stringify(cappedTagTiming)}`,
+    MODULE_PATHS.ui
+  );
+  const actualSingleTransitions = uiModule.gamecastRunnerTransitions({
+    outcome: "single",
+    hitterId: "single-batter",
+    battedBallType: "lineDrive",
+    fieldingPosition: "RF",
+    basesBefore: [true, false, false],
+    basesAfter: [true, false, true],
+    baseRunnerIdsBefore: ["lead-runner", "", ""],
+    baseRunnerIdsAfter: ["single-batter", "", "lead-runner"],
+    scoredRunners: [],
+    gamecastDurationMs: 4400
+  });
+  const leadTransition = actualSingleTransitions.find((transition) => transition.id === "lead-runner");
+  const leadTiming = uiModule.gamecastRunnerTransitionTiming({ outcome: "single", gamecastDurationMs: 4400 }, leadTransition);
+  assert(
+    leadTransition?.fromBase === 1
+      && leadTransition?.toBase === 3
+      && actualSingleTransitions.some((transition) => transition.role === "batter" && transition.toBase === 1)
+      && (leadTiming.durationMs - 270) / leadTiming.distance === 1400,
+    `actual single runner paths are not preserved: ${JSON.stringify(actualSingleTransitions)}/${JSON.stringify(leadTiming)}`,
+    MODULE_PATHS.ui
+  );
+  const emptySingleTransitions = uiModule.gamecastRunnerTransitions({
+    outcome: "single",
+    hitterId: "empty-single-batter",
+    battedBallType: "lineDrive",
+    fieldingPosition: "RF",
+    basesBefore: [false, false, false],
+    basesAfter: [true, false, false],
+    baseRunnerIdsBefore: ["", "", ""],
+    baseRunnerIdsAfter: ["empty-single-batter", "", ""],
+    scoredRunners: [],
+    gamecastDurationMs: 3900
+  });
+  assert(
+    emptySingleTransitions.length === 1
+      && emptySingleTransitions[0].role === "batter"
+      && emptySingleTransitions[0].toBase === 1,
+    `empty-base single produced phantom runner paths: ${JSON.stringify(emptySingleTransitions)}`,
+    MODULE_PATHS.ui
+  );
+  const sacrificeBuntEvent = {
+    outcome: "sacrificeBunt",
+    hitterId: "bunt-batter",
+    battedBallType: "groundBall",
+    fieldingPosition: "P",
+    basesBefore: [true, false, false],
+    basesAfter: [false, true, false],
+    baseRunnerIdsBefore: ["bunt-runner", "", ""],
+    baseRunnerIdsAfter: ["", "bunt-runner", ""],
+    scoredRunners: [],
+    gamecastDurationMs: 3500
+  };
+  const sacrificeTransitions = uiModule.gamecastRunnerTransitions(sacrificeBuntEvent);
+  const sacrificeRunner = sacrificeTransitions.find((transition) => transition.id === "bunt-runner");
+  const sacrificeBatter = sacrificeTransitions.find((transition) => transition.role === "batter");
+  const sacrificeRunnerTiming = uiModule.gamecastRunnerTransitionTiming(sacrificeBuntEvent, sacrificeRunner);
+  const sacrificeBatterTiming = uiModule.gamecastRunnerTransitionTiming(sacrificeBuntEvent, sacrificeBatter);
+  assert(
+    sacrificeRunner?.fromBase === 1
+      && sacrificeRunner?.toBase === 2
+      && sacrificeBatter?.toBase === 1
+      && sacrificeBatter?.out === true
+      && Math.abs(sacrificeRunnerTiming.startT - 0.255) < 0.000001
+      && Math.abs(sacrificeBatterTiming.startT - 0.27) < 0.000001
+      && sacrificeRunnerTiming.endT <= 0.985
+      && sacrificeBatterTiming.endT <= 0.985,
+    `sacrifice-bunt runner timing is invalid: ${JSON.stringify(sacrificeTransitions)}/${JSON.stringify([sacrificeRunnerTiming, sacrificeBatterTiming])}`,
+    MODULE_PATHS.ui
+  );
+
+  const makeHitScenario = ({
+    type,
+    occupied = [],
+    position = "RF",
+    battedBallType = "lineDrive",
+    seed = "throw-matrix",
+    plateAppearance = 1,
+    outs = 0,
+    doublePlay = false,
+    hitterSpeed = 13,
+    hitterBaserunning = hitterSpeed,
+    arm = 10
+  }) => {
+    const runners = Array.from({ length: 3 }, (_, index) => ({
+      id: `runner-${index + 1}`,
+      name: `Runner ${index + 1}`,
+      speed: 12 + index,
+      baserunning: 14 + index
+    }));
+    const basesBefore = runners.map((runner, index) => occupied.includes(index + 1) ? runner : null);
+    const bases = [...basesBefore];
+    const hitter = {
+      id: "fixture-batter",
+      name: "Fixture Batter",
+      speed: hitterSpeed,
+      baserunning: hitterBaserunning
+    };
+    const outcome = {
+      type,
+      bases: type === "homeRun" ? 4 : type === "triple" ? 3 : type === "double" ? 2 : type === "single" ? 1 : 0,
+      isAtBat: true,
+      battedBallType,
+      fieldingPosition: position,
+      doublePlay,
+      defender: { id: `fixture-${position.toLowerCase()}`, arm }
+    };
+    const advancement = engineModule.applyPlateAppearanceOutcome({
+      outcome,
+      hitter,
+      bases,
+      outs,
+      seed,
+      plateAppearance
+    });
+    const baseRunnerIdsBefore = basesBefore.map((runner) => runner?.id ?? "");
+    const baseRunnerIdsAfter = bases.map((runner) => runner?.id ?? "");
+    const event = {
+      outcome: type,
+      hitterId: hitter.id,
+      battedBallType,
+      fieldingPosition: position,
+      doublePlay,
+      baseRunnerIdsBefore,
+      baseRunnerIdsAfter,
+      scoredRunners: advancement.scoredRunners
+    };
+    return {
+      event,
+      bases,
+      basesBefore,
+      advancement,
+      target: engineModule.resolveDefensiveThrowTarget(event)
+    };
+  };
+  const runnerDestination = (scenario, runnerId) => {
+    const afterIndex = scenario.event.baseRunnerIdsAfter.indexOf(runnerId);
+    if (afterIndex >= 0) return afterIndex + 1;
+    return scenario.event.scoredRunners.some((runner) => String(runner.id) === String(runnerId)) ? 4 : 0;
+  };
+  const findScenario = (options, predicate) => {
+    for (let index = 0; index < 2000; index += 1) {
+      const scenario = makeHitScenario({ ...options, seed: `${options.type}-${options.occupied?.join("") ?? "empty"}-${index}` });
+      if (predicate(scenario)) return scenario;
+    }
+    return null;
+  };
+
+  for (const position of ["LF", "CF", "RF"]) {
+    const emptySingle = makeHitScenario({ type: "single", position, occupied: [] });
+    assert(
+      emptySingle.event.baseRunnerIdsAfter[0] === "fixture-batter"
+        && !emptySingle.event.baseRunnerIdsAfter[1]
+        && !emptySingle.event.baseRunnerIdsAfter[2]
+        && emptySingle.target === null,
+      `${position} bases-empty single advanced beyond first or invented a throw: ${JSON.stringify(emptySingle.event)}/${emptySingle.target}`,
+      MODULE_PATHS.engine
+    );
+  }
+
+  for (const type of ["single", "double", "triple"]) {
+    const expectedBatterBase = type === "single" ? 1 : type === "double" ? 2 : 3;
+    for (let mask = 0; mask < 8; mask += 1) {
+      const occupied = [1, 2, 3].filter((base) => (mask & (1 << (base - 1))) !== 0);
+      const scenario = makeHitScenario({ type, occupied, seed: `${type}-matrix-${mask}` });
+      assert(
+        scenario.event.baseRunnerIdsAfter[expectedBatterBase - 1] === "fixture-batter",
+        `${type} mask=${mask}: batter destination is not ${expectedBatterBase}B: ${JSON.stringify(scenario.event)}`,
+        MODULE_PATHS.engine
+      );
+      for (const base of occupied) {
+        const destination = runnerDestination(scenario, `runner-${base}`);
+        assert(
+          destination > base,
+          `${type} mask=${mask}: runner from ${base}B did not advance safely: ${JSON.stringify(scenario.event)}`,
+          MODULE_PATHS.engine
+        );
+      }
+    }
+  }
+
+  const firstToSecond = findScenario({ type: "single", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 2);
+  const firstToThird = findScenario({ type: "single", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 3);
+  const secondScores = findScenario({ type: "single", occupied: [2] }, (scenario) => runnerDestination(scenario, "runner-2") === 4);
+  const secondHoldsThird = findScenario({ type: "single", occupied: [2] }, (scenario) => runnerDestination(scenario, "runner-2") === 3);
+  assert(firstToSecond?.target === "second", `single 1B->2B throw target=${firstToSecond?.target}`, MODULE_PATHS.engine);
+  assert(firstToThird?.target === "third", `single 1B->3B throw target=${firstToThird?.target}`, MODULE_PATHS.engine);
+  assert(secondScores?.target === "home", `single 2B->home throw target=${secondScores?.target}`, MODULE_PATHS.engine);
+  assert(secondHoldsThird?.target === "third", `single 2B->3B throw target=${secondHoldsThird?.target}`, MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "single", occupied: [3] }).target === "home", "single 3B->home did not target home", MODULE_PATHS.engine);
+
+  const emptyDouble = makeHitScenario({ type: "double", occupied: [] });
+  const firstStopsThird = findScenario({ type: "double", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 3);
+  const firstScoresOnDouble = findScenario({ type: "double", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 4);
+  assert(emptyDouble.target === "second", `empty-base double throw target=${emptyDouble.target}`, MODULE_PATHS.engine);
+  assert(firstStopsThird?.target === "third", `double 1B->3B throw target=${firstStopsThird?.target}`, MODULE_PATHS.engine);
+  assert(firstScoresOnDouble?.target === "home", `double 1B->home throw target=${firstScoresOnDouble?.target}`, MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "double", occupied: [2] }).target === "home", "double with runner scoring did not target home", MODULE_PATHS.engine);
+
+  assert(makeHitScenario({ type: "triple", occupied: [] }).target === "third", "empty-base triple invented a home throw", MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "triple", occupied: [1] }).target === "home", "triple with a scoring runner did not target home", MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "out", occupied: [], battedBallType: "groundBall", position: "SS" }).target === "first", "ground out did not target first", MODULE_PATHS.engine);
+
+  for (const hitterSpeed of [6, 19]) {
+    for (const outs of [0, 1, 2]) {
+      for (let mask = 0; mask < 8; mask += 1) {
+        const occupied = [1, 2, 3].filter((base) => (mask & (1 << (base - 1))) !== 0);
+        const hasFirst = occupied.includes(1);
+        const groundOut = makeHitScenario({
+          type: "out",
+          occupied,
+          outs,
+          battedBallType: "groundBall",
+          position: "SS",
+          hitterSpeed,
+          hitterBaserunning: hitterSpeed,
+          seed: `force-ground-${hitterSpeed}-${outs}-${mask}`
+        });
+        assert(
+          groundOut.advancement.outs === 1
+            && !groundOut.event.baseRunnerIdsAfter.includes("fixture-batter")
+            && groundOut.target === "first",
+          `ground out speed=${hitterSpeed} outs=${outs} mask=${mask} is inconsistent: ${JSON.stringify(groundOut.event)}/${JSON.stringify(groundOut.advancement)}`,
+          MODULE_PATHS.engine
+        );
+
+        if (hasFirst && outs < 2) {
+          let forceChainEnd = 0;
+          while (forceChainEnd < 2 && occupied.includes(forceChainEnd + 2)) forceChainEnd += 1;
+          for (let index = 0; index <= forceChainEnd; index += 1) {
+            const expectedDestination = index === 2 ? 4 : index + 2;
+            assert(
+              runnerDestination(groundOut, `runner-${index + 1}`) === expectedDestination,
+              `ground force speed=${hitterSpeed} outs=${outs} mask=${mask} left runner-${index + 1} stationary: ${JSON.stringify(groundOut.event)}`,
+              MODULE_PATHS.engine
+            );
+          }
+          for (let index = forceChainEnd + 1; index < 3; index += 1) {
+            if (!occupied.includes(index + 1)) continue;
+            assert(
+              runnerDestination(groundOut, `runner-${index + 1}`) === index + 1,
+              `ground force speed=${hitterSpeed} outs=${outs} mask=${mask} moved an unforced runner: ${JSON.stringify(groundOut.event)}`,
+              MODULE_PATHS.engine
+            );
+          }
+
+          const doublePlay = makeHitScenario({
+            type: "out",
+            occupied,
+            outs,
+            battedBallType: "groundBall",
+            position: "SS",
+            doublePlay: true,
+            hitterSpeed,
+            hitterBaserunning: hitterSpeed,
+            seed: `force-dp-${hitterSpeed}-${outs}-${mask}`
+          });
+          assert(
+            doublePlay.advancement.outs === 2
+              && !doublePlay.event.baseRunnerIdsAfter.includes("fixture-batter")
+              && !doublePlay.event.baseRunnerIdsAfter.includes("runner-1")
+              && doublePlay.target === "second",
+            `ground-force DP speed=${hitterSpeed} outs=${outs} mask=${mask} is inconsistent: ${JSON.stringify(doublePlay.event)}/${JSON.stringify(doublePlay.advancement)}/${doublePlay.target}`,
+            MODULE_PATHS.engine
+          );
+          if (outs === 0 && occupied.includes(2)) {
+            assert(
+              doublePlay.event.baseRunnerIdsAfter[2] === "runner-2",
+              `ground-force DP speed=${hitterSpeed} mask=${mask} left the forced 2B runner stationary: ${JSON.stringify(doublePlay.event)}`,
+              MODULE_PATHS.engine
+            );
+          }
+          if (outs === 0 && occupied.includes(2) && occupied.includes(3)) {
+            assert(
+              runnerDestination(doublePlay, "runner-3") === 4
+                && doublePlay.advancement.scoredRunners.find((runner) => String(runner.id) === "runner-3")?.rbiCredit === false,
+              `ground-force DP speed=${hitterSpeed} mask=${mask} mishandled the forced run: ${JSON.stringify(doublePlay.event)}`,
+              MODULE_PATHS.engine
+            );
+          }
+        }
+      }
+    }
+  }
+
+  const slowDoublePlayRate = engineModule.groundBallDoublePlayProbability({
+    hitter: { speed: 6, baserunning: 6 },
+    pitcher: { movement: 10 },
+    defenseContext: { doublePlayQuality: 10, infieldQuality: 10 }
+  });
+  const fastDoublePlayRate = engineModule.groundBallDoublePlayProbability({
+    hitter: { speed: 19, baserunning: 19 },
+    pitcher: { movement: 10 },
+    defenseContext: { doublePlayQuality: 10, infieldQuality: 10 }
+  });
+  assert(
+    slowDoublePlayRate > fastDoublePlayRate
+      && slowDoublePlayRate >= 0.08
+      && slowDoublePlayRate <= 0.46
+      && fastDoublePlayRate >= 0.08
+      && fastDoublePlayRate <= 0.46,
+    `ground-ball DP probability ignores batter speed or escaped bounds: ${slowDoublePlayRate}/${fastDoublePlayRate}`,
+    MODULE_PATHS.engine
+  );
+
+  assert(makeHitScenario({ type: "out", occupied: [], battedBallType: "flyBall", position: "RF" }).target === null, "routine fly out invented a throw", MODULE_PATHS.engine);
+  const tagUp = findScenario({ type: "out", occupied: [3], battedBallType: "flyBall", position: "RF" }, (scenario) => runnerDestination(scenario, "runner-3") === 4);
+  assert(tagUp?.target === "home", `tag-up throw target=${tagUp?.target}`, MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "homeRun", occupied: [1, 2, 3], battedBallType: "flyBall", position: "CF" }).target === null, "home run invented a defensive throw", MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "error", occupied: [1, 2], battedBallType: "groundBall", position: "SS" }).target === null, "unclassified error invented a defensive throw", MODULE_PATHS.engine);
+  const forcedAdvanceEvent = {
+    baseRunnerIdsBefore: ["forced-1", "forced-2", "forced-3"],
+    baseRunnerIdsAfter: ["fixture-batter", "forced-1", "forced-2"],
+    scoredRunners: [{ id: "forced-3" }]
+  };
+  for (const type of ["walk", "hitByPitch", "strikeout"]) {
+    assert(
+      engineModule.resolveDefensiveThrowTarget({ ...forcedAdvanceEvent, outcome: type }) === null,
+      `${type} invented a defensive throw from forced runner movement`,
+      MODULE_PATHS.engine
+    );
+  }
+  assert(
+    engineModule.resolveDefensiveThrowTarget({
+      ...forcedAdvanceEvent,
+      outcome: "sacrificeBunt",
+      battedBallType: "groundBall",
+      fieldingPosition: "P"
+    }) === "first",
+    "sacrifice bunt did not target first",
+    MODULE_PATHS.engine
+  );
+
+  for (let index = 0; index < 256; index += 1) {
+    const groundSingle = makeHitScenario({
+      type: "single",
+      occupied: [2],
+      battedBallType: "groundBall",
+      position: "RF",
+      seed: `ground-single-second-${index}`
+    });
+    const infieldSingle = makeHitScenario({
+      type: "single",
+      occupied: [2],
+      battedBallType: "lineDrive",
+      position: "SS",
+      seed: `infield-single-second-${index}`
+    });
+    const groundOut = makeHitScenario({
+      type: "out",
+      occupied: [3],
+      battedBallType: "groundBall",
+      position: "SS",
+      seed: `ground-out-third-${index}`
+    });
+    assert(runnerDestination(groundSingle, "runner-2") === 3, `ground single scored runner from second at seed ${index}`, MODULE_PATHS.engine);
+    assert(runnerDestination(infieldSingle, "runner-2") === 3, `infield single scored runner from second at seed ${index}`, MODULE_PATHS.engine);
+    assert(runnerDestination(groundOut, "runner-3") === 3 && groundOut.target === "first", `ground out scored runner from third at seed ${index}`, MODULE_PATHS.engine);
+  }
+
+  assert(
+    !engineModule.canAdvanceSecondToHomeOnSingle({ type: "single", battedBallType: "groundBall", fieldingPosition: "RF" })
+      && !engineModule.canAdvanceSecondToHomeOnSingle({ type: "single", battedBallType: "lineDrive", fieldingPosition: "SS" })
+      && engineModule.canAdvanceSecondToHomeOnSingle({ type: "single", battedBallType: "lineDrive", fieldingPosition: "RF" }),
+    "single 2B-to-home eligibility ignores batted-ball/fielding context",
+    MODULE_PATHS.engine
+  );
+  assert(
+    !engineModule.canScoreThirdOnCaughtOut({ type: "out", battedBallType: "groundBall", fieldingPosition: "SS" })
+      && !engineModule.canScoreThirdOnCaughtOut({ type: "out", battedBallType: "lineDrive", fieldingPosition: "SS" })
+      && engineModule.canScoreThirdOnCaughtOut({ type: "out", battedBallType: "flyBall", fieldingPosition: "RF" }),
+    "tag-up eligibility ignores caught-out context",
+    MODULE_PATHS.engine
+  );
+
+  const slowRunner = { speed: 7, baserunning: 7 };
+  const fastRunner = { speed: 18, baserunning: 18 };
+  for (const probability of [
+    engineModule.singleSecondToHomeProbability,
+    engineModule.singleFirstToThirdProbability,
+    engineModule.doubleFirstToHomeProbability
+  ]) {
+    assert(typeof probability === "function", "runner-advance probability export missing", MODULE_PATHS.engine);
+    const slowNoOut = probability({ runner: slowRunner, outs: 0, defender: { arm: 10 } });
+    const fastNoOut = probability({ runner: fastRunner, outs: 0, defender: { arm: 10 } });
+    const fastTwoOut = probability({ runner: fastRunner, outs: 2, defender: { arm: 10 } });
+    const weakArm = probability({ runner: fastRunner, outs: 2, defender: { arm: 5 } });
+    const strongArm = probability({ runner: fastRunner, outs: 2, defender: { arm: 19 } });
+    assert(fastNoOut > slowNoOut, `runner speed/baserunning did not increase probability: ${slowNoOut}/${fastNoOut}`, MODULE_PATHS.engine);
+    assert(fastTwoOut > fastNoOut, `two-out start did not increase probability: ${fastNoOut}/${fastTwoOut}`, MODULE_PATHS.engine);
+    assert(weakArm > strongArm, `outfielder arm did not suppress probability: ${weakArm}/${strongArm}`, MODULE_PATHS.engine);
+    assert([slowNoOut, fastNoOut, fastTwoOut, weakArm, strongArm].every((value) => value >= 0 && value <= 1), "runner-advance probability escaped [0,1]", MODULE_PATHS.engine);
+  }
+
+  assert(
+    typeof engineModule.canAdvanceFirstToThirdOnSingle === "function",
+    "canAdvanceFirstToThirdOnSingle export가 없습니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    !engineModule.canAdvanceFirstToThirdOnSingle({ type: "single", battedBallType: "groundBall", fieldingPosition: "SS" }),
+    "땅볼 단타가 1→3루 진루 대상으로 남아 있습니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    !engineModule.canAdvanceFirstToThirdOnSingle({ type: "single", battedBallType: "lineDrive", fieldingPosition: "SS" }),
+    "내야 처리 단타가 1→3루 진루 대상으로 남아 있습니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    engineModule.canAdvanceFirstToThirdOnSingle({ type: "single", battedBallType: "lineDrive", fieldingPosition: "RF" }),
+    "외야 단타의 정상적인 1→3루 선택지까지 제거되었습니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    typeof engineModule.canProduceExtraBaseHitFromBattedBall === "function",
+    "canProduceExtraBaseHitFromBattedBall export가 없습니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    typeof engineModule.normalizeExtraBaseHitContext === "function",
+    "normalizeExtraBaseHitContext export가 없습니다.",
+    MODULE_PATHS.engine
+  );
+  const fixtureShortstop = { id: "fixture-ss", name: "Fixture SS" };
+  const fixtureOutfield = [
+    { position: "LF", defender: { id: "fixture-lf", name: "Fixture LF" }, quality: 11 },
+    { position: "CF", defender: { id: "fixture-cf", name: "Fixture CF" }, quality: 12 },
+    { position: "RF", defender: { id: "fixture-rf", name: "Fixture RF" }, quality: 10 }
+  ];
+  const fixtureDefense = { outfield: fixtureOutfield, overall: 10 };
+  const groundDoubleInput = {
+    requestedType: "double",
+    battedBallType: "groundBall",
+    fielding: { position: "SS", defender: fixtureShortstop, quality: 12 },
+    defenseContext: fixtureDefense,
+    seed: "ground-double-fixture",
+    plateAppearance: 17,
+    hitter: { id: "fixture-hitter-a" }
+  };
+  const groundDoubleInputBefore = JSON.stringify(groundDoubleInput);
+  const normalizedGroundDouble = engineModule.normalizeExtraBaseHitContext(groundDoubleInput);
+  const normalizedGroundDoubleRepeat = engineModule.normalizeExtraBaseHitContext(groundDoubleInput);
+  assert(
+    normalizedGroundDouble.type === "double" && normalizedGroundDouble.bases === 2,
+    `땅볼 2루타 정규화가 type/bases를 손상함: ${normalizedGroundDouble.type}/${normalizedGroundDouble.bases}`,
+    MODULE_PATHS.engine
+  );
+  assert(
+    ["lineDrive", "flyBall"].includes(normalizedGroundDouble.battedBallType)
+      && ["LF", "CF", "RF", "OF"].includes(normalizedGroundDouble.fieldingPosition)
+      && fixtureOutfield.some((entry) => (
+        entry.position === normalizedGroundDouble.fieldingPosition
+        && entry.defender.id === normalizedGroundDouble.defender?.id
+      ))
+      && engineModule.canProduceExtraBaseHitFromBattedBall(normalizedGroundDouble),
+    `땅볼 2루타의 외야 컨텍스 정규화 실패: ${JSON.stringify(normalizedGroundDouble)}`,
+    MODULE_PATHS.engine
+  );
+  assert(
+    JSON.stringify(groundDoubleInput) === groundDoubleInputBefore
+      && JSON.stringify(normalizedGroundDouble) === JSON.stringify(normalizedGroundDoubleRepeat),
+    "땅볼 2루타 정규화가 입력을 변경하거나 결정적이지 않습니다.",
+    MODULE_PATHS.engine
+  );
+  const normalizedInfieldTriple = engineModule.normalizeExtraBaseHitContext({
+    requestedType: "triple",
+    battedBallType: "lineDrive",
+    fielding: { position: "SS", defender: fixtureShortstop, quality: 12 },
+    defenseContext: fixtureDefense,
+    seed: "infield-triple-fixture",
+    plateAppearance: 23,
+    hitter: { id: "fixture-hitter-b" }
+  });
+  assert(
+    normalizedInfieldTriple.type === "triple"
+      && normalizedInfieldTriple.bases === 3
+      && normalizedInfieldTriple.battedBallType === "lineDrive"
+      && ["LF", "CF", "RF", "OF"].includes(normalizedInfieldTriple.fieldingPosition)
+      && fixtureOutfield.some((entry) => (
+        entry.position === normalizedInfieldTriple.fieldingPosition
+        && entry.defender.id === normalizedInfieldTriple.defender?.id
+      ))
+      && engineModule.canProduceExtraBaseHitFromBattedBall(normalizedInfieldTriple),
+    `내야 직선타 3루타 정규화 실패: ${JSON.stringify(normalizedInfieldTriple)}`,
+    MODULE_PATHS.engine
+  );
+  assert(
+    !engineModule.canProduceExtraBaseHitFromBattedBall({ battedBallType: "groundBall", fieldingPosition: "CF" }),
+    "땅볼이 여전히 장타 생성 대상입니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    !engineModule.canProduceExtraBaseHitFromBattedBall({ battedBallType: "lineDrive", fieldingPosition: "SS" }),
+    "내야 처리 타구가 여전히 장타 생성 대상입니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    engineModule.canProduceExtraBaseHitFromBattedBall({ battedBallType: "lineDrive", fieldingPosition: "RF" }),
+    "외야 직선타의 정상적인 장타까지 제거되었습니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    engineModule.canProduceExtraBaseHitFromBattedBall({ battedBallType: "flyBall", fieldingPosition: "CF" }),
+    "외야 플라이의 정상적인 장타까지 제거되었습니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    typeof engineModule.canProduceTripleFromBattedBall === "function"
+      && engineModule.canProduceTripleFromBattedBall({ battedBallType: "lineDrive", fieldingPosition: "RF" }),
+    "기존 3루타 판정 계약이 유지되지 않았습니다.",
+    MODULE_PATHS.engine
+  );
+
+  const uiSource = fs.readFileSync(MODULE_PATHS.ui, "utf8");
+  for (const snippet of [
+    '{ key: "LF", position: { x: gamecastX(31), y: gamecastY(42) }',
+    '{ key: "CF", position: { x: gamecastX(60), y: gamecastY(29) }',
+    '{ key: "RF", position: { x: gamecastX(89), y: gamecastY(42) }',
+    'LF: { x: 31, y: 42 }',
+    'CF: { x: 60, y: 29 }',
+    'RF: { x: 89, y: 42 }',
+    'defensiveThrowTarget,',
+    'resolveDefensiveThrowTarget({'
+  ]) {
+    assert(uiSource.includes(snippet), `legacy Gamecast alignment/throw normalization missing: ${snippet}`, MODULE_PATHS.ui);
+  }
+
+  const auditState = dataModule.createInitialState();
+  advanceToRegularSeason(auditState);
+  const auditedById = new Map();
+  for (let day = 0; day < 90 && auditedById.size < 100; day += 1) {
+    for (let guard = 0; guard < 20; guard += 1) {
+      const blocking = engineModule.getBlockingMailDecision(auditState);
+      if (!blocking) break;
+      const action = blocking.decision?.defaultAction ?? blocking.decision?.options?.[0]?.action ?? "acknowledge";
+      const resolved = engineModule.resolveMailDecision(auditState, blocking.id, action);
+      assert(resolved.ok, `100-game audit could not resolve ${blocking.id}/${action}`, MODULE_PATHS.engine);
+    }
+    engineModule.simulateDay(auditState);
+    for (const game of auditState.lastGames ?? []) {
+      if (game?.id && Array.isArray(game.plateAppearanceEvents)) auditedById.set(game.id, game);
+    }
+  }
+  const auditedGames = [...auditedById.values()].slice(0, 100);
+  assert(auditedGames.length === 100, `100-game event audit collected ${auditedGames.length} games`, MODULE_PATHS.engine);
+  const auditProblems = [];
+  const emptyOutfieldSingles = { LF: 0, CF: 0, RF: 0, OF: 0 };
+  let auditedPlateAppearances = 0;
+  for (const game of auditedGames) {
+    for (const event of game.plateAppearanceEvents) {
+      auditedPlateAppearances += 1;
+      const beforeIds = Array.from({ length: 3 }, (_, index) => String(event.baseRunnerIdsBefore?.[index] ?? ""));
+      const afterIds = Array.from({ length: 3 }, (_, index) => String(event.baseRunnerIdsAfter?.[index] ?? ""));
+      const scoredIds = new Set((event.scoredRunners ?? []).map((runner) => String(runner?.id ?? "")));
+      const expectedTarget = engineModule.resolveDefensiveThrowTarget(event);
+      if (event.defensiveThrowTarget !== expectedTarget) {
+        auditProblems.push(`${game.id}/${event.sequence}: target ${event.defensiveThrowTarget}/${expectedTarget}`);
+      }
+      if (event.outcome === "error" && event.defensiveThrowTarget !== null) {
+        auditProblems.push(`${game.id}/${event.sequence}: error target=${event.defensiveThrowTarget}`);
+      }
+      if (event.outcome === "single") {
+        const hitterBase = afterIds.indexOf(String(event.hitterId ?? "")) + 1;
+        if (hitterBase !== 1) auditProblems.push(`${game.id}/${event.sequence}: single batter at ${hitterBase}B`);
+        if (beforeIds[1] && scoredIds.has(beforeIds[1]) && !engineModule.canAdvanceSecondToHomeOnSingle(event)) {
+          auditProblems.push(`${game.id}/${event.sequence}: illegal 2B-to-home on single`);
+        }
+        const position = String(event.fieldingPosition ?? "").toUpperCase();
+        if (beforeIds.every((id) => !id) && Object.prototype.hasOwnProperty.call(emptyOutfieldSingles, position)) {
+          emptyOutfieldSingles[position] += 1;
+          if (event.defensiveThrowTarget !== null || afterIds[0] !== String(event.hitterId ?? "") || afterIds[1] || afterIds[2]) {
+            auditProblems.push(`${game.id}/${event.sequence}: empty ${position} single target/base mismatch`);
+          }
+        }
+      }
+      if (
+        event.outcome === "out"
+        && beforeIds[2]
+        && scoredIds.has(beforeIds[2])
+        && !engineModule.canScoreThirdOnCaughtOut(event)
+        && !engineModule.canScoreThirdOnGroundForceOut(event)
+      ) {
+        auditProblems.push(`${game.id}/${event.sequence}: illegal third-base score on out`);
+      }
+    }
+  }
+  assert(
+    auditProblems.length === 0,
+    `100-game throw/base audit found ${auditProblems.length} problem(s): ${auditProblems.slice(0, 8).join(" / ")}`,
+    MODULE_PATHS.engine
+  );
+  assert(
+    Object.values(emptyOutfieldSingles).reduce((total, count) => total + count, 0) > 0,
+    `100-game audit did not cover an empty-base outfield single: ${JSON.stringify(emptyOutfieldSingles)}`,
+    MODULE_PATHS.engine
+  );
+  return `100 games/${auditedPlateAppearances} PA audited; empty-base OF singles ${JSON.stringify(emptyOutfieldSingles)}; throw/base matrix passed`;
 }
 
 function checkGamecastMotionAtlas() {
@@ -2386,12 +3130,26 @@ function checkAutonomousOffseasonRollover() {
   assert(state.draft === null && state.secondaryDraft === null && state.freeAgency === null, "다음 시즌 전환 후 오프시즌 작업 상태가 초기화되지 않았습니다.", MODULE_PATHS.engine);
   assert(rosterProblems.length === 0, `롤오버 roster schema 오류 ${rosterProblems.length}건. 예: ${rosterProblems.slice(0, 6).join(" / ")}`, MODULE_PATHS.engine);
 
-  engineModule.simulateDays(state, 27);
+  let preseasonDecisionsResolved = 0;
+  for (let day = 0; day < 27; day += 1) {
+    for (let guard = 0; guard < 50; guard += 1) {
+      const blocking = engineModule.getBlockingMailDecision(state);
+      if (!blocking) break;
+      const action = blocking.decision?.defaultAction
+        ?? blocking.decision?.options?.[0]?.action
+        ?? "acknowledge";
+      const resolved = engineModule.resolveMailDecision(state, blocking.id, action);
+      assert(resolved.ok, `프리시즌 전 결재 자동 처리 실패: ${blocking.id}/${action}`, MODULE_PATHS.engine);
+      preseasonDecisionsResolved += 1;
+    }
+    assert(!engineModule.getBlockingMailDecision(state), "프리시즌 진행을 막는 미처리 결재가 남았습니다.", MODULE_PATHS.engine);
+    engineModule.simulateDays(state, 1);
+  }
   assert(state.currentDate === "2027-03-28", `2027 프리시즌 진행 날짜 ${state.currentDate}/2027-03-28`, MODULE_PATHS.engine);
   assert(state.phase === "regular", `2027 개막 phase=${state.phase}`, MODULE_PATHS.engine);
   assert(state.gamesPlayed === 0, `2027 개막 전 gamesPlayed=${state.gamesPlayed}`, MODULE_PATHS.engine);
 
-  return `자동 스토브 roster +${afterOffseasonRosterCount - initialRosterCount}, 신인입단 ${rosterLedgerCount}/보류권 ${rightsLedgerCount}, FA ${offseason.summary.faSignings}건, CPU 트레이드 ${offseason.summary.aiTrades}건, 2027 프리시즌 롤오버`;
+  return `자동 스토브 roster +${afterOffseasonRosterCount - initialRosterCount}, 신인입단 ${rosterLedgerCount}/보류권 ${rightsLedgerCount}, FA ${offseason.summary.faSignings}건, CPU 트레이드 ${offseason.summary.aiTrades}건, 결재 ${preseasonDecisionsResolved}건 처리 후 2027 프리시즌 롤오버`;
 }
 
 function checkRecordBookHistoryRollover() {

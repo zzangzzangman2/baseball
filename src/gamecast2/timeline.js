@@ -39,6 +39,23 @@ export const GAMECAST2_TIMELINE_TEMPLATES = Object.freeze([
 
 const ANIM = GAMECAST2_ATLAS_ANIMATION_CONTRACT;
 const BASE_ROUTE = Object.freeze(["home", "first", "second", "third", "home"]);
+const BATTER_RUN_MS_PER_BASE = 1400;
+const BATTER_SLIDE_MS = 270;
+const RUNNER_RUN_MS_PER_BASE = 1400;
+const RUNNER_SLIDE_MS = 270;
+const RUNNER_RESULT_LATEST_T = 0.95;
+const OUTFIELD_ACTION_LATEST_T = 0.94;
+const THROW_ARM_MIN = 20;
+const THROW_ARM_MAX = 200;
+const THROW_SAFE_LEAD_T = 0.015;
+const THROW_OUT_LEAD_T = 0.015;
+const THROW_ARRIVAL_LATEST_T = 0.985;
+const OUTFIELD_FIELDING_DELAY_MS = Object.freeze({
+  ground: 700,
+  line: 900,
+  fly: 1000,
+  default: 850
+});
 const INFIELDERS = Object.freeze(["SS", "2B", "3B", "1B", "P", "C"]);
 const OUTFIELDERS = Object.freeze(["CF", "LF", "RF"]);
 const DEFENDERS = Object.freeze(["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]);
@@ -60,13 +77,116 @@ const RESULT_BADGES = Object.freeze({
 });
 
 const BATTED_SPECS = Object.freeze({
-  single: Object.freeze({ durationMs: 3900, landingT: 0.46, fieldEndT: 0.54, throwEndT: 0.68, batterEndT: 0.52, runnerEndT: 0.82 }),
+  single: Object.freeze({ durationMs: 3900, landingT: 0.46, fieldEndT: 0.54, throwEndT: 0.68, batterEndT: 0.63, runnerEndT: 0.82 }),
   double: Object.freeze({ durationMs: 4400, landingT: 0.48, fieldEndT: 0.56, throwEndT: 0.72, batterEndT: 0.83, runnerEndT: 0.87, throwTarget: "third", slide: true, camera: true }),
-  triple: Object.freeze({ durationMs: 4800, landingT: 0.51, fieldEndT: 0.59, throwEndT: 0.76, batterEndT: 0.9, runnerEndT: 0.88, throwTarget: "home", slide: true, camera: true }),
+  triple: Object.freeze({ durationMs: 6400, actionTimeScale: 0.75, landingT: 0.51, fieldEndT: 0.59, throwEndT: 0.76, batterEndT: 0.9, runnerEndT: 0.88, throwTarget: "home", slide: true, camera: true }),
   infieldOut: Object.freeze({ durationMs: 3500, landingT: 0.41, fieldEndT: 0.49, throwEndT: 0.64, batterEndT: 0.67, runnerEndT: 0.7, throwTarget: "first" }),
   outfieldOut: Object.freeze({ durationMs: 3900, landingT: 0.51, fieldEndT: 0.59, throwEndT: 0.73, batterEndT: 0.77, runnerEndT: 0.8, throwTarget: "first" }),
-  error: Object.freeze({ durationMs: 3900, landingT: 0.45, fieldEndT: 0.57, batterEndT: 0.76, runnerEndT: 0.84, fieldAnim: "dive" })
+  error: Object.freeze({ durationMs: 3900, landingT: 0.45, fieldEndT: 0.57, throwEndT: 0.74, batterEndT: 0.76, runnerEndT: 0.84, fieldAnim: "dive" })
 });
+
+export function getGamecast2PlayDurationMs(event) {
+  const sourceEvent = event && typeof event === "object" ? event : {};
+  const outcome = canonicalOutcome(sourceEvent);
+  const template = selectTemplate(sourceEvent, outcome);
+  return resolvedPlayDurationMs(sourceEvent, outcome, template);
+}
+
+export function getGamecast2RunnerStartMs(event, options = {}) {
+  const sourceEvent = event && typeof event === "object" ? event : {};
+  const outcome = canonicalOutcome(sourceEvent);
+  const template = selectTemplate(sourceEvent, outcome);
+  const rawStartMs = resolvedRunnerStartMs(sourceEvent, outcome, template, options);
+  if (!Number.isFinite(Number(rawStartMs))) return null;
+  const durationMs = resolvedPlayDurationMs(sourceEvent, outcome, template);
+  return roundTime(Number(rawStartMs) / durationMs) * durationMs;
+}
+
+function resolvedPlayDurationMs(event, outcome, template) {
+  const spec = BATTED_SPECS[template];
+  const baseDurationMs = basePlayDurationMs(template, spec);
+  const actionDurationMs = actionPlayDurationMs(template, spec);
+  const explicitFielder = normalizeFielderKey(event?.fieldingPosition ?? event?.defenderPosition);
+  const fielderKey = explicitFielder || (isOutfieldBall(event) ? "CF" : "");
+  const fieldingDelayMs = spec ? outfieldFieldingDelayMs(event, fielderKey, template) : 0;
+  let resolvedDurationMs = baseDurationMs;
+
+  const runnerStartMs = resolvedRunnerStartMs(event, outcome, template);
+  if (runnerStartMs !== null) {
+    const transitions = existingRunnerTransitions(event, outcome, template);
+    const latestRunnerEndMs = transitions.reduce((latest, transition) => {
+      const distance = Math.max(1, transitionDistance(transition));
+      const slideMs = distance >= 2 || transition.out ? RUNNER_SLIDE_MS : 0;
+      return Math.max(
+        latest,
+        runnerStartMs + distance * RUNNER_RUN_MS_PER_BASE + slideMs
+      );
+    }, 0);
+    if (latestRunnerEndMs > 0) {
+      resolvedDurationMs = Math.max(
+        resolvedDurationMs,
+        Math.ceil(latestRunnerEndMs / RUNNER_RESULT_LATEST_T)
+      );
+    }
+  }
+
+  if (spec) {
+    if (fieldingDelayMs > 0) {
+      const latestActionT = Number.isFinite(Number(spec.throwEndT))
+        ? Number(spec.throwEndT)
+        : Number(spec.fieldEndT);
+      const latestFieldingActionMs = latestActionT * actionDurationMs + fieldingDelayMs;
+      resolvedDurationMs = Math.max(
+        resolvedDurationMs,
+        Math.ceil(latestFieldingActionMs / OUTFIELD_ACTION_LATEST_T)
+      );
+    }
+  }
+
+  return resolvedDurationMs;
+}
+
+function basePlayDurationMs(template, spec = BATTED_SPECS[template]) {
+  return spec?.durationMs
+    ?? (template === "strikeout" ? 3200
+      : template === "walk" ? 4800
+        : template === "hitByPitch" ? 3200
+          : template === "homeRun" ? 5600
+            : template === "doublePlay" ? 4300
+              : 3400);
+}
+
+function actionPlayDurationMs(template, spec = BATTED_SPECS[template]) {
+  return spec
+    ? spec.durationMs * Math.max(0.1, Number(spec.actionTimeScale ?? 1))
+    : basePlayDurationMs(template, spec);
+}
+
+function resolvedRunnerStartMs(event, outcome, template, options = {}) {
+  const spec = BATTED_SPECS[template];
+  const runnerStartT = spec || template === "doublePlay"
+    ? 0.255
+      : template === "homeRun" || template === "hitByPitch"
+      ? 0.27
+      : template === "walk"
+        ? 0.27
+        : null;
+  if (runnerStartT === null) return null;
+
+  const battedType = normalizedToken(event?.battedBallType);
+  const inferredTagUp = outcome === "out"
+    && template !== "doublePlay"
+    && (battedType.includes("fly") || battedType.includes("line"));
+  const tagUp = typeof options?.tagUp === "boolean" ? options.tagUp : inferredTagUp;
+  const actionDurationMs = actionPlayDurationMs(template, spec);
+  if (tagUp && spec) {
+    const explicitFielder = normalizeFielderKey(event?.fieldingPosition ?? event?.defenderPosition);
+    const fielderKey = explicitFielder || (isOutfieldBall(event) ? "CF" : "");
+    const fieldingDelayMs = outfieldFieldingDelayMs(event, fielderKey, template);
+    return Number(spec.landingT) * actionDurationMs + fieldingDelayMs;
+  }
+  return runnerStartT * actionDurationMs;
+}
 
 /**
  * Compile one engine event into scene-agnostic tracks.
@@ -90,7 +210,7 @@ export function compilePlayTimeline(event, anchors) {
     tracks,
     fielding: null,
     suggestedResultT: 0.8,
-    durationMs: 3400
+    durationMs: resolvedPlayDurationMs(sourceEvent, outcome, template)
   };
 
   if (template === "strikeout") buildStrikeout(context);
@@ -119,110 +239,223 @@ function createTracks() {
 }
 
 function buildStrikeout(context) {
-  const starts = [0, 0.23, 0.46];
-  starts.forEach((start, index) => addPitch(context, start, index + 1, true));
-  context.tracks.batter.push(cue(0.515, 0.65, {
+  // A plate appearance is one simulation event. Show only its decisive third
+  // strike, with the score bug already carrying the two-strike context.
+  addPitch(context, 0, 3, true);
+  context.tracks.batter.push(cue(0.135, 0.34, {
     anim: ANIM.swing,
     at: "home",
     phase: "miss"
   }));
   context.durationMs = 3200;
-  context.suggestedResultT = 0.75;
+  context.suggestedResultT = 0.46;
 }
 
 function buildFreePass(context) {
   const hitByPitch = context.template === "hitByPitch";
-  const starts = hitByPitch ? [0] : [0, 0.2, 0.4];
-  starts.forEach((start, index) => addPitch(context, start, index + 1, true));
+  const baseDurationMs = hitByPitch ? 3200 : 4800;
+  context.durationMs = Math.max(baseDurationMs, Number(context.durationMs) || 0);
+  context.actionTimeScale = baseDurationMs / context.durationMs;
+  const actionT = (value) => roundTime(scaleActionTime(context, value));
+  // As with contact plays, render one decisive pitch. For a walk this is ball
+  // four; the preceding three balls are conveyed by the count display.
+  addPitch(context, 0, hitByPitch ? 1 : 4, true, context.actionTimeScale);
 
-  const runStart = hitByPitch ? 0.27 : 0.61;
-  const batterEnd = hitByPitch ? 0.62 : 0.85;
+  const runStart = actionT(0.27);
+  const batterEnd = actionT(hitByPitch ? 0.62 : 0.565);
   addBatterAdvance(context, runStart, batterEnd, {
     anim: ANIM.walk,
     targetBase: 1,
     phase: hitByPitch ? "take-base-hbp" : "take-base-walk"
   });
-  addExistingRunnerAdvances(context, runStart, hitByPitch ? 0.66 : 0.88);
+  addExistingRunnerAdvances(context, runStart);
 
-  context.durationMs = hitByPitch ? 3200 : 3900;
-  context.suggestedResultT = hitByPitch ? 0.72 : 0.93;
+  context.suggestedResultT = actionT(hitByPitch ? 0.72 : 0.62);
 }
 
 function buildFieldedBall(context, spec) {
-  addPitch(context, 0, 1, false);
-  context.tracks.batter.push(cue(0.105, 0.3, {
+  context.durationMs = Math.max(spec.durationMs, Number(context.durationMs) || 0);
+  const actionDurationMs = spec.durationMs * Math.max(0.1, Number(spec.actionTimeScale ?? 1));
+  context.actionTimeScale = actionDurationMs / context.durationMs;
+  const actionT = (value) => roundTime(scaleActionTime(context, value));
+  spec = {
+    ...spec,
+    landingT: actionT(spec.landingT),
+    fieldEndT: actionT(spec.fieldEndT),
+    throwEndT: Number.isFinite(Number(spec.throwEndT)) ? actionT(spec.throwEndT) : spec.throwEndT,
+    batterEndT: actionT(spec.batterEndT),
+    runnerEndT: actionT(spec.runnerEndT)
+  };
+
+  addPitch(context, 0, 1, false, context.actionTimeScale);
+  context.tracks.batter.push(cue(actionT(0.105), actionT(0.3), {
     anim: ANIM.swing,
     at: "home",
     phase: "contact"
   }));
-  context.tracks.sfx.push(cue(0.22, null, { id: "bat-crack" }));
+  context.tracks.sfx.push(cue(actionT(0.22), null, { id: "bat-crack" }));
 
   const fielderKey = selectFielderKey(context.event, context.points);
-  context.points.landing = fieldingLandingPoint(context.event, context.points, fielderKey);
-  context.tracks.ball.push(cue(0.22, spec.landingT, {
-    path: ["home", "landing"],
-    arc: ballArc(context.event),
-    phase: "batted",
-    arrivesAt: "landing"
-  }));
-  context.tracks.fielders.push(cue(0.235, spec.landingT, {
-    who: fielderKey,
-    anim: ANIM.run,
-    path: [fielderKey, "landing"],
-    phase: "approach",
-    arrivesAt: "landing"
-  }));
-
-  const fieldAnim = ANIM[spec.fieldAnim] ?? ANIM.catch;
-  context.tracks.fielders.push(cue(spec.landingT, spec.fieldEndT, {
-    who: fielderKey,
-    anim: fieldAnim,
-    at: "landing",
-    phase: context.template === "error" ? "misplay" : "field"
-  }));
-
-  const throwTarget = fieldedBallThrowTarget(context, spec);
+  const fieldingDelayT = outfieldFieldingDelayMs(context.event, fielderKey, context.template) / context.durationMs;
+  if (fieldingDelayT > 0) {
+    spec = {
+      ...spec,
+      landingT: roundTime(spec.landingT + fieldingDelayT),
+      fieldEndT: roundTime(spec.fieldEndT + fieldingDelayT),
+      throwEndT: Number.isFinite(Number(spec.throwEndT))
+        ? roundTime(spec.throwEndT + fieldingDelayT)
+        : spec.throwEndT
+    };
+  }
   const caughtBattedOut = isCaughtBattedOut(context);
+  const safeFlyHit = isSafeFlyBallHit(context);
+  context.points.landing = fieldingLandingPoint(context.event, context.points, fielderKey);
+  if (caughtBattedOut) {
+    // The fielder anchor is the player's feet. Sending a caught fly to that
+    // ground point makes the last frame look like a one-hop catch even though
+    // the cue has no bounce. Give caught air balls a distinct glove endpoint;
+    // the defender still runs to the ground anchor directly below it.
+    context.points.catchGlove = caughtBallGlovePoint(context.event, context.points.landing);
+  }
+
+  // A fly-ball hit must not read like a completed catch. The ball drops away
+  // from the defender, the defender commits to the wrong spot, and only then
+  // recovers to the pickup point after a visible bounce.
+  let fieldingPoint = "landing";
+  let missEndT = spec.landingT;
+  let pickupArrivalT = spec.landingT;
+  if (safeFlyHit) {
+    context.points.miss = safeFlyMissPoint(context.event, context.points, fielderKey, context.points.landing);
+    context.points.pickup = safeFlyPickupPoint(context.points, fielderKey, context.points.landing);
+    fieldingPoint = "pickup";
+    missEndT = roundTime(Math.min(0.86, spec.landingT + scaleActionTime(context, 0.065)));
+    pickupArrivalT = roundTime(Math.min(
+      0.89,
+      Math.max(spec.fieldEndT + scaleActionTime(context, 0.055), spec.landingT + scaleActionTime(context, 0.15))
+    ));
+    spec = {
+      ...spec,
+      fieldEndT: roundTime(Math.min(0.92, pickupArrivalT + scaleActionTime(context, 0.045))),
+      throwEndT: Number.isFinite(Number(spec.throwEndT))
+        ? roundTime(Math.min(0.965, Math.max(spec.throwEndT, pickupArrivalT + scaleActionTime(context, 0.16))))
+        : spec.throwEndT
+    };
+  }
+  context.tracks.ball.push(cue(actionT(0.22), spec.landingT, {
+    path: ["home", caughtBattedOut ? "catchGlove" : "landing"],
+    arc: ballArc(context.event),
+    flightProfile: caughtBattedOut ? "hang" : safeFlyHit ? "drop" : "direct",
+    phase: "batted",
+    arrivesAt: caughtBattedOut ? "catchGlove" : "landing",
+    caughtDirectly: caughtBattedOut
+  }));
+  if (safeFlyHit) {
+    context.tracks.ball.push(cue(spec.landingT, pickupArrivalT, {
+      path: ["landing", "pickup"],
+      bounce: true,
+      bounces: 2,
+      phase: "safe-bounce",
+      arrivesAt: "pickup"
+    }));
+    context.tracks.fielders.push(cue(actionT(0.235), spec.landingT, {
+      who: fielderKey,
+      anim: ANIM.run,
+      path: [fielderKey, "miss"],
+      phase: "approach",
+      arrivesAt: "miss"
+    }));
+    context.tracks.fielders.push(cue(spec.landingT, missEndT, {
+      who: fielderKey,
+      anim: ANIM.dive,
+      at: "miss",
+      toward: "landing",
+      phase: "miss"
+    }));
+    context.tracks.fielders.push(cue(missEndT, pickupArrivalT, {
+      who: fielderKey,
+      anim: ANIM.run,
+      path: ["miss", "pickup"],
+      phase: "recover",
+      arrivesAt: "pickup"
+    }));
+    context.tracks.fielders.push(cue(pickupArrivalT, spec.fieldEndT, {
+      who: fielderKey,
+      anim: ANIM.catch,
+      at: "pickup",
+      phase: "pickup"
+    }));
+  } else {
+    context.tracks.fielders.push(cue(actionT(0.235), spec.landingT, {
+      who: fielderKey,
+      anim: ANIM.run,
+      path: [fielderKey, "landing"],
+      phase: "approach",
+      arrivesAt: "landing"
+    }));
+
+    const fieldAnim = ANIM[spec.fieldAnim] ?? ANIM.catch;
+    context.tracks.fielders.push(cue(spec.landingT, spec.fieldEndT, {
+      who: fielderKey,
+      anim: fieldAnim,
+      at: "landing",
+      phase: context.template === "error" ? "misplay" : caughtBattedOut ? "catch" : "field"
+    }));
+  }
+
+  if (!caughtBattedOut) {
+    addBatterAdvance(context, actionT(0.27), spec.batterEndT, {
+      anim: ANIM.run,
+      targetBase: batterTargetBase(context),
+      out: context.template === "infieldOut" || context.template === "outfieldOut" || context.template === "doublePlay",
+      slide: Boolean(spec.slide),
+      paceByDistance: !["doublePlay", "outfieldOut"].includes(context.template),
+      phase: "batter-run"
+    });
+  }
+  addExistingRunnerAdvances(context, caughtBattedOut ? spec.landingT : actionT(0.255));
+
+  // Runner paths are authored before the throw so the ball can honor the
+  // already-recorded call. An out throw must beat the retired runner; a safe
+  // throw must arrive just after the runner instead of visually reversing the
+  // simulation result.
+  const throwTarget = fieldedBallThrowTarget(context, spec);
   let defensiveRotation = null;
+  let throwPlan = null;
   if (throwTarget && spec.throwEndT) {
+    throwPlan = resolveFieldingThrowPlan(context, {
+      who: fielderKey,
+      from: fieldingPoint,
+      to: throwTarget,
+      startT: spec.fieldEndT,
+      nominalEndT: spec.throwEndT
+    });
     defensiveRotation = addDefensiveRotation(context, {
       primary: fielderKey,
-      landing: "landing",
+      landing: fieldingPoint,
       landingT: spec.landingT,
       fieldEndT: spec.fieldEndT,
       throwTarget,
-      throwEndT: spec.throwEndT
+      throwEndT: throwPlan.endT
     });
     addFieldingThrow(context, {
       who: fielderKey,
-      from: "landing",
+      from: fieldingPoint,
       to: throwTarget,
       startT: spec.fieldEndT,
-      endT: spec.throwEndT
+      plan: throwPlan
     });
   } else {
     addDefensiveSupport(context, {
       primary: fielderKey,
       receiver: "",
-      landing: "landing",
+      landing: fieldingPoint,
       landingT: spec.landingT,
       fieldEndT: spec.fieldEndT
     });
   }
 
-  if (!caughtBattedOut) {
-    addBatterAdvance(context, 0.27, spec.batterEndT, {
-      anim: ANIM.run,
-      targetBase: batterTargetBase(context),
-      out: context.template === "infieldOut" || context.template === "outfieldOut" || context.template === "doublePlay",
-      slide: Boolean(spec.slide),
-      phase: "batter-run"
-    });
-  }
-  addExistingRunnerAdvances(context, 0.255, spec.runnerEndT);
-
   if (spec.camera) {
-    context.tracks.camera.push(cue(0.22, Math.min(0.84, spec.batterEndT), {
+    context.tracks.camera.push(cue(actionT(0.22), Math.min(actionT(0.84), spec.batterEndT), {
       follow: "ball",
       zoom: 1.1,
       ease: "easeInOut"
@@ -232,9 +465,20 @@ function buildFieldedBall(context, spec) {
   context.fielding = {
     fielder: fielderKey,
     landingPoint: "landing",
-    ballArrivalT: roundTime(spec.landingT),
-    fielderArrivalT: roundTime(spec.landingT),
+    ballPoint: caughtBattedOut ? "catchGlove" : "landing",
+    catchPoint: caughtBattedOut ? "catchGlove" : null,
+    fieldingPoint,
+    pickupPoint: safeFlyHit ? "pickup" : null,
+    missPoint: safeFlyHit ? "miss" : null,
+    resolution: caughtBattedOut ? "caught-fly" : safeFlyHit ? "safe-fly-drop" : "fielded",
+    ballLandingT: roundTime(spec.landingT),
+    ballArrivalT: roundTime(safeFlyHit ? pickupArrivalT : spec.landingT),
+    fielderArrivalT: roundTime(safeFlyHit ? pickupArrivalT : spec.landingT),
     throwTarget: throwTarget || null,
+    throwArmScore: throwPlan?.armScore ?? null,
+    throwArc: throwPlan?.arc ?? null,
+    throwArrivalT: throwPlan?.endT ?? null,
+    throwOrdering: throwPlan?.ordering ?? null,
     receiver: defensiveRotation?.receiver ?? null,
     receiverArrivalT: defensiveRotation?.arrivalT ?? null,
     outRecordedAt: caughtBattedOut
@@ -243,17 +487,19 @@ function buildFieldedBall(context, spec) {
         ? context.template === "doublePlay" ? "second" : throwTarget
         : null
   };
-  context.durationMs = spec.durationMs;
   const actualRunnerEndT = Math.max(0, ...context.tracks.runners.map((cue) => Number(cue.endT ?? cue.t ?? 0)));
   context.suggestedResultT = Math.max(
     spec.fieldEndT,
     caughtBattedOut ? 0 : spec.batterEndT,
-    throwTarget ? Number(spec.throwEndT ?? 0) : 0,
+    throwTarget ? Number(throwPlan?.endT ?? spec.throwEndT ?? 0) : 0,
     actualRunnerEndT
   ) + 0.05;
 }
 
 function fieldedBallThrowTarget(context, spec) {
+  const canonicalTarget = defensiveThrowTarget(context.event);
+  if (canonicalTarget) return canonicalTarget;
+
   const leadTransition = leadRunnerTransition(
     existingRunnerTransitions(context.event, context.outcome, context.template)
   );
@@ -276,6 +522,11 @@ function fieldedBallThrowTarget(context, spec) {
   if (["infieldOut", "outfieldOut"].includes(context.template)) return "first";
 
   return spec.throwTarget ?? null;
+}
+
+function defensiveThrowTarget(event) {
+  const target = String(event?.defensiveThrowTarget ?? "").trim().toLowerCase();
+  return ["first", "second", "third", "home"].includes(target) ? target : null;
 }
 
 function isCaughtBattedOut(context) {
@@ -311,39 +562,52 @@ function buildDoublePlay(context) {
 
   const primary = context.fielding?.fielder ?? selectFielderKey(context.event, context.points);
   const relay = context.fielding?.receiver ?? selectRelayFielder(context.points, primary);
-  context.tracks.fielders.push(cue(0.63, 0.7, {
+  const relayPlan = resolveFieldingThrowPlan(context, {
     who: relay,
-    anim: ANIM.throw,
-    at: "second",
-    toward: "first",
-    phase: "relay-throw"
-  }));
-  context.tracks.ball.push(cue(0.64, 0.72, {
-    path: ["second", "first"],
-    arc: 0.08,
-    phase: "relay-throw"
-  }));
+    from: "second",
+    to: "first",
+    startT: 0.63,
+    nominalEndT: 0.72
+  });
+  addFieldingThrow(context, {
+    who: relay,
+    from: "second",
+    to: "first",
+    startT: 0.63,
+    plan: relayPlan,
+    actorPhase: "relay-throw",
+    ballPhase: "relay-throw"
+  });
   addThrowReceiver(context, {
     primary: relay,
     receiver: primary === "1B" ? "P" : "",
     to: "first",
     throwFrom: "second",
     moveStartT: 0.46,
-    throwEndT: 0.72,
+    throwEndT: relayPlan.endT,
     phasePrefix: "relay-"
   });
-  context.durationMs = spec.durationMs;
+  context.durationMs = Math.max(context.durationMs, spec.durationMs);
   context.suggestedResultT = 0.8;
 }
 
+function isSafeFlyBallHit(context) {
+  if (!["single", "double", "triple", "error"].includes(context.outcome)) return false;
+  return normalizedToken(context.event?.battedBallType).includes("fly");
+}
+
 function buildHomeRun(context) {
-  addPitch(context, 0, 1, false);
-  context.tracks.batter.push(cue(0.105, 0.31, {
+  const baseDurationMs = 5600;
+  context.durationMs = Math.max(baseDurationMs, Number(context.durationMs) || 0);
+  context.actionTimeScale = baseDurationMs / context.durationMs;
+  const actionT = (value) => roundTime(scaleActionTime(context, value));
+  addPitch(context, 0, 1, false, context.actionTimeScale);
+  context.tracks.batter.push(cue(actionT(0.105), actionT(0.31), {
     anim: ANIM.swing,
     at: "home",
     phase: "contact"
   }));
-  context.tracks.sfx.push(cue(0.22, null, { id: "bat-crack" }));
+  context.tracks.sfx.push(cue(actionT(0.22), null, { id: "bat-crack" }));
 
   const wallPoint = homeRunWallPoint(context.event, context.points);
   const fielderKey = selectHomeRunFielderKey(context.points, wallPoint);
@@ -353,34 +617,33 @@ function buildHomeRun(context) {
   context.points.wallTrack = interpolatePoint(context.points[fielderKey], wallPoint, 0.36);
   context.points.homeRunExit = extendFromPoint(context.points.home, wallPoint, 1.08);
 
-  context.tracks.ball.push(cue(0.22, 0.59, {
+  context.tracks.ball.push(cue(actionT(0.22), actionT(0.59), {
     path: ["home", "homeRunExit"],
     arc: 1.2,
     phase: "home-run-flight",
     clearsWall: true
   }));
-  context.tracks.fielders.push(cue(0.24, 0.57, {
+  context.tracks.fielders.push(cue(actionT(0.24), actionT(0.57), {
     who: fielderKey,
     anim: ANIM.run,
     path: [fielderKey, "wallTrack"],
     phase: "warning-track"
   }));
-  context.tracks.camera.push(cue(0.22, 0.66, {
+  context.tracks.camera.push(cue(actionT(0.22), actionT(0.66), {
     follow: "ball",
     zoom: 1.12,
     ease: "easeInOut"
   }));
-  context.tracks.sfx.push(cue(0.6, null, { id: "crowd-rise" }));
+  context.tracks.sfx.push(cue(actionT(0.6), null, { id: "crowd-rise" }));
 
-  addBatterAdvance(context, 0.29, 0.93, {
+  addBatterAdvance(context, actionT(0.29), actionT(0.93), {
     anim: ANIM.run,
     targetBase: 4,
     phase: "home-run-trot"
   });
-  addExistingRunnerAdvances(context, 0.27, 0.89);
+  addExistingRunnerAdvances(context, actionT(0.27));
 
-  context.durationMs = 5600;
-  context.suggestedResultT = 0.97;
+  context.suggestedResultT = actionT(0.97);
 }
 
 function buildSteal(context) {
@@ -442,10 +705,11 @@ function buildSteal(context) {
   context.suggestedResultT = 0.59;
 }
 
-function addPitch(context, startT, pitchNumber, caught) {
-  const releaseT = startT + 0.065;
-  const plateT = startT + 0.2;
-  context.tracks.pitcher.push(cue(startT, startT + 0.16, {
+function addPitch(context, startT, pitchNumber, caught, timeScale = 1) {
+  const scale = Math.max(0.1, Number(timeScale) || 1);
+  const releaseT = startT + 0.065 * scale;
+  const plateT = startT + 0.2 * scale;
+  context.tracks.pitcher.push(cue(startT, startT + 0.16 * scale, {
     anim: ANIM.pitch,
     at: "mound",
     pitchNumber,
@@ -458,7 +722,7 @@ function addPitch(context, startT, pitchNumber, caught) {
     phase: "pitch"
   }));
   if (caught) {
-    context.tracks.catcher.push(cue(plateT - 0.02, plateT + 0.055, {
+    context.tracks.catcher.push(cue(plateT - 0.02 * scale, plateT + 0.055 * scale, {
       anim: ANIM.catcher,
       at: "C",
       pitchNumber,
@@ -467,20 +731,105 @@ function addPitch(context, startT, pitchNumber, caught) {
   }
 }
 
-function addFieldingThrow(context, { who, from, to, startT, endT }) {
-  const releaseT = startT + Math.min(0.07, (endT - startT) * 0.48);
-  context.tracks.fielders.push(cue(startT, releaseT + 0.025, {
+function resolveFieldingThrowPlan(context, { who, from, to, startT, nominalEndT }) {
+  const durationMs = Math.max(1, Number(context.durationMs) || 1);
+  const armScore = throwerArmScore(context.event, who);
+  const armT = Math.max(0, Math.min(1, (armScore - THROW_ARM_MIN) / (THROW_ARM_MAX - THROW_ARM_MIN)));
+  const distance = pointDistance(context.points[from], context.points[to]);
+  const pixelsPerSecond = 900 + armT * 700;
+  const flightMs = Math.max(170, Math.min(620, distance / pixelsPerSecond * 1000));
+  const gatherMs = 190 - armT * 40;
+  const earliestReleaseT = startT + gatherMs / durationMs;
+  const movement = throwTargetMovement(context, to);
+  let endT = Math.max(earliestReleaseT + flightMs / durationMs, Number(nominalEndT) || 0);
+  let ordering = "neutral";
+  if (movement?.out) {
+    endT = Math.min(endT, movement.endT - THROW_OUT_LEAD_T);
+    ordering = "out-first";
+  } else if (movement) {
+    endT = Math.max(endT, movement.endT + THROW_SAFE_LEAD_T);
+    ordering = "runner-safe-first";
+  }
+  endT = roundTime(Math.min(THROW_ARRIVAL_LATEST_T, endT));
+  let releaseT = Math.max(earliestReleaseT, endT - flightMs / durationMs);
+  releaseT = roundTime(Math.min(releaseT, endT - Math.min(0.035, Math.max(0.018, (endT - startT) * 0.42))));
+  const arc = roundTime(0.055 - armT * 0.04);
+  return {
+    armScore,
+    throwClass: armScore >= 150 ? "strong" : armScore <= 75 ? "weak" : "average",
+    pixelsPerSecond: Math.round(pixelsPerSecond),
+    arc,
+    releaseT,
+    endT,
+    flightMs: Math.round((endT - releaseT) * durationMs),
+    ordering,
+    runnerArrivalT: movement?.endT ?? null
+  };
+}
+
+function addFieldingThrow(context, {
+  who,
+  from,
+  to,
+  startT,
+  plan,
+  actorPhase = "throw",
+  ballPhase = "fielding-throw"
+}) {
+  const releaseT = plan.releaseT;
+  context.tracks.fielders.push(cue(startT, releaseT + scaleActionTime(context, 0.025), {
     who,
     anim: ANIM.throw,
     at: from,
     toward: to,
-    phase: "throw"
+    armScore: plan.armScore,
+    throwClass: plan.throwClass,
+    phase: actorPhase
   }));
-  context.tracks.ball.push(cue(releaseT, endT, {
+  context.tracks.ball.push(cue(releaseT, plan.endT, {
     path: [from, to],
-    arc: 0.12,
-    phase: "fielding-throw"
+    arc: plan.arc,
+    armScore: plan.armScore,
+    throwClass: plan.throwClass,
+    pixelsPerSecond: plan.pixelsPerSecond,
+    flightMs: plan.flightMs,
+    ordering: plan.ordering,
+    runnerArrivalT: plan.runnerArrivalT,
+    phase: ballPhase
   }));
+}
+
+function throwerArmScore(event, who) {
+  const key = normalizeFielderKey(who);
+  const activeKey = normalizeFielderKey(event?.fieldingPosition ?? event?.defenderPosition);
+  const profile = key === "P"
+    ? event?.pitcherProfile
+    : key === activeKey && event?.defenderProfile
+      ? event.defenderProfile
+      : event?.defenseProfilesByPosition?.[key];
+  let score = Number(profile?.arm);
+  if (Number.isFinite(score) && score > 0 && score <= 20) score *= 10;
+  if (!Number.isFinite(score) || score <= 0) score = Number(profile?.fielding ?? profile?.ovr ?? 100);
+  return Math.max(THROW_ARM_MIN, Math.min(THROW_ARM_MAX, Math.round(Number(score) || 100)));
+}
+
+function throwTargetMovement(context, target) {
+  const phases = new Set(["batter-run", "runner-advance", "slide", "tag-play"]);
+  const grouped = new Map();
+  for (const cueEntry of [...context.tracks.batter, ...context.tracks.runners]) {
+    if (!phases.has(String(cueEntry.phase ?? ""))) continue;
+    const cueTarget = cueEntry.at ?? cueEntry.toBase ?? cueEntry.path?.at(-1);
+    if (cueTarget !== target) continue;
+    const who = String(cueEntry.who ?? cueEntry.runnerId ?? "runner");
+    const current = grouped.get(who) ?? { out: false, endT: 0 };
+    current.out ||= Boolean(cueEntry.out);
+    current.endT = Math.max(current.endT, Number(cueEntry.endT ?? cueEntry.t ?? 0));
+    grouped.set(who, current);
+  }
+  const movements = [...grouped.values()];
+  return movements.find((entry) => entry.out)
+    ?? movements.sort((a, b) => b.endT - a.endT)[0]
+    ?? null;
 }
 
 function addDefensiveRotation(context, {
@@ -505,7 +854,10 @@ function addDefensiveRotation(context, {
     receiver,
     to: throwTarget,
     throwFrom: landing,
-    moveStartT: Math.max(0.235, Math.min(0.31, landingT - 0.1)),
+    moveStartT: Math.max(
+      scaleActionTime(context, 0.235),
+      Math.min(scaleActionTime(context, 0.31), landingT - scaleActionTime(context, 0.1))
+    ),
     throwEndT
   });
 }
@@ -513,8 +865,11 @@ function addDefensiveRotation(context, {
 function addDefensiveSupport(context, { primary, receiver, landing, landingT, fieldEndT }) {
   const target = context.points[landing];
   if (!target) return;
-  const moveStartT = 0.245;
-  const moveEndT = Math.min(fieldEndT + 0.015, landingT + 0.055);
+  const moveStartT = scaleActionTime(context, 0.245);
+  const moveEndT = Math.min(
+    fieldEndT + scaleActionTime(context, 0.015),
+    landingT + scaleActionTime(context, 0.055)
+  );
   for (const key of DEFENDERS) {
     if (key === primary || key === receiver || !context.points[key]) continue;
     const amount = OUTFIELDERS.includes(key) ? 0.075 : ["P", "C"].includes(key) ? 0.08 : 0.11;
@@ -549,9 +904,9 @@ function addThrowReceiver(context, {
   // Give first-base coverage a visible set interval before the catch motion;
   // heldTimelineCue keeps the completed run exactly on the target meanwhile.
   const firstBaseForce = to === "first";
-  const arrivalLeadT = firstBaseForce ? 0.12 : 0.05;
-  const catchLeadT = firstBaseForce ? 0.055 : 0.05;
-  const arrivalT = roundTime(Math.max(moveStartT + 0.08, throwEndT - arrivalLeadT));
+  const arrivalLeadT = scaleActionTime(context, firstBaseForce ? 0.12 : 0.05);
+  const catchLeadT = scaleActionTime(context, firstBaseForce ? 0.055 : 0.05);
+  const arrivalT = roundTime(Math.max(moveStartT + scaleActionTime(context, 0.08), throwEndT - arrivalLeadT));
   const receiveT = roundTime(Math.max(arrivalT, throwEndT - catchLeadT));
   context.tracks.fielders.push(cue(moveStartT, arrivalT, {
     who: selected,
@@ -561,7 +916,7 @@ function addThrowReceiver(context, {
     phase: `${phasePrefix}cover-${to}`,
     assignment: "receiver"
   }));
-  context.tracks.fielders.push(cue(receiveT, Math.min(0.97, throwEndT + 0.04), {
+  context.tracks.fielders.push(cue(receiveT, Math.min(0.99, throwEndT + scaleActionTime(context, 0.04)), {
     who: selected,
     anim: ANIM.catch,
     at: to,
@@ -580,8 +935,17 @@ function addBatterAdvance(context, startT, endT, options) {
   const targetBase = Number(options.targetBase ?? 1);
   if (targetBase <= 0) return;
   const path = basePath(0, targetBase);
-  const slideDuration = options.slide ? Math.min(0.075, (endT - startT) * 0.18) : 0;
-  const runEndT = endT - slideDuration;
+  const durationMs = Math.max(1, Number(context.durationMs) || 1);
+  const paced = options.paceByDistance === true;
+  const resolvedEndT = paced
+    ? startT + (targetBase * BATTER_RUN_MS_PER_BASE + (options.slide ? BATTER_SLIDE_MS : 0)) / durationMs
+    : endT;
+  const slideDuration = options.slide
+    ? paced
+      ? BATTER_SLIDE_MS / durationMs
+      : Math.min(0.075, (resolvedEndT - startT) * 0.18)
+    : 0;
+  const runEndT = resolvedEndT - slideDuration;
   context.tracks.batter.push(cue(startT, runEndT, {
     who: "batter",
     anim: options.anim ?? ANIM.run,
@@ -593,7 +957,7 @@ function addBatterAdvance(context, startT, endT, options) {
     phase: options.phase ?? "advance"
   }));
   if (options.slide) {
-    context.tracks.batter.push(cue(runEndT, endT, {
+    context.tracks.batter.push(cue(runEndT, resolvedEndT, {
       who: "batter",
       anim: ANIM.slide,
       at: path[path.length - 1],
@@ -603,19 +967,31 @@ function addBatterAdvance(context, startT, endT, options) {
   }
 }
 
-function addExistingRunnerAdvances(context, startT, latestEndT) {
+function addExistingRunnerAdvances(context, startT) {
   const transitions = existingRunnerTransitions(context.event, context.outcome, context.template);
+  const durationMs = Math.max(1, Number(context.durationMs) || 1);
   for (const transition of transitions) {
     const distance = Math.max(1, transitionDistance(transition));
-    const endT = Math.min(latestEndT, startT + 0.14 + distance * 0.105);
-    addRunnerMovement(context, transition, startT, endT, distance >= 2 || transition.out);
+    const slide = distance >= 2 || transition.out;
+    const slideDuration = slide ? RUNNER_SLIDE_MS / durationMs : 0;
+    const endT = startT + (distance * RUNNER_RUN_MS_PER_BASE + (slide ? RUNNER_SLIDE_MS : 0)) / durationMs;
+    addRunnerMovement(context, transition, startT, endT, slide, slideDuration);
   }
 }
 
-function addRunnerMovement(context, transition, startT, endT, slide) {
+function scaleActionTime(context, value) {
+  const scale = Math.max(0.1, Number(context?.actionTimeScale ?? 1));
+  return Number(value) * scale;
+}
+
+function addRunnerMovement(context, transition, startT, endT, slide, authoredSlideDuration = null) {
   const path = basePath(transition.fromBase, transition.toBase);
   if (path.length < 2) return;
-  const slideDuration = slide ? Math.min(0.065, (endT - startT) * 0.18) : 0;
+  const slideDuration = slide
+    ? Number.isFinite(Number(authoredSlideDuration))
+      ? Math.max(0, Number(authoredSlideDuration))
+      : Math.min(0.065, (endT - startT) * 0.18)
+    : 0;
   const runEndT = endT - slideDuration;
   context.tracks.runners.push(cue(startT, runEndT, {
     who: transition.id,
@@ -828,8 +1204,60 @@ function fieldingLandingPoint(event, points, fielderKey) {
   const fielder = points[fielderKey];
   const ground = normalizedToken(event?.battedBallType).includes("ground");
   const line = normalizedToken(event?.battedBallType).includes("line");
-  const towardHome = ground ? 0.22 : line ? 0.13 : 0.08;
-  return interpolatePoint(fielder, points.home, towardHome);
+  const fly = normalizedToken(event?.battedBallType).includes("fly");
+  const outfield = OUTFIELDERS.includes(fielderKey);
+  const towardHome = ground ? (outfield ? 0.2 : 0.22) : line ? 0.13 : 0.08;
+  const landing = interpolatePoint(fielder, points.home, towardHome);
+  if (!fly) return landing;
+
+  // Never place every fly directly on the defender's starting sprite. A
+  // deterministic lateral read makes the chase/catch legible while remaining
+  // inside every authored defender movement zone.
+  const direction = deterministicUnit(event) < 0 ? -1 : 1;
+  const lateral = outfield ? 30 : 8;
+  return {
+    ...landing,
+    x: roundCoordinate(landing.x + direction * lateral),
+    y: roundCoordinate(landing.y + (outfield ? 6 : -3))
+  };
+}
+
+function caughtBallGlovePoint(event, landing) {
+  const type = normalizedToken(event?.battedBallType);
+  const fly = type.includes("fly");
+  return {
+    ...landing,
+    // Generated and atlas catch poses both present the glove above and just to
+    // the right of the player's foot anchor. Line drives are caught nearer the
+    // chest; fly balls finish at the raised glove.
+    x: roundCoordinate(Number(landing?.x ?? 0) + (fly ? 13 : 10)),
+    y: roundCoordinate(Number(landing?.y ?? 0) - (fly ? 38 : 26))
+  };
+}
+
+function safeFlyMissPoint(event, points, fielderKey, landing) {
+  const outfield = OUTFIELDERS.includes(fielderKey);
+  const direction = deterministicUnit(event) < 0 ? -1 : 1;
+  return {
+    ...landing,
+    x: roundCoordinate(landing.x + direction * (outfield ? 25 : 7)),
+    y: roundCoordinate(landing.y - (outfield ? 10 : 4))
+  };
+}
+
+function safeFlyPickupPoint(points, fielderKey, landing) {
+  const outfield = OUTFIELDERS.includes(fielderKey);
+  return interpolatePoint(landing, points.home, outfield ? 0.05 : 0.018);
+}
+
+function outfieldFieldingDelayMs(event, fielderKey, template) {
+  if (!OUTFIELDERS.includes(fielderKey) || ["infieldOut", "doublePlay"].includes(template)) return 0;
+  const type = normalizedToken(event?.battedBallType);
+  if (template === "outfieldOut" && type.includes("ground")) return 0;
+  if (type.includes("ground")) return OUTFIELD_FIELDING_DELAY_MS.ground;
+  if (type.includes("line")) return OUTFIELD_FIELDING_DELAY_MS.line;
+  if (type.includes("fly")) return OUTFIELD_FIELDING_DELAY_MS.fly;
+  return OUTFIELD_FIELDING_DELAY_MS.default;
 }
 
 function homeRunWallPoint(event, points) {
@@ -970,7 +1398,7 @@ function finalizeTimeline(context) {
 
   const runningEndT = latestAnimationEnd(context.tracks, new Set([ANIM.run, ANIM.walk, ANIM.slide]));
   const actionEndT = latestCueEnd(context.tracks, ["pitcher", "catcher", "ball", "batter", "fielders", "runners"]);
-  const resultT = roundTime(Math.min(0.985, Math.max(
+  const resultT = roundTime(Math.min(0.99, Math.max(
     context.suggestedResultT,
     runningEndT > 0 ? runningEndT + 0.035 : 0,
     actionEndT + 0.025

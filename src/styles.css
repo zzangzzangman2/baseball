@@ -3389,15 +3389,15 @@ img {
 
 .gamecast-matchup b {
   grid-area: result;
-  max-width: 112px;
-  min-width: 58px;
-  padding: 6px 8px;
+  max-width: 148px;
+  min-width: 76px;
+  padding: 7px 10px;
   overflow: hidden;
   border: 1px solid rgba(255, 254, 251, 0.18);
   border-radius: 7px;
   background: rgba(255, 254, 251, 0.1);
   color: #fffefa;
-  font-size: 0.76rem;
+  font-size: 0.9rem;
   font-weight: 950;
   line-height: 1.18;
   text-align: center;
@@ -3565,7 +3565,10 @@ img {
   max-height: 100%;
   overflow: hidden;
   border-radius: 3px;
-  background: #0d1915;
+  background: #4f8a73;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
 }
 
 .gamecast-pixel-canvas {
@@ -3589,8 +3592,7 @@ img {
   aspect-ratio: 4 / 3;
 }
 
-.gamecast-screen.is-v2 .gamecast-player-label,
-.gamecast-screen.is-v2 .gamecast-action-burst {
+.gamecast-screen.is-v2 .gamecast-player-label {
   display: none;
 }
 
@@ -3632,9 +3634,11 @@ img {
 .gamecast-dom-jumbotron strong {
   margin-top: 2px;
   color: #fffefb;
-  font-size: 1.06rem;
+  font-size: 1.18rem;
   font-weight: 950;
-  letter-spacing: 0;
+  letter-spacing: -0.02em;
+  text-shadow: 0 1px 0 #07120f, 0 0 8px rgba(255, 246, 199, 0.42);
+  white-space: nowrap;
 }
 
 .gamecast-dom-jumbotron small {
@@ -3812,21 +3816,22 @@ img {
   position: absolute;
   left: var(--burst-x, 50%);
   top: var(--burst-y, 17%);
-  z-index: 5;
-  min-width: 0;
-  max-width: 44%;
-  padding: 2px 8px 3px;
-  border: 2px solid #23202a;
+  z-index: 6;
+  min-width: clamp(94px, 26%, 154px);
+  max-width: 48%;
+  padding: 5px 12px 6px;
+  border: 3px solid #23202a;
   border-radius: 999px;
   background: linear-gradient(180deg, #fffefb 0 55%, #f1eadf 55% 100%);
-  box-shadow: 2px 2px 0 #23202a, 0 3px 8px rgba(35, 32, 42, 0.18);
+  box-shadow: 3px 3px 0 #23202a, 0 4px 14px rgba(35, 32, 42, 0.28), 0 0 0 2px rgba(255, 254, 251, 0.68);
   color: #23202a;
-  font-size: clamp(0.6rem, 1.4vw, 0.82rem);
-  font-weight: 900;
+  font-size: clamp(0.82rem, 1.8vw, 1.04rem);
+  font-weight: 950;
   line-height: 1;
   opacity: 0;
   pointer-events: none;
   text-align: center;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.76);
   white-space: nowrap;
   transform:
     translate(
@@ -3873,6 +3878,13 @@ img {
   background:
     linear-gradient(180deg, #fffefb 0 42%, #ddecff 42% 56%, #bad7ff 56% 100%);
   color: #315288;
+}
+
+.gamecast-action-burst.is-error {
+  border-color: #8b3a32;
+  background:
+    linear-gradient(180deg, #fffefb 0 42%, #ffd4cc 42% 56%, #ff9f90 56% 100%);
+  color: #7b2f2a;
 }
 
 .gamecast-pause-overlay {
