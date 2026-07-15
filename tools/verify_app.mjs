@@ -3,6 +3,15 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { verifyGamecastTimeline } from "./verify_gamecast_timeline.mjs";
+import {
+  GAMECAST2_ASSET_REVISION,
+  GAMECAST2_FIELDS,
+  gamecast2AssetUrl
+} from "../src/gamecast2/assets.js";
+import {
+  GAMECAST_SPRITE_ASSET_REVISION,
+  gamecastSpriteAssetUrl
+} from "../src/gamecastPhaser.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1153,6 +1162,15 @@ function checkGameBoxScoreEventLog() {
 }
 
 function checkGamecastMotionAtlas() {
+  assert(GAMECAST2_ASSET_REVISION.length >= 8, `Gamecast asset revision is too short: ${GAMECAST2_ASSET_REVISION}`, "src/gamecast2/assets.js");
+  assert(GAMECAST_SPRITE_ASSET_REVISION === GAMECAST2_ASSET_REVISION, `Legacy and v2 Gamecast asset revisions diverged: ${GAMECAST_SPRITE_ASSET_REVISION} / ${GAMECAST2_ASSET_REVISION}`, "src/gamecastPhaser.js");
+  assert(
+    GAMECAST2_FIELDS.every((field) => field.imageUrl.includes(`v=${GAMECAST2_ASSET_REVISION}`) && field.anchorsUrl.includes(`v=${GAMECAST2_ASSET_REVISION}`)),
+    `Gamecast field assets are not revisioned: ${JSON.stringify(GAMECAST2_FIELDS)}`,
+    "src/gamecast2/assets.js"
+  );
+  assert(gamecast2AssetUrl("./asset.png").endsWith(`?v=${GAMECAST2_ASSET_REVISION}`), "Gamecast asset URL helper lost its revision token.", "src/gamecast2/assets.js");
+  assert(gamecastSpriteAssetUrl("./asset.png").endsWith(`?v=${GAMECAST_SPRITE_ASSET_REVISION}`), "Legacy Gamecast asset URL helper lost its revision token.", "src/gamecastPhaser.js");
   assert(fs.existsSync(GAMECAST_PLAYER_ATLAS_PATH), "player-home.json 아틀라스가 없습니다.", GAMECAST_PLAYER_ATLAS_PATH);
   const payload = JSON.parse(fs.readFileSync(GAMECAST_PLAYER_ATLAS_PATH, "utf8"));
   const frames = payload.frames ?? {};

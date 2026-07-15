@@ -101,6 +101,15 @@ const PLAYER_LEGACY_ANIMATIONS = {
   catcher: { frames: ["catcher"], durations: [160] }
 };
 const SPRITE_ASSET_ROOT = "./assets/gamecast";
+export const GAMECAST_SPRITE_ASSET_REVISION = "20260715-runner-depth-1";
+
+export function gamecastSpriteAssetUrl(url) {
+  const qaToken = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("qa") ?? ""
+    : "";
+  const revision = [GAMECAST_SPRITE_ASSET_REVISION, qaToken].filter(Boolean).join("-");
+  return `${url}?v=${encodeURIComponent(revision)}`;
+}
 
 export function canUseGamecastPhaser() {
   return typeof window !== "undefined" && Boolean(window.Phaser?.Game);
@@ -219,9 +228,21 @@ export function mountGamecastPhaser(options) {
 }
 
 function preloadGamecastAssets(scene) {
-  scene.load.atlas("gamecast-player-home", `${SPRITE_ASSET_ROOT}/player-home.png`, `${SPRITE_ASSET_ROOT}/player-home.json`);
-  scene.load.atlas("gamecast-player-away", `${SPRITE_ASSET_ROOT}/player-away.png`, `${SPRITE_ASSET_ROOT}/player-away.json`);
-  scene.load.atlas("gamecast-props", `${SPRITE_ASSET_ROOT}/props.png`, `${SPRITE_ASSET_ROOT}/props.json`);
+  scene.load.atlas(
+    "gamecast-player-home",
+    gamecastSpriteAssetUrl(`${SPRITE_ASSET_ROOT}/player-home.png`),
+    gamecastSpriteAssetUrl(`${SPRITE_ASSET_ROOT}/player-home.json`)
+  );
+  scene.load.atlas(
+    "gamecast-player-away",
+    gamecastSpriteAssetUrl(`${SPRITE_ASSET_ROOT}/player-away.png`),
+    gamecastSpriteAssetUrl(`${SPRITE_ASSET_ROOT}/player-away.json`)
+  );
+  scene.load.atlas(
+    "gamecast-props",
+    gamecastSpriteAssetUrl(`${SPRITE_ASSET_ROOT}/props.png`),
+    gamecastSpriteAssetUrl(`${SPRITE_ASSET_ROOT}/props.json`)
+  );
 }
 
 function calculatePhaserMetrics(runtime) {

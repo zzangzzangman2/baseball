@@ -67,12 +67,12 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js";
+} from "./gamecastPhaser.js?v=gamecast-hq-80-runner-depth-20260715-r5";
 
 import {
   canUseGamecast2,
   mountGamecast2
-} from "./gamecast2/index.js";
+} from "./gamecast2/index.js?v=gamecast-hq-80-runner-depth-20260715-r5";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },

@@ -626,6 +626,29 @@ def opaque_bbox(image: Image.Image) -> Tuple[int, int, int, int] | None:
 
 def clear_source_background(image: Image.Image) -> Image.Image:
     image = image.copy().convert("RGBA")
+    # The checked contract sheet already carries an authoritative binary alpha
+    # matte. Running checkerboard removal over it can mistake the bright away
+    # jersey for background and peel the neck/torso apart on a second pass.
+    # Trust that matte only when it is genuinely binary, clears a meaningful
+    # share of the cell, and leaves no opaque checker candidate on the border.
+    # A custom sheet with one transparent pixel or a half-cleaned checkerboard
+    # therefore still takes the cleanup path.
+    alpha_values = list(image.getchannel("A").getdata())
+    transparent_count = alpha_values.count(0)
+    binary_alpha = all(value in (0, 255) for value in alpha_values)
+    minimum_transparent = max(4, round(len(alpha_values) * 0.1))
+    border_points = (
+        *((x, 0) for x in range(image.width)),
+        *((x, image.height - 1) for x in range(image.width)),
+        *((0, y) for y in range(image.height)),
+        *((image.width - 1, y) for y in range(image.height)),
+    )
+    opaque_checker_on_border = any(
+        image.getpixel((x, y))[3] > 0 and is_checker_background_candidate(image.getpixel((x, y)))
+        for x, y in border_points
+    )
+    if binary_alpha and transparent_count >= minimum_transparent and not opaque_checker_on_border:
+        return image
     pixels = image.load()
     width, height = image.size
     background: set[Tuple[int, int]] = set()

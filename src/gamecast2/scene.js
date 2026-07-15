@@ -1,12 +1,14 @@
 import {
   GAMECAST2_DESIGN_H,
   GAMECAST2_DESIGN_W,
+  GAMECAST2_ASSET_REVISION,
+  gamecast2AssetUrl,
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js";
-import { compilePlayTimeline } from "./timeline.js";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js";
+} from "./assets.js?v=gamecast-hq-80-runner-depth-20260715-r5";
+import { compilePlayTimeline } from "./timeline.js?v=gamecast-hq-80-runner-depth-20260715-r5";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-hq-80-runner-depth-20260715-r5";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -52,9 +54,9 @@ const DEFENDER_MOVE_ZONES = {
   P: { x: 300, yTop: 110, yBottom: 220 },
   C: { x: 30, yTop: 42, yBottom: 12 },
   "1B": { x: 54, yTop: 42, yBottom: 45 },
-  "2B": { x: 132, yTop: 80, yBottom: 52 },
+  "2B": { x: 132, yTop: 80, yBottom: 80 },
   "3B": { x: 54, yTop: 42, yBottom: 45 },
-  SS: { x: 184, yTop: 80, yBottom: 52 },
+  SS: { x: 184, yTop: 80, yBottom: 80 },
   LF: { x: 96, yTop: 58, yBottom: 74 },
   CF: { x: 116, yTop: 62, yBottom: 84 },
   RF: { x: 96, yTop: 58, yBottom: 74 }
@@ -128,8 +130,10 @@ export function mountGamecast2(options) {
       for (const [variant, key] of Object.entries(PLAYER_ATLAS_KEYS)) {
         const suffix = variant.endsWith("Night") ? `-${variant.startsWith("home") ? "home" : "away"}-night` : `-${variant}`;
         const basename = `player${suffix}`;
-        this.load.atlas(key, `${PLAYER_ATLAS_ROOT}/${basename}.png`, `${PLAYER_ATLAS_ROOT}/${basename}.json`);
-        this.load.json(`${key}-meta`, `${PLAYER_ATLAS_ROOT}/${basename}.json`);
+        const imageUrl = gamecast2AssetUrl(`${PLAYER_ATLAS_ROOT}/${basename}.png`);
+        const metadataUrl = gamecast2AssetUrl(`${PLAYER_ATLAS_ROOT}/${basename}.json`);
+        this.load.atlas(key, imageUrl, metadataUrl);
+        this.load.json(`${key}-meta`, metadataUrl);
       }
     },
     create() {
@@ -223,6 +227,10 @@ export function mountGamecast2(options) {
       runtime.screen.removeAttribute("data-gamecast2-timeline-template");
       runtime.screen.removeAttribute("data-gamecast2-player-atlas");
       runtime.screen.removeAttribute("data-gamecast2-native-display-size");
+      runtime.screen.removeAttribute("data-gamecast2-asset-revision");
+      runtime.screen.removeAttribute("data-gamecast2-first-anchor");
+      runtime.screen.removeAttribute("data-gamecast2-middle-infield");
+      runtime.screen.removeAttribute("data-gamecast2-base-occupant-distance");
       delete runtime.screen.__gamecast2Anchors;
       delete runtime.screen.__gamecast2Players;
       delete runtime.screen.__gamecast2Frame;
@@ -1468,6 +1476,17 @@ function exposeMotionDebug(runtime, frame = null) {
   const receiverDistance = receiver && receiverTarget
     ? Math.hypot(Number(receiver.x) - Number(receiverTarget.x), Number(receiver.y) - Number(receiverTarget.y))
     : -1;
+  const basePoints = ["first", "second", "third"]
+    .map((key) => play.timeline?.points?.[key])
+    .filter(Boolean);
+  const baseOccupantDistances = actorSnapshots
+    .filter((actor) => actor.isTransient && actor.currentPose === "idle")
+    .map((actor) => Math.min(...basePoints.map((point) => (
+      Math.hypot(Number(actor.x) - Number(point.x), Number(actor.y) - Number(point.y))
+    ))));
+  const baseOccupantDistance = baseOccupantDistances.length > 0
+    ? Math.max(...baseOccupantDistances)
+    : -1;
   runtime.screen.dataset.gamecast2MovingDefenseCount = String(play.movingDefenseCount ?? 0);
   runtime.screen.dataset.gamecast2BallVisible = ballVisible ? "1" : "0";
   runtime.screen.dataset.gamecast2PositionViolations = String(positionGuard.violations.length);
@@ -1477,6 +1496,7 @@ function exposeMotionDebug(runtime, frame = null) {
   runtime.screen.dataset.gamecast2FieldingReceiver = receiverKey;
   runtime.screen.dataset.gamecast2FieldingTarget = receiverTargetKey;
   runtime.screen.dataset.gamecast2ReceiverDistance = receiverDistance < 0 ? "-1" : receiverDistance.toFixed(3);
+  runtime.screen.dataset.gamecast2BaseOccupantDistance = baseOccupantDistance < 0 ? "-1" : baseOccupantDistance.toFixed(3);
   runtime.screen.__gamecast2Frame = {
     eventId: String(frame?.event?.id ?? ""),
     outcome: String(frame?.event?.outcome ?? ""),
@@ -1948,11 +1968,11 @@ function gamecast2AtlasFrame(scene, textureKey, actor, state, pose, runtime, fra
 function gamecast2AnimationForPose(actor, state, pose) {
   const explicit = String(state?.animationKey ?? "");
   if (actor.role === "catcher") {
-    // Keep the mask and chest protector visible during catcher throws. The
-    // catcher family supplies the equipment-safe motion frames.
-    if (explicit === "throw" || pose === "throw") return "catcher";
-    if (explicit === "catcher" || pose === "catch") return "catcher";
-    return "";
+    // Every non-idle catcher pose must stay in the equipment-safe family.
+    // Position interpolation still moves the catcher to a bunt, tag, or throw;
+    // selecting generic run/field frames here would drop the mask and chest
+    // protector while that movement is in progress.
+    return explicit || pose !== "idle" ? "catcher" : "";
   }
   if (explicit) return explicit;
   if (pose === "windup" || pose === "release") return "pitch";
@@ -2229,6 +2249,7 @@ function drawAnchorOverlay(scene, runtime) {
 }
 
 function exposeSceneDebug(runtime) {
+  const anchors = runtime.anchors?.anchors ?? {};
   const actors = runtime.scene?.playerActors ?? [];
   const defenders = actors.filter((actor) => actor.isDefender);
   runtime.screen.dataset.gamecast2Field = runtime.field.id;
@@ -2240,6 +2261,13 @@ function exposeSceneDebug(runtime) {
     ? `128-${String(runtime.field?.id ?? "").includes("night") ? "night" : "day"}`
     : "procedural-fallback";
   runtime.screen.dataset.gamecast2NativeDisplaySize = String(PLAYER_ATLAS_NATIVE_DISPLAY_SIZE);
+  runtime.screen.dataset.gamecast2AssetRevision = GAMECAST2_ASSET_REVISION;
+  runtime.screen.dataset.gamecast2FirstAnchor = anchors.first
+    ? `${Number(anchors.first.x)},${Number(anchors.first.y)}`
+    : "";
+  runtime.screen.dataset.gamecast2MiddleInfield = anchors.SS && anchors["2B"]
+    ? `${Number(anchors.SS.y)},${Number(anchors["2B"].y)}`
+    : "";
   runtime.screen.__gamecast2Anchors = runtime.anchors;
   runtime.screen.__gamecast2Players = {
     defenders: defenders.map(publicActorSnapshot),

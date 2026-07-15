@@ -45,6 +45,12 @@ DEFAULT_ATLAS = ROOT / "assets" / "gamecast" / "player-home.png"
 DEFAULT_JSON = ROOT / "assets" / "gamecast" / "player-home.json"
 DEFAULT_CONTACT = ROOT / "reports" / "gamecast-v3-frame-qa-contact-sheet.png"
 DEFAULT_CATCHER_CONTACT = ROOT / "reports" / "catcher-front-back-qa.png"
+DEFAULT_VARIANTS = (
+    (ROOT / "assets" / "gamecast" / "player-home.png", ROOT / "assets" / "gamecast" / "player-home.json"),
+    (ROOT / "assets" / "gamecast" / "player-away.png", ROOT / "assets" / "gamecast" / "player-away.json"),
+    (ROOT / "assets" / "gamecast" / "player-home-night.png", ROOT / "assets" / "gamecast" / "player-home-night.json"),
+    (ROOT / "assets" / "gamecast" / "player-away-night.png", ROOT / "assets" / "gamecast" / "player-away-night.json"),
+)
 EXPECTED_DENSE_FRAMES = 115
 SKIN_COLORS = frozenset({SKIN[:3], SKIN_SHADOW[:3], SKIN_HIGHLIGHT[:3]})
 CAGE_LIGHT_COLORS = frozenset({
@@ -268,6 +274,8 @@ def audit_frames(
 
         components = alpha_components(frame)
         detached = components[1][0] if len(components) > 1 else 0
+        if detached > 3:
+            issues.append(f"{name}: detached alpha component is {detached}px (maximum 3px)")
 
         wide_rows, separated_rows = bottom_row_metrics(frame)
         requires_leg_gap = source_pose in LEG_GAP_PROBES
@@ -393,17 +401,25 @@ def main() -> None:
     parser.add_argument("--catcher-contact-sheet", type=Path, default=DEFAULT_CATCHER_CONTACT)
     parser.add_argument("--no-contact-sheets", action="store_true")
     parser.add_argument("--report-json", type=Path)
+    parser.add_argument("--all-variants", action="store_true")
     args = parser.parse_args()
 
     source = Image.open(args.source).convert("RGBA")
-    atlas = Image.open(args.atlas).convert("RGBA")
-    payload = json.loads(args.json.read_text(encoding="utf-8"))
-    issues, diagnostics = audit_frames(source, atlas, payload)
-    if not args.no_contact_sheets:
-        write_contact_sheet(atlas, payload, diagnostics, args.contact_sheet)
-        write_catcher_contact_sheet(source, atlas, payload, args.catcher_contact_sheet)
+    variants = DEFAULT_VARIANTS if args.all_variants else ((args.atlas, args.json),)
+    issues: List[str] = []
+    all_diagnostics: List[Dict[str, object]] = []
+    for index, (atlas_path, json_path) in enumerate(variants):
+        atlas = Image.open(atlas_path).convert("RGBA")
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+        variant_issues, diagnostics = audit_frames(source, atlas, payload)
+        variant_name = atlas_path.stem
+        issues.extend(f"{variant_name}: {issue}" for issue in variant_issues)
+        all_diagnostics.extend({"variant": variant_name, **diagnostic} for diagnostic in diagnostics)
+        if index == 0 and not args.no_contact_sheets:
+            write_contact_sheet(atlas, payload, diagnostics, args.contact_sheet)
+            write_catcher_contact_sheet(source, atlas, payload, args.catcher_contact_sheet)
     if args.report_json:
-        write_json_report(diagnostics, args.report_json)
+        write_json_report(all_diagnostics, args.report_json)
 
     if issues:
         print("sprite frame audit:")
@@ -411,8 +427,8 @@ def main() -> None:
             print(f"  ERROR {issue}")
         raise SystemExit("sprite frame audit failed")
     print(
-        f"sprite frame audit: ok ({len(diagnostics)} frames; "
-        f"contact sheet: {args.contact_sheet})"
+        f"sprite frame audit: ok ({len(variants)} variants, {len(all_diagnostics)} frames; "
+        f"contact sheet: {'disabled' if args.no_contact_sheets else args.contact_sheet})"
     )
 
 

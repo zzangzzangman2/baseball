@@ -31,9 +31,9 @@ const DEFENDER_MOVE_ZONES = Object.freeze({
   P: { x: 300, yTop: 110, yBottom: 220 },
   C: { x: 30, yTop: 42, yBottom: 12 },
   "1B": { x: 54, yTop: 42, yBottom: 45 },
-  "2B": { x: 132, yTop: 80, yBottom: 52 },
+  "2B": { x: 132, yTop: 80, yBottom: 80 },
   "3B": { x: 54, yTop: 42, yBottom: 45 },
-  SS: { x: 184, yTop: 80, yBottom: 52 },
+  SS: { x: 184, yTop: 80, yBottom: 80 },
   LF: { x: 96, yTop: 58, yBottom: 74 },
   CF: { x: 116, yTop: 62, yBottom: 84 },
   RF: { x: 96, yTop: 58, yBottom: 74 }
@@ -108,9 +108,26 @@ function verifyFieldAnchorContract() {
   for (const anchorPath of FIELD_ANCHOR_PATHS) {
     const payload = JSON.parse(fs.readFileSync(anchorPath, "utf8"));
     const first = payload.anchors?.first;
+    const second = payload.anchors?.second;
     const third = payload.anchors?.third;
-    assert(first && third, `${path.basename(anchorPath)}: first/third base anchors are missing.`);
+    const shortstop = payload.anchors?.SS;
+    const secondBaseman = payload.anchors?.["2B"];
+    assert(first && second && third, `${path.basename(anchorPath)}: first/second/third base anchors are missing.`);
+    assert(shortstop && secondBaseman, `${path.basename(anchorPath)}: SS/2B anchors are missing.`);
     assert(Math.abs(Number(first.y) - Number(third.y)) <= 1, `${path.basename(anchorPath)}: first/third base depth is asymmetric.`);
+    assert(Math.abs(Number(shortstop.y) - Number(secondBaseman.y)) <= 1, `${path.basename(anchorPath)}: SS/2B depth is asymmetric.`);
+    const middleDepths = [
+      [shortstop, second, third],
+      [secondBaseman, second, first]
+    ].map(([fielder, upperBase, lowerBase]) => {
+      const t = (Number(fielder.x) - Number(upperBase.x)) / (Number(lowerBase.x) - Number(upperBase.x));
+      const baselineY = Number(upperBase.y) + (Number(lowerBase.y) - Number(upperBase.y)) * t;
+      return baselineY - Number(fielder.y);
+    });
+    assert(
+      middleDepths.every((depth) => depth >= 8 && depth <= 16),
+      `${path.basename(anchorPath)}: SS/2B must play 8-16px behind the adjacent baseline (${middleDepths.map((depth) => depth.toFixed(2)).join(", ")}).`
+    );
     if (payload.fieldId === "field-gocheok-dome") {
       assert.deepEqual(
         { first: [Number(first.x), Number(first.y)], third: [Number(third.x), Number(third.y)] },

@@ -2,25 +2,35 @@ export const GAMECAST2_DESIGN_W = 960;
 export const GAMECAST2_DESIGN_H = 720;
 
 const FIELD_ROOT = "./assets/gamecast2";
+export const GAMECAST2_ASSET_REVISION = "20260715-runner-depth-1";
+
+export function gamecast2AssetUrl(url) {
+  const separator = String(url).includes("?") ? "&" : "?";
+  const qaToken = typeof window === "undefined"
+    ? ""
+    : String(new URLSearchParams(window.location.search).get("qa") ?? "").trim();
+  const revision = qaToken ? `${GAMECAST2_ASSET_REVISION}-${qaToken}` : GAMECAST2_ASSET_REVISION;
+  return `${url}${separator}v=${encodeURIComponent(revision)}`;
+}
 
 export const GAMECAST2_FIELDS = [
   {
     id: "field-jamsil-day",
     label: "잠실 낮",
-    imageUrl: `${FIELD_ROOT}/field-jamsil-day.png`,
-    anchorsUrl: `${FIELD_ROOT}/field-jamsil-day.anchors.json`
+    imageUrl: gamecast2AssetUrl(`${FIELD_ROOT}/field-jamsil-day.png`),
+    anchorsUrl: gamecast2AssetUrl(`${FIELD_ROOT}/field-jamsil-day.anchors.json`)
   },
   {
     id: "field-jamsil-night",
     label: "잠실 밤",
-    imageUrl: `${FIELD_ROOT}/field-jamsil-night.png`,
-    anchorsUrl: `${FIELD_ROOT}/field-jamsil-night.anchors.json`
+    imageUrl: gamecast2AssetUrl(`${FIELD_ROOT}/field-jamsil-night.png`),
+    anchorsUrl: gamecast2AssetUrl(`${FIELD_ROOT}/field-jamsil-night.anchors.json`)
   },
   {
     id: "field-gocheok-dome",
     label: "고척 돔",
-    imageUrl: `${FIELD_ROOT}/field-gocheok-dome.png`,
-    anchorsUrl: `${FIELD_ROOT}/field-gocheok-dome.anchors.json`
+    imageUrl: gamecast2AssetUrl(`${FIELD_ROOT}/field-gocheok-dome.png`),
+    anchorsUrl: gamecast2AssetUrl(`${FIELD_ROOT}/field-gocheok-dome.anchors.json`)
   }
 ];
 

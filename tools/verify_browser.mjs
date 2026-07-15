@@ -96,6 +96,12 @@ class CdpClient {
       this.socket.addEventListener("message", (event) => {
         this.handleMessage(event.data);
       });
+      this.socket.addEventListener("close", () => {
+        for (const pending of this.pending.values()) {
+          pending.reject(new Error("CDP WebSocket closed while a browser command was pending."));
+        }
+        this.pending.clear();
+      });
     });
   }
 
@@ -125,7 +131,20 @@ class CdpClient {
     const payload = JSON.stringify({ id, method, params });
 
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP command timed out: ${method}`));
+      }, 30000);
+      this.pending.set(id, {
+        resolve(value) {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        reject(error) {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
       this.socket.send(payload);
     });
   }
@@ -1758,11 +1777,37 @@ async function checkGamecastLab() {
       const ratingTokens = motionFrame?.ratingTokens ?? [];
       const motionActors = motionFrame?.actors ?? [];
       const actorRenderScales = motionActors.map((actor) => Number(actor.renderScale)).filter(Number.isFinite);
+      const gamecastAssetUrls = performance.getEntriesByType("resource")
+        .map((entry) => String(entry.name ?? ""))
+        .filter((url) =>
+          url.includes("/assets/gamecast2/") ||
+          url.includes("/assets/gamecast/player-") ||
+          url.includes("/assets/gamecast/props")
+        );
+      const expectedAssetRevision = "20260715-runner-depth-1";
+      const middleDepths = [
+        [anchors.SS, anchors.second, anchors.third],
+        [anchors["2B"], anchors.second, anchors.first]
+      ].map(([fielder, upperBase, lowerBase]) => {
+        if (!fielder || !upperBase || !lowerBase) return NaN;
+        const t = (Number(fielder.x) - Number(upperBase.x)) / (Number(lowerBase.x) - Number(upperBase.x));
+        const baselineY = Number(upperBase.y) + (Number(lowerBase.y) - Number(upperBase.y)) * t;
+        return baselineY - Number(fielder.y);
+      });
       return {
         engine: screen?.dataset?.gamecastEngineCurrent ?? "",
         field: screen?.dataset?.gamecast2Field ?? "",
         playerAtlas: screen?.dataset?.gamecast2PlayerAtlas ?? "",
         nativeDisplaySize: Number(screen?.dataset?.gamecast2NativeDisplaySize ?? 0),
+        assetRevision: screen?.dataset?.gamecast2AssetRevision ?? "",
+        firstAnchorSignature: screen?.dataset?.gamecast2FirstAnchor ?? "",
+        middleInfieldSignature: screen?.dataset?.gamecast2MiddleInfield ?? "",
+        baseOccupantDistance: Number(screen?.dataset?.gamecast2BaseOccupantDistance ?? -1),
+        assetRevisionOk: gamecastAssetUrls.length >= 8 && gamecastAssetUrls.every((url) => {
+          const token = new URL(url).searchParams.get("v") ?? "";
+          return token === expectedAssetRevision || token.startsWith(expectedAssetRevision + "-");
+        }),
+        middleDepths,
         timelineTemplate: screen?.dataset?.gamecast2TimelineTemplate ?? "",
         scoreboardVisible: screen?.dataset?.gamecast2Scoreboard === "1",
         scoreboardState: motionFrame?.scoreboard ?? null,
@@ -1822,6 +1867,10 @@ async function checkGamecastLab() {
   assert(anchorProbe.playerAtlas === "128-day", `v2 128px day atlas가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.nativeDisplaySize === 80, `v2 native display atlas가 80px가 아닙니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.timelineTemplate && anchorProbe.timelineTemplate !== "fallback", `v2 timeline template가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/timeline.js");
+  assert(anchorProbe.assetRevision === "20260715-runner-depth-1" && anchorProbe.assetRevisionOk, `v2 assets are not cache-revisioned: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
+  assert(anchorProbe.firstAnchorSignature === "724,445", `v2 loaded a stale first-base anchor: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-gocheok-dome.anchors.json");
+  assert(anchorProbe.middleInfieldSignature === "388,388" && anchorProbe.middleDepths.every((depth) => depth >= 8 && depth <= 16), `v2 middle infield depth is wrong: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-gocheok-dome.anchors.json");
+  assert(anchorProbe.baseOccupantDistance < 0 || anchorProbe.baseOccupantDistance <= 0.01, `v2 stationary runner is not planted on a base: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(
     anchorProbe.scoreboardVisible &&
       Number.isFinite(anchorProbe.scoreboardState?.x) &&
@@ -1891,6 +1940,13 @@ async function checkGamecastLab() {
     `베이스 주자가 배트 없는 idle 프레임을 사용하지 않습니다: ${JSON.stringify(equipmentProbe)}`,
     "src/gamecast2/scene.js"
   );
+  assert(
+    equipmentProbe.baseOccupantDistances.length > 0 &&
+      equipmentProbe.baseOccupantDistances.every((distance) => distance <= 0.01),
+    `stationary runner is not planted on its base: ${JSON.stringify(equipmentProbe)}`,
+    "src/gamecast2/scene.js"
+  );
+  await captureQaShot("gamecast-lab-v2-runner-equipment");
 
   loadEvent = cdp.once("Page.loadEventFired");
   await cdp.send("Page.navigate", { url: `${labUrl}?field=field-gocheok-dome&team=kiwoom&days=3&fullscreen=0&holds=0&qa=lab-v2-inline-default-${Date.now()}` });
@@ -1943,7 +1999,7 @@ async function checkGamecastLab() {
     `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`,
     `v2 anchors ${anchorProbe.anchorCount}, players ${anchorProbe.playerCount}`,
     `v2 atlas/timeline ${anchorProbe.playerAtlas}/${anchorProbe.timelineTemplate}`,
-    `equipment catcher ${equipmentProbe.catcherFrames.join("/")}, runner ${equipmentProbe.stationaryRunnerFrames.join("/")}`,
+    `equipment catcher ${equipmentProbe.catcherFrames.join("/")}, runner ${equipmentProbe.stationaryRunnerFrames.join("/")} @ ${equipmentProbe.baseOccupantDistances.join("/")}px`,
     `v2 fx camera<=${anchorProbe.cameraZoom.toFixed(3)}, particles ${anchorProbe.particleCount}, underlays ${anchorProbe.visibleAbilityUnderlays}`,
     `inline default ${inlineV2Probe.engine} ${inlineV2Probe.canvasPixelW}x${inlineV2Probe.canvasPixelH}`
   ].join(", ");
@@ -2007,6 +2063,7 @@ async function waitForV2EquipmentDiagnostics() {
   const deadline = Date.now() + 15000;
   const catcherFrames = new Set();
   const stationaryRunnerFrames = new Set();
+  const baseOccupantDistances = new Set();
 
   while (Date.now() < deadline) {
     const probe = await evaluateInBrowser(`
@@ -2021,19 +2078,28 @@ async function waitForV2EquipmentDiagnostics() {
           stationaryRunnerFrames: actors
             .filter((actor) => actor.isTransient && actor.currentPose === "idle")
             .map((actor) => String(actor.atlasFrame ?? ""))
-            .filter(Boolean)
+            .filter(Boolean),
+          baseOccupantDistance: Number(screen?.dataset?.gamecast2BaseOccupantDistance ?? -1)
         };
       })()
     `);
     for (const frameName of probe?.catcherFrames ?? []) catcherFrames.add(frameName);
     for (const frameName of probe?.stationaryRunnerFrames ?? []) stationaryRunnerFrames.add(frameName);
-    if (catcherFrames.size > 0 && stationaryRunnerFrames.size > 0) break;
+    if (
+      (probe?.stationaryRunnerFrames?.length ?? 0) > 0 &&
+      Number.isFinite(probe?.baseOccupantDistance) &&
+      probe.baseOccupantDistance >= 0
+    ) {
+      baseOccupantDistances.add(probe.baseOccupantDistance);
+    }
+    if (catcherFrames.size > 0 && stationaryRunnerFrames.size > 0 && baseOccupantDistances.size > 0) break;
     await delay(100);
   }
 
   return {
     catcherFrames: [...catcherFrames].sort(),
-    stationaryRunnerFrames: [...stationaryRunnerFrames].sort()
+    stationaryRunnerFrames: [...stationaryRunnerFrames].sort(),
+    baseOccupantDistances: [...baseOccupantDistances].sort((left, right) => left - right)
   };
 }
 
@@ -2557,7 +2623,11 @@ async function evaluateInBrowser(expression) {
   });
 
   if (result.exceptionDetails) {
-    throw new Error(result.exceptionDetails.text ?? "브라우저 평가 중 예외 발생");
+    const description = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text;
+    const location = Number.isFinite(result.exceptionDetails.lineNumber)
+      ? ` at ${result.exceptionDetails.lineNumber}:${result.exceptionDetails.columnNumber ?? 0}`
+      : "";
+    throw new Error(`${description ?? "브라우저 평가 중 예외 발생"}${location}`);
   }
 
   return result.result?.value;
