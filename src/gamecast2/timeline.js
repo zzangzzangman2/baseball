@@ -60,11 +60,11 @@ const RESULT_BADGES = Object.freeze({
 });
 
 const BATTED_SPECS = Object.freeze({
-  single: Object.freeze({ durationMs: 3900, landingT: 0.46, fieldEndT: 0.54, throwEndT: 0.68, batterEndT: 0.72, runnerEndT: 0.82, throwTarget: "second" }),
+  single: Object.freeze({ durationMs: 3900, landingT: 0.46, fieldEndT: 0.54, throwEndT: 0.68, batterEndT: 0.52, runnerEndT: 0.82 }),
   double: Object.freeze({ durationMs: 4400, landingT: 0.48, fieldEndT: 0.56, throwEndT: 0.72, batterEndT: 0.83, runnerEndT: 0.87, throwTarget: "third", slide: true, camera: true }),
   triple: Object.freeze({ durationMs: 4800, landingT: 0.51, fieldEndT: 0.59, throwEndT: 0.76, batterEndT: 0.9, runnerEndT: 0.88, throwTarget: "home", slide: true, camera: true }),
   infieldOut: Object.freeze({ durationMs: 3500, landingT: 0.41, fieldEndT: 0.49, throwEndT: 0.64, batterEndT: 0.67, runnerEndT: 0.7, throwTarget: "first" }),
-  outfieldOut: Object.freeze({ durationMs: 3900, landingT: 0.51, fieldEndT: 0.59, throwEndT: 0.73, batterEndT: 0.67, runnerEndT: 0.8, throwTarget: "second" }),
+  outfieldOut: Object.freeze({ durationMs: 3900, landingT: 0.51, fieldEndT: 0.59, throwEndT: 0.73, batterEndT: 0.77, runnerEndT: 0.8, throwTarget: "first" }),
   error: Object.freeze({ durationMs: 3900, landingT: 0.45, fieldEndT: 0.57, batterEndT: 0.76, runnerEndT: 0.84, fieldAnim: "dive" })
 });
 
@@ -181,10 +181,8 @@ function buildFieldedBall(context, spec) {
     phase: context.template === "error" ? "misplay" : "field"
   }));
 
-  let throwTarget = spec.throwTarget;
-  if (context.template === "outfieldOut" && Number(context.event?.runs ?? 0) > 0) {
-    throwTarget = "home";
-  }
+  const throwTarget = fieldedBallThrowTarget(context, spec);
+  const caughtBattedOut = isCaughtBattedOut(context);
   let defensiveRotation = null;
   if (throwTarget && spec.throwEndT) {
     defensiveRotation = addDefensiveRotation(context, {
@@ -212,13 +210,15 @@ function buildFieldedBall(context, spec) {
     });
   }
 
-  addBatterAdvance(context, 0.27, spec.batterEndT, {
-    anim: ANIM.run,
-    targetBase: batterTargetBase(context),
-    out: context.template === "infieldOut" || context.template === "outfieldOut" || context.template === "doublePlay",
-    slide: Boolean(spec.slide),
-    phase: "batter-run"
-  });
+  if (!caughtBattedOut) {
+    addBatterAdvance(context, 0.27, spec.batterEndT, {
+      anim: ANIM.run,
+      targetBase: batterTargetBase(context),
+      out: context.template === "infieldOut" || context.template === "outfieldOut" || context.template === "doublePlay",
+      slide: Boolean(spec.slide),
+      phase: "batter-run"
+    });
+  }
   addExistingRunnerAdvances(context, 0.255, spec.runnerEndT);
 
   if (spec.camera) {
@@ -236,10 +236,65 @@ function buildFieldedBall(context, spec) {
     fielderArrivalT: roundTime(spec.landingT),
     throwTarget: throwTarget || null,
     receiver: defensiveRotation?.receiver ?? null,
-    receiverArrivalT: defensiveRotation?.arrivalT ?? null
+    receiverArrivalT: defensiveRotation?.arrivalT ?? null,
+    outRecordedAt: caughtBattedOut
+      ? "landing"
+      : ["infieldOut", "outfieldOut", "doublePlay"].includes(context.template)
+        ? context.template === "doublePlay" ? "second" : throwTarget
+        : null
   };
   context.durationMs = spec.durationMs;
-  context.suggestedResultT = Math.max(spec.runnerEndT, spec.throwEndT ?? spec.fieldEndT) + 0.05;
+  const actualRunnerEndT = Math.max(0, ...context.tracks.runners.map((cue) => Number(cue.endT ?? cue.t ?? 0)));
+  context.suggestedResultT = Math.max(
+    spec.fieldEndT,
+    caughtBattedOut ? 0 : spec.batterEndT,
+    throwTarget ? Number(spec.throwEndT ?? 0) : 0,
+    actualRunnerEndT
+  ) + 0.05;
+}
+
+function fieldedBallThrowTarget(context, spec) {
+  const leadTransition = leadRunnerTransition(
+    existingRunnerTransitions(context.event, context.outcome, context.template)
+  );
+
+  // A caught fly/line already records the batter out at the landing point. Only
+  // make a competitive throw when the event says an existing runner advanced.
+  if (isCaughtBattedOut(context)) {
+    return baseAnchorForIndex(leadTransition?.toBase);
+  }
+
+  // On a hit, throw behind the lead advancing runner. With the bases empty the
+  // batter is already safe before fielding completes, so there is no fake throw
+  // to second (or a visually tempting but impossible throw to first).
+  if (context.template === "single") {
+    return baseAnchorForIndex(leadTransition?.toBase);
+  }
+
+  // Every ordinary ground-ball out is the batter-runner force at first. The
+  // double-play builder is the only batted-out path that starts at second.
+  if (["infieldOut", "outfieldOut"].includes(context.template)) return "first";
+
+  return spec.throwTarget ?? null;
+}
+
+function isCaughtBattedOut(context) {
+  if (context.outcome !== "out" || context.template === "doublePlay") return false;
+  const type = normalizedToken(context.event?.battedBallType);
+  return type.includes("fly") || type.includes("line");
+}
+
+function leadRunnerTransition(transitions) {
+  return [...(transitions ?? [])]
+    .filter((transition) => Number(transition?.toBase) > Number(transition?.fromBase))
+    .sort((a, b) => Number(b.toBase) - Number(a.toBase) || Number(b.fromBase) - Number(a.fromBase))[0]
+    ?? null;
+}
+
+function baseAnchorForIndex(baseIndex) {
+  const index = Number(baseIndex);
+  if (!Number.isInteger(index) || index < 1 || index > 4) return null;
+  return BASE_ROUTE[index];
 }
 
 function buildDoublePlay(context) {
@@ -341,29 +396,44 @@ function buildSteal(context) {
     addRunnerMovement(context, transition, 0.115, 0.5, true);
   }
 
+  const targetTransition = leadRunnerTransition(transitions);
+  const throwTarget = baseAnchorForIndex(targetTransition?.toBase) ?? "second";
+
+  // A steal of home is a plate tag, not a zero-length home-to-home throw.
+  if (throwTarget === "home") {
+    context.tracks.catcher.push(cue(0.2, 0.51, {
+      anim: ANIM.catcher,
+      at: "C",
+      phase: success ? "late-tag-home" : "tag-home"
+    }));
+    context.durationMs = 3400;
+    context.suggestedResultT = 0.59;
+    return;
+  }
+
   context.tracks.catcher.push(cue(0.2, 0.34, {
     anim: ANIM.throw,
     at: "C",
-    toward: "second",
+    toward: throwTarget,
     phase: "steal-throw"
   }));
   context.tracks.ball.push(cue(0.28, 0.45, {
-    path: ["home", "second"],
+    path: ["home", throwTarget],
     arc: 0.1,
     phase: "steal-throw"
   }));
 
-  const receiver = firstAvailableAnchor(context.points, ["2B", "SS", "second"]);
+  const receiver = selectThrowReceiver(context.points, "C", throwTarget);
   context.tracks.fielders.push(cue(0.23, 0.43, {
     who: receiver,
     anim: ANIM.run,
-    path: receiver === "second" ? ["second"] : [receiver, "second"],
+    path: [receiver, throwTarget],
     phase: "cover-steal"
   }));
   context.tracks.fielders.push(cue(0.43, 0.51, {
     who: receiver,
     anim: ANIM.catch,
-    at: "second",
+    at: throwTarget,
     toward: "home",
     phase: success ? "late-tag" : "tag"
   }));
@@ -594,7 +664,7 @@ function existingRunnerTransitions(event, outcome, template) {
         toBase = 2;
         out = true;
       } else if (template === "steal") {
-        toBase = Math.min(3, runner.base + 1);
+        toBase = Math.min(4, runner.base + 1);
         out = !stealSucceeded(event);
       }
     } else {
@@ -605,7 +675,7 @@ function existingRunnerTransitions(event, outcome, template) {
         toBase = 2;
         out = true;
       } else if (template === "steal") {
-        toBase = Math.min(3, runner.base + 1);
+        toBase = Math.min(4, runner.base + 1);
         out = !stealSucceeded(event);
       } else {
         const openAfter = after
@@ -858,8 +928,17 @@ function selectTemplate(event, outcome) {
   if (outcome === "walk") return "walk";
   if (outcome === "hitByPitch") return "hitByPitch";
   if (["single", "double", "triple", "homeRun", "error", "steal"].includes(outcome)) return outcome;
-  if (event?.doublePlay) return "doublePlay";
+  if (isValidDoublePlayEvent(event)) return "doublePlay";
   return isOutfieldBall(event) ? "outfieldOut" : "infieldOut";
+}
+
+function isValidDoublePlayEvent(event) {
+  if (event?.doublePlay !== true) return false;
+  if (!normalizedToken(event?.battedBallType).includes("ground")) return false;
+  const outsBefore = Number(event?.outsBefore);
+  const outsAfter = Number(event?.outsAfter);
+  if (!Number.isFinite(outsBefore) || !Number.isFinite(outsAfter) || outsAfter - outsBefore < 2) return false;
+  return baseOccupants(event, "Before").some((runner) => runner.base === 1);
 }
 
 function stealSucceeded(event) {

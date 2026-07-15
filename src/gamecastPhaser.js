@@ -1307,7 +1307,6 @@ export function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(source, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const originalData = new Uint8ClampedArray(imageData.data);
     const primary = hexToRgb(normalized, [210, 59, 59]);
     const secondary = mixRgb(primary, [35, 32, 42], 0.28);
     for (let offset = 0; offset < imageData.data.length; offset += 4) {
@@ -1324,8 +1323,6 @@ export function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
         imageData.data[offset + 2] = secondary[2];
       }
     }
-    const frameMetrics = inferPlayerTextureFrameMetrics(scene, baseKey);
-    liftSpriteSkinPixels(imageData, originalData, canvas.width, canvas.height, frameMetrics.width, frameMetrics.height);
     ctx.putImageData(imageData, 0, 0);
 
     const texture = scene.textures.addCanvas(cacheKey, canvas);
@@ -1375,72 +1372,6 @@ function playerTextureFrameRect(scene, textureKey, name) {
     height: PLAYER_FALLBACK_ATLAS_SIZE,
     sourceIndex: 0
   };
-}
-
-function inferPlayerTextureFrameMetrics(scene, textureKey) {
-  for (const name of playerTextureFrameNames(scene, textureKey)) {
-    const rect = playerTextureFrameRect(scene, textureKey, name);
-    if (rect?.width && rect?.height) return rect;
-  }
-  return { width: PLAYER_FALLBACK_ATLAS_SIZE, height: PLAYER_FALLBACK_ATLAS_SIZE };
-}
-
-function liftSpriteSkinPixels(imageData, originalData, width, height, frameWidth = PLAYER_FALLBACK_ATLAS_SIZE, frameHeight = PLAYER_FALLBACK_ATLAS_SIZE) {
-  const skin = [242, 199, 154];
-  const skinShadow = [207, 154, 106];
-  const writes = [];
-  const isSkinPixel = (pixel) => isNearRgb(pixel, skin, 30) || isNearRgb(pixel, skinShadow, 28);
-  const canLift = (pixel) => (
-    isNearRgb(pixel, [178, 58, 72], 34)
-    || isNearRgb(pixel, [210, 59, 59], 34)
-    || isNearRgb(pixel, [65, 61, 72], 18)
-  );
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const offset = (y * width + x) * 4;
-      if (originalData[offset + 3] < 8) continue;
-      const sourcePixel = [originalData[offset], originalData[offset + 1], originalData[offset + 2]];
-      if (!isSkinPixel(sourcePixel)) continue;
-      const baseColor = isNearRgb(sourcePixel, skinShadow, 28) ? skinShadow : skin;
-      writes.push([offset, baseColor]);
-
-      const localX = x % Math.max(1, frameWidth);
-      const localY = y % Math.max(1, frameHeight);
-      const headArea = localX >= frameWidth * 0.17 && localX <= frameWidth * 0.8 && localY >= frameHeight * 0.18 && localY <= frameHeight * 0.54;
-      const neighbors = headArea
-        ? buildSpriteSkinLiftOffsets()
-        : [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1]];
-
-      for (const [dx, dy] of neighbors) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-        const targetOffset = (ny * width + nx) * 4;
-        if (originalData[targetOffset + 3] < 8) continue;
-        const targetPixel = [originalData[targetOffset], originalData[targetOffset + 1], originalData[targetOffset + 2]];
-        if (canLift(targetPixel)) writes.push([targetOffset, dy < 0 ? skinShadow : skin]);
-      }
-    }
-  }
-
-  for (const [offset, color] of writes) {
-    imageData.data[offset] = color[0];
-    imageData.data[offset + 1] = color[1];
-    imageData.data[offset + 2] = color[2];
-  }
-}
-
-function buildSpriteSkinLiftOffsets() {
-  const offsets = [];
-  for (let dy = -1; dy <= 2; dy += 1) {
-    for (let dx = -3; dx <= 3; dx += 1) {
-      if (dx === 0 && dy === 0) continue;
-      if (Math.abs(dx) + Math.abs(dy) > 4) continue;
-      offsets.push([dx, dy]);
-    }
-  }
-  return offsets;
 }
 
 function isAwayUniform(color) {

@@ -36,32 +36,53 @@ DEFAULT_SOURCE = Path("assets/gamecast/source/player-sheet-128-contract.png")
 SOURCE_REFERENCE = Path("assets/gamecast/source/player-sheet-64-imagegen.png")
 LEGACY_REFERENCE_SOURCE = Path("assets/gamecast/source/player-sheet-imagegen.png")
 
-OUTLINE = (32, 32, 42, 255)
-OUTLINE_SOFT = (65, 61, 72, 255)
-SKIN = (242, 199, 154, 255)
-SKIN_SHADOW = (207, 154, 106, 255)
-SKIN_HIGHLIGHT = (255, 224, 181, 255)
+OUTLINE = (28, 35, 54, 255)
+OUTLINE_SOFT = (48, 56, 78, 255)
+SKIN = (248, 166, 131, 255)
+SKIN_SHADOW = (184, 78, 89, 255)
+SKIN_HIGHLIGHT = (255, 215, 167, 255)
 CAP = (210, 59, 59, 255)
 CAP_SHADOW = (178, 58, 72, 255)
 CAP_HIGHLIGHT = (237, 106, 95, 255)
 SOCK = CAP_SHADOW
-JERSEY_HOME = (247, 247, 242, 255)
-JERSEY_HOME_SHADOW = (220, 218, 210, 255)
-JERSEY_HOME_HIGHLIGHT = (255, 254, 251, 255)
-JERSEY_AWAY = (141, 138, 130, 255)
-JERSEY_AWAY_SHADOW = (99, 97, 91, 255)
-JERSEY_AWAY_HIGHLIGHT = (185, 182, 173, 255)
+JERSEY_HOME = (242, 246, 249, 255)
+JERSEY_HOME_SHADOW = (202, 213, 225, 255)
+JERSEY_HOME_HIGHLIGHT = (255, 255, 252, 255)
+JERSEY_AWAY = (91, 109, 132, 255)
+JERSEY_AWAY_SHADOW = (54, 65, 84, 255)
+JERSEY_AWAY_HIGHLIGHT = (154, 176, 200, 255)
 PANTS = (58, 53, 80, 255)
 PANTS_SHADOW = (36, 34, 53, 255)
 PANTS_HIGHLIGHT = (90, 83, 116, 255)
-BAT = (138, 95, 57, 255)
-BAT_SHADOW = (95, 63, 39, 255)
-BAT_HIGHLIGHT = (187, 135, 80, 255)
-GLOVE = (112, 75, 45, 255)
-GLOVE_HIGHLIGHT = (165, 114, 67, 255)
+BAT = (103, 39, 75, 255)
+BAT_SHADOW = (45, 26, 53, 255)
+BAT_HIGHLIGHT = (194, 85, 108, 255)
+GLOVE = (79, 32, 65, 255)
+GLOVE_HIGHLIGHT = (165, 70, 105, 255)
 HIGHLIGHT = (255, 240, 168, 255)
 RIMLIGHT_NIGHT = (157, 215, 255, 255)
 WHITE = JERSEY_HOME_HIGHLIGHT
+
+# Dominant dirt, turf, warning-track, and chalk colors sampled around the
+# playable anchors in the three checked-in Gamecast fields. Skin, equipment,
+# and away-uniform tones must not sit inside this background cluster again.
+FIELD_SURFACE_REFERENCE_RGB = (
+    (168, 135, 84),
+    (144, 96, 62),
+    (62, 120, 40),
+    (165, 167, 117),
+    (215, 144, 73),
+    (204, 134, 65),
+    (124, 163, 46),
+    (89, 137, 34),
+    (209, 225, 230),
+    (199, 126, 66),
+    (76, 132, 31),
+    (149, 105, 67),
+    (167, 182, 117),
+    (41, 94, 23),
+)
+MIN_FIELD_SURFACE_RGB_DISTANCE = 44.0
 
 SEL_OUTLINE_COLORS = frozenset({OUTLINE[:3], OUTLINE_SOFT[:3]})
 RESERVED_RGB = {
@@ -991,6 +1012,36 @@ def rgb_distance(first: Tuple[int, int, int], second: Tuple[int, int, int]) -> f
     return sum((first[index] - second[index]) ** 2 for index in range(3)) ** 0.5
 
 
+def field_surface_separation(uniform: str) -> Tuple[float, str, Tuple[int, int, int]]:
+    tones = {
+        "selout": OUTLINE_SOFT[:3],
+        "skin-shadow": SKIN_SHADOW[:3],
+        "skin": SKIN[:3],
+        "skin-highlight": SKIN_HIGHLIGHT[:3],
+        "equipment-shadow": BAT_SHADOW[:3],
+        "equipment": BAT[:3],
+        "equipment-highlight": BAT_HIGHLIGHT[:3],
+        "glove": GLOVE[:3],
+        "glove-highlight": GLOVE_HIGHLIGHT[:3],
+    }
+    if uniform == "away":
+        tones.update({
+            "away-jersey-shadow": JERSEY_AWAY_SHADOW[:3],
+            "away-jersey": JERSEY_AWAY[:3],
+            "away-jersey-highlight": JERSEY_AWAY_HIGHLIGHT[:3],
+        })
+
+    return min(
+        (
+            rgb_distance(color, surface),
+            name,
+            surface,
+        )
+        for name, color in tones.items()
+        for surface in FIELD_SURFACE_REFERENCE_RGB
+    )
+
+
 def art_palette(uniform: str) -> set[Tuple[int, int, int]]:
     jersey_shadow, jersey_base, jersey_highlight = jersey_tones(uniform)
     colors = {
@@ -1143,6 +1194,14 @@ def validate_art_rules(
     else:
         issues.append("no opaque boundary pixels found")
 
+    separation, separation_tone, separation_surface = field_surface_separation(uniform)
+    if separation < MIN_FIELD_SURFACE_RGB_DISTANCE:
+        issues.append(
+            f"{separation_tone} is only {separation:.1f} RGB units from field surface "
+            f"#{separation_surface[0]:02x}{separation_surface[1]:02x}{separation_surface[2]:02x}; "
+            f"minimum is {MIN_FIELD_SURFACE_RGB_DISTANCE:.0f}"
+        )
+
     issues.extend(validate_night_rimlight(frames, require_night_rimlight))
 
     if issues:
@@ -1153,7 +1212,8 @@ def validate_art_rules(
         family_text = ", ".join(sorted(complete_families))
         print(
             f"art rule validation ({uniform}): ok "
-            f"({len(used_rgb)} colors; 3-tone: {family_text}; selout: {coverage:.1%})"
+            f"({len(used_rgb)} colors; 3-tone: {family_text}; selout: {coverage:.1%}; "
+            f"field separation: {separation:.1f} RGB)"
         )
 
     if strict and issues:

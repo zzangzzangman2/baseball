@@ -90,10 +90,14 @@ export function verifyGamecastTimeline() {
     "게임캐스트 타임라인 템플릿 커버리지가 다릅니다."
   );
 
-  for (const item of compiled) verifyTimelineContract(item);
+  for (const item of compiled) {
+    verifyTimelineContract(item);
+    verifyThrowTargetSemantics(item.name, item.event, item.timeline);
+  }
   verifyExistingRunnerPaths(compiled);
   verifyDefensiveRotation(compiled);
   verifyFielderPositionMatrix();
+  verifyThrowTargetRegressionCases();
   verifyPurity(cases[3].event);
 
   return `${compiled.length}개 플레이, ${GAMECAST2_TIMELINE_TEMPLATES.length * DEFENSE_POSITIONS.length}개 수비 조합, atlas anim ${GAMECAST2_ATLAS_ANIMATION_KEYS.length}키`;
@@ -288,9 +292,11 @@ function verifyFielderPositionMatrix() {
         { ...BASE_EVENT, ...overrides, sequence: matrixCount, fieldingPosition },
         { anchors: ANCHORS }
       );
+      const event = { ...BASE_EVENT, ...overrides, sequence: matrixCount, fieldingPosition };
       const label = `${playName}-${fieldingPosition}`;
       verifyTimelineContract({ name: label, timeline });
       verifyThrowChains(label, timeline);
+      verifyThrowTargetSemantics(label, event, timeline);
       verifyMovementCoverage(label, playName, timeline);
       verifyDefenderEndpoints(label, timeline, ANCHORS);
       if (playName === "double-play" && fieldingPosition === "1B") {
@@ -311,12 +317,11 @@ function verifyFielderPositionMatrix() {
     for (const [playName, overrides] of plays) {
       for (const fieldingPosition of DEFENSE_POSITIONS) {
         const label = `${path.basename(anchorPath)}-${playName}-${fieldingPosition}`;
-        const timeline = compilePlayTimeline(
-          { ...BASE_EVENT, ...overrides, fieldingPosition },
-          { anchors }
-        );
+        const event = { ...BASE_EVENT, ...overrides, fieldingPosition };
+        const timeline = compilePlayTimeline(event, { anchors });
         verifyFielderCueIntervals(label, timeline);
         verifyThrowChains(label, timeline);
+        verifyThrowTargetSemantics(label, event, timeline);
         verifyDefenderEndpoints(label, timeline, anchors);
       }
     }
@@ -382,6 +387,269 @@ function verifyThrowChains(name, timeline) {
     assert(receiver, `${name}: ${target} receiver does not cover the ${ball.phase} arrival.`);
     assert(receiver.toward, `${name}: ${target} receiver has no incoming-throw facing point.`);
     verifyCueFacing(name, receiver, timeline.points, "receiver");
+  }
+}
+
+function verifyThrowTargetSemantics(name, event, timeline) {
+  const fieldingThrow = timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw");
+  const fieldingTarget = fieldingThrow?.path?.at(-1) ?? null;
+  const runnerTarget = leadRunnerDestination(timeline);
+  const battedType = String(event?.battedBallType ?? "").toLowerCase();
+  const caughtBattedOut = timeline.outcome === "out"
+    && timeline.template !== "doublePlay"
+    && (battedType.includes("fly") || battedType.includes("line"));
+
+  if (timeline.template === "single") {
+    assert.equal(
+      fieldingTarget,
+      runnerTarget,
+      `${name}: single throw must follow the lead existing runner; empty bases require no competitive throw.`
+    );
+    const batterRun = timeline.tracks.batter.find((cue) => cue.phase === "batter-run");
+    const field = timeline.tracks.fielders.find((cue) => cue.phase === "field");
+    assert(batterRun && field && batterRun.endT <= field.endT, `${name}: single batter is not visibly safe before fielding completes.`);
+  }
+
+  if (caughtBattedOut) {
+    assert.equal(
+      fieldingTarget,
+      runnerTarget,
+      `${name}: caught fly/line may throw only behind an actually advancing runner.`
+    );
+    assert(
+      !timeline.tracks.batter.some((cue) => cue.phase === "batter-run"),
+      `${name}: batter runs to first after already being retired on a catch.`
+    );
+    assert.equal(timeline.meta.fielding?.outRecordedAt, "landing", `${name}: caught-ball out is not recorded at the catch point.`);
+  } else if (timeline.outcome === "out") {
+    if (timeline.template === "doublePlay") {
+      assert.equal(fieldingTarget, "second", `${name}: valid double play must take the lead force at second first.`);
+    } else {
+      assert.equal(fieldingTarget, "first", `${name}: ordinary ground-ball out must prioritize the batter-runner at first.`);
+    }
+
+    const batterRun = timeline.tracks.batter.find((cue) => cue.phase === "batter-run");
+    const firstBaseOutThrow = timeline.tracks.ball.find((cue) => (
+      ["fielding-throw", "relay-throw"].includes(cue.phase)
+      && cue.path?.at(-1) === "first"
+    ));
+    assert(
+      batterRun && firstBaseOutThrow && firstBaseOutThrow.endT <= batterRun.endT,
+      `${name}: first-base force arrives after the retired batter-runner.`
+    );
+  }
+
+  if (fieldingTarget === "second") {
+    assert(
+      timeline.template === "doublePlay" || runnerTarget === "second",
+      `${name}: unjustified throw to second without a double play or an actual runner destination.`
+    );
+  }
+
+  const stealThrow = timeline.tracks.ball.find((cue) => cue.phase === "steal-throw");
+  if (timeline.template === "steal") {
+    if (runnerTarget === "home") {
+      assert.equal(stealThrow, undefined, `${name}: steal of home creates a zero-length home-to-home throw.`);
+      assert(
+        timeline.tracks.catcher.some((cue) => String(cue.phase ?? "").endsWith("tag-home")),
+        `${name}: steal of home has no catcher plate-tag cue.`
+      );
+    } else {
+      assert.equal(
+        stealThrow?.path?.at(-1),
+        runnerTarget,
+        `${name}: steal throw does not follow the runner's actual destination.`
+      );
+    }
+  }
+}
+
+function leadRunnerDestination(timeline) {
+  const rank = { first: 1, second: 2, third: 3, home: 4 };
+  return timeline.tracks.runners
+    .filter((cue) => cue.phase === "runner-advance")
+    .map((cue) => cue.path?.at(-1))
+    .filter(Boolean)
+    .sort((a, b) => Number(rank[b] ?? 0) - Number(rank[a] ?? 0))[0]
+    ?? null;
+}
+
+function verifyThrowTargetRegressionCases() {
+  const compile = (overrides) => {
+    const event = { ...BASE_EVENT, ...overrides };
+    const timeline = compilePlayTimeline(event, { anchors: ANCHORS });
+    return { event, timeline };
+  };
+
+  const groundOutByRightFielder = compile({
+    outcome: "out",
+    battedBallType: "groundBall",
+    fieldingPosition: "RF",
+    outsAfter: 1
+  });
+  assert.equal(
+    groundOutByRightFielder.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw")?.path?.at(-1),
+    "first",
+    "Regression: RF ground-ball out was thrown to second instead of first."
+  );
+
+  const caughtFly = compile({
+    outcome: "out",
+    battedBallType: "flyBall",
+    fieldingPosition: "CF",
+    outsAfter: 1
+  });
+  assert.equal(
+    caughtFly.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw"),
+    undefined,
+    "Regression: routine caught fly created an unnecessary competitive throw."
+  );
+  assert(!caughtFly.timeline.tracks.batter.some((cue) => cue.phase === "batter-run"), "Regression: caught-fly batter still ran to first.");
+
+  const emptyBasesSingle = compile({
+    outcome: "single",
+    battedBallType: "groundBall",
+    fieldingPosition: "SS",
+    basesAfter: [true, false, false],
+    baseRunnerIdsAfter: ["batter", "", ""]
+  });
+  assert.equal(
+    emptyBasesSingle.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw"),
+    undefined,
+    "Regression: empty-bases single still throws to second."
+  );
+  verifyThrowTargetSemantics("regression-empty-bases-single", emptyBasesSingle.event, emptyBasesSingle.timeline);
+
+  const firstToThirdSingle = compile({
+    outcome: "single",
+    battedBallType: "lineDrive",
+    fieldingPosition: "RF",
+    basesBefore: [true, false, false],
+    baseRunnerIdsBefore: ["r1", "", ""],
+    basesAfter: [true, false, true],
+    baseRunnerIdsAfter: ["batter", "", "r1"]
+  });
+  assert.equal(
+    firstToThirdSingle.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw")?.path?.at(-1),
+    "third",
+    "Regression: single ignored a first-to-third runner and threw to second."
+  );
+
+  const forcedFirstToSecondSingle = compile({
+    outcome: "single",
+    battedBallType: "groundBall",
+    fieldingPosition: "2B",
+    basesBefore: [true, false, false],
+    baseRunnerIdsBefore: ["r1", "", ""],
+    basesAfter: [true, true, false],
+    baseRunnerIdsAfter: ["batter", "r1", ""]
+  });
+  assert.equal(
+    forcedFirstToSecondSingle.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw")?.path?.at(-1),
+    "second",
+    "Regression: an actual first-to-second forced advance did not permit a second-base throw."
+  );
+  verifyThrowTargetSemantics(
+    "regression-forced-first-to-second-single",
+    forcedFirstToSecondSingle.event,
+    forcedFirstToSecondSingle.timeline
+  );
+
+  for (const [label, overrides] of [
+    ["no-runner", { basesBefore: [false, false, false], baseRunnerIdsBefore: ["", "", ""] }],
+    ["one-out-delta", { basesBefore: [true, false, false], baseRunnerIdsBefore: ["r1", "", ""] }]
+  ]) {
+    const invalidDoublePlay = compile({
+      outcome: "out",
+      battedBallType: "groundBall",
+      fieldingPosition: "SS",
+      doublePlay: true,
+      outsBefore: 0,
+      outsAfter: 1,
+      ...overrides
+    });
+    assert.notEqual(invalidDoublePlay.timeline.template, "doublePlay", `Regression: invalid DP (${label}) was not downgraded.`);
+    assert.equal(
+      invalidDoublePlay.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw")?.path?.at(-1),
+      "first",
+      `Regression: invalid DP (${label}) did not become a first-base out.`
+    );
+  }
+
+  const airBallDoublePlayFlag = compile({
+    outcome: "out",
+    battedBallType: "flyBall",
+    fieldingPosition: "CF",
+    doublePlay: true,
+    outsBefore: 0,
+    outsAfter: 2,
+    basesBefore: [true, false, false],
+    baseRunnerIdsBefore: ["r1", "", ""]
+  });
+  assert.equal(airBallDoublePlayFlag.timeline.template, "outfieldOut", "Regression: fly-ball DP flag was not downgraded to a caught out.");
+  assert.equal(
+    airBallDoublePlayFlag.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw"),
+    undefined,
+    "Regression: invalid fly-ball DP still created a second-base throw."
+  );
+
+  const validDoublePlay = compile({
+    outcome: "out",
+    battedBallType: "groundBall",
+    fieldingPosition: "SS",
+    doublePlay: true,
+    outsBefore: 0,
+    outsAfter: 2,
+    basesBefore: [true, false, false],
+    baseRunnerIdsBefore: ["r1", "", ""]
+  });
+  assert.deepEqual(
+    validDoublePlay.timeline.tracks.ball
+      .filter((cue) => ["fielding-throw", "relay-throw"].includes(cue.phase))
+      .map((cue) => cue.path?.at(-1)),
+    ["second", "first"],
+    "Regression: valid double play no longer goes second-to-first."
+  );
+
+  for (const [label, overrides] of [
+    ["success", { outcome: "stolenBase", success: true, basesAfter: [false, false, true], baseRunnerIdsAfter: ["", "", "r2"] }],
+    ["caught", { outcome: "caughtStealing", success: false, caught: true, out: true, outsAfter: 1, basesAfter: [false, false, false], baseRunnerIdsAfter: ["", "", ""] }]
+  ]) {
+    const stealThird = compile({
+      type: "stolenBase",
+      runnerId: "r2",
+      basesBefore: [false, true, false],
+      baseRunnerIdsBefore: ["", "r2", ""],
+      ...overrides
+    });
+    assert.equal(
+      stealThird.timeline.tracks.ball.find((cue) => cue.phase === "steal-throw")?.path?.at(-1),
+      "third",
+      `Regression: steal of third (${label}) was thrown to second.`
+    );
+    verifyThrowChains(`regression-steal-third-${label}`, stealThird.timeline);
+    verifyThrowTargetSemantics(`regression-steal-third-${label}`, stealThird.event, stealThird.timeline);
+  }
+
+  for (const [label, overrides] of [
+    ["success", { outcome: "stolenBase", success: true, runs: 1, scoredRunners: [{ id: "r3" }] }],
+    ["caught", { outcome: "caughtStealing", success: false, caught: true, out: true, outsAfter: 1 }]
+  ]) {
+    const stealHome = compile({
+      type: "stolenBase",
+      runnerId: "r3",
+      basesBefore: [false, false, true],
+      baseRunnerIdsBefore: ["", "", "r3"],
+      basesAfter: [false, false, false],
+      baseRunnerIdsAfter: ["", "", ""],
+      ...overrides
+    });
+    assert.equal(
+      stealHome.timeline.tracks.ball.find((cue) => cue.phase === "steal-throw"),
+      undefined,
+      `Regression: steal of home (${label}) created a home-to-home throw.`
+    );
+    verifyThrowTargetSemantics(`regression-steal-home-${label}`, stealHome.event, stealHome.timeline);
   }
 }
 

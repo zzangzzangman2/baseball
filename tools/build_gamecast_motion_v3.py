@@ -45,6 +45,7 @@ from build_gamecast_sprites import (
     SOURCE_DOWNSCALE,
     V2_GRID,
     apply_night_rimlight,
+    apply_selout,
     atlas_frame,
     build_legacy_normalized_frames,
     count_colors,
@@ -403,7 +404,10 @@ def make_native_display_frame(frame: Image.Image) -> Image.Image:
     paste_x = CENTER_X - round(CENTER_X * NATIVE_DISPLAY_SIZE / FRAME)
     paste_y = BASELINE_Y - round(BASELINE_Y * NATIVE_DISPLAY_SIZE / FRAME)
     output.alpha_composite(resized, (paste_x, paste_y))
-    return output
+    # Nearest 128->96 pre-rasterization can skip a one-pixel source boundary.
+    # Re-close the silhouette on the final display grid so skin/equipment never
+    # leaks directly into dirt or turf at runtime.
+    return apply_selout(output)
 
 
 def validate_catcher_back_frames(frames: Mapping[str, Image.Image]) -> None:

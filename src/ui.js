@@ -5858,10 +5858,10 @@ function normalizeGamecastEvent(event, state, gamecastContext = null) {
   const baseRunnerProfilesAfter = resolveGamecastBaseRunnerProfiles(event?.baseRunnerIdsAfter, gamecastContext, state, offenseTeam);
   const teamColor = normalizeHexColor(getTeamColor(offenseTeam), side === "home" ? "#c64b74" : "#315288");
   const defenseColor = normalizeHexColor(getTeamColor(defenseTeam), side === "home" ? "#315288" : "#c64b74");
-  const teamJerseyColor = side === "home" ? "#fbfbf7" : "#8d8a82";
-  const teamJerseyShadow = side === "home" ? "#dcdad2" : "#63615b";
-  const defenseJerseyColor = side === "home" ? "#8d8a82" : "#fbfbf7";
-  const defenseJerseyShadow = side === "home" ? "#63615b" : "#dcdad2";
+  const teamJerseyColor = side === "home" ? "#f2f6f9" : "#5b6d84";
+  const teamJerseyShadow = side === "home" ? "#cad5e1" : "#364154";
+  const defenseJerseyColor = side === "home" ? "#5b6d84" : "#f2f6f9";
+  const defenseJerseyShadow = side === "home" ? "#364154" : "#cad5e1";
 
   return {
     id: `${event?.gameId ?? "game"}-${side}-${inning}-${sequence}-${event?.outcome ?? "idle"}`,
@@ -6387,7 +6387,7 @@ function createGamecastPalette(ballparkProfile = null) {
   const grassHi = mixHexColors(grassHighRaw, grassLow, 0.36);
   const grassLo = mixHexColors(grassLow, grassHighRaw, 0.16);
   return {
-    outline: "#23202a",
+    outline: "#1c2336",
     grassLo,
     grassHi,
     grassEdge: mixHexColors(grassLo, "#23202a", 0.2),
@@ -6399,9 +6399,9 @@ function createGamecastPalette(ballparkProfile = null) {
     dirtL: "#ffe39a",
     base: "#fffefb",
     baseSh: "#c9bcab",
-    uniform: "#fffefb",
-    uniformSh: "#e8ded0",
-    uniformAway: "#d9d3ca",
+    uniform: "#f2f6f9",
+    uniformSh: "#cad5e1",
+    uniformAway: "#5b6d84",
     uniformInk: "#575160",
     uniformHi: "#ffffff",
     runner: "#c64b74",
@@ -6409,8 +6409,8 @@ function createGamecastPalette(ballparkProfile = null) {
     defender: "#315288",
     defenderL: "#b9d9f7",
     defenderSh: "#223f68",
-    bat: "#8a5f39",
-    glove: "#7a4c2a",
+    bat: "#67274b",
+    glove: "#4f2041",
     ballSeam: "#d92f42",
     ballGlow: "#fff3bf",
     ballWake: "#fff8d7",
@@ -6426,7 +6426,7 @@ function createGamecastPalette(ballparkProfile = null) {
     light: "#fff6c7",
     walk: "#b9d9f7",
     legs: "#3a3550",
-    skin: "#f2c79a",
+    skin: "#f8a683",
     wall: normalizeHexColor(park.wallColor, "#24483a"),
     wallCap: normalizeHexColor(park.wallCap, "#1b3a2e"),
     track: "#caa25f",

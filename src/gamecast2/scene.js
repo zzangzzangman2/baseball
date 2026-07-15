@@ -1961,9 +1961,9 @@ function ensurePlayerTextures(scene, runtime) {
     jerseyShadow: palette.defenseJerseyShadow ?? palette.uniformSh ?? "#d8d0c5",
     pants: palette.uniformAway ?? "#d9d3ca",
     trim: palette.defenseColor ?? palette.defenderSh ?? "#223f68",
-    skin: palette.skin ?? "#f2c79a",
+    skin: palette.skin ?? "#f8a683",
     shoes: palette.legs ?? "#2f3040",
-    glove: palette.glove ?? "#7a4c2a",
+    glove: palette.glove ?? "#4f2041",
     shadow: palette.shadow ?? "#223f34"
   };
   const catcher = {
@@ -1972,9 +1972,9 @@ function ensurePlayerTextures(scene, runtime) {
     jerseyShadow: palette.defenseColor ?? palette.defenderSh ?? "#223f68",
     pants: palette.uniformAway ?? "#d9d3ca",
     trim: palette.defenseAccentColor ?? palette.defender ?? "#315288",
-    skin: palette.skin ?? "#f2c79a",
+    skin: palette.skin ?? "#f8a683",
     shoes: palette.legs ?? "#2f3040",
-    glove: palette.glove ?? "#7a4c2a",
+    glove: palette.glove ?? "#4f2041",
     shadow: palette.shadow ?? "#223f34"
   };
   const batter = {
@@ -1983,9 +1983,9 @@ function ensurePlayerTextures(scene, runtime) {
     jerseyShadow: palette.offenseJerseyShadow ?? palette.uniformSh ?? "#e8ded0",
     pants: palette.uniform ?? "#fffefb",
     trim: palette.offenseColor ?? palette.runner ?? "#c64b74",
-    skin: palette.skin ?? "#f2c79a",
+    skin: palette.skin ?? "#f8a683",
     shoes: palette.legs ?? "#2f3040",
-    glove: palette.bat ?? "#8a5f39",
+    glove: palette.bat ?? "#67274b",
     shadow: palette.shadow ?? "#223f34"
   };
 
