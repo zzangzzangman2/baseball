@@ -66,6 +66,8 @@ export function verifyGamecastTimeline() {
 
   for (const item of compiled) verifyTimelineContract(item);
   verifyExistingRunnerPaths(compiled);
+  verifyDefensiveRotation(compiled);
+  verifyFielderPositionMatrix();
   verifyPurity(cases[3].event);
 
   return `${compiled.length}개 플레이, ${GAMECAST2_TIMELINE_TEMPLATES.length}개 템플릿, atlas anim ${GAMECAST2_ATLAS_ANIMATION_KEYS.length}키`;
@@ -73,6 +75,7 @@ export function verifyGamecastTimeline() {
 
 function verifyAtlasContract() {
   const atlas = JSON.parse(fs.readFileSync(ATLAS_PATH, "utf8"));
+  assert.equal(atlas.meta?.registrationScaleMode, "sheet-common", "선수 포즈가 시트 공통 배율로 등록되지 않았습니다.");
   const available = new Set(Object.keys(atlas.animations ?? {}));
   const missing = GAMECAST2_ATLAS_ANIMATION_KEYS.filter((key) => !available.has(key));
   assert.deepEqual(missing, [], `타임라인 atlas 계약 키 누락: ${missing.join(", ")}`);
@@ -114,6 +117,7 @@ function verifyTimelineContract({ name, timeline }) {
   assert.equal(timeline.tracks.result[0]?.t, timeline.resultAt, `${name}: result commit 시점 불일치`);
 
   if (timeline.meta.fielding) verifyFieldingArrival(name, timeline);
+  verifyFielderCueIntervals(name, timeline);
 
   const batterRun = timeline.tracks.batter.find((cue) => cue.path?.[0] === "home" && cue.path?.includes("first"));
   if (batterRun) {
@@ -178,6 +182,94 @@ function verifyExistingRunnerPaths(compiled) {
   const forcedRunner = doublePlay?.tracks.runners.find((cue) => cue.phase === "runner-advance");
   assert.equal(forcedRunner?.out, true, "병살 선행주자가 out으로 표시되지 않았습니다.");
   assert.equal(doublePlay?.tracks.batter.find((cue) => cue.phase === "batter-run")?.out, true, "병살 타자가 out으로 표시되지 않았습니다.");
+}
+
+function verifyFielderCueIntervals(name, timeline) {
+  const grouped = new Map();
+  for (const cue of timeline.tracks.fielders) {
+    const entries = grouped.get(cue.who) ?? [];
+    entries.push(cue);
+    grouped.set(cue.who, entries);
+  }
+  for (const [who, entries] of grouped) {
+    const ordered = [...entries].sort((a, b) => a.t - b.t || Number(a.endT ?? a.t) - Number(b.endT ?? b.t));
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previousEnd = Number(ordered[index - 1].endT ?? ordered[index - 1].t);
+      assert(
+        ordered[index].t >= previousEnd - 0.000001,
+        `${name}: ${who} 수비 cue가 겹칩니다 (${ordered[index - 1].phase} -> ${ordered[index].phase}).`
+      );
+    }
+  }
+}
+
+function verifyDefensiveRotation(compiled) {
+  const fielded = compiled.filter(({ timeline }) => timeline.meta.fielding);
+  for (const { name, timeline } of fielded) {
+    const throwBall = timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw");
+    if (!throwBall) continue;
+    const target = throwBall.path?.at(-1);
+    const receive = timeline.tracks.fielders.find((cue) => cue.phase === `receive-${target}`);
+    assert(receive, `${name}: ${target} 송구를 받는 수비수 포구 cue가 없습니다.`);
+    assert(receive.t <= throwBall.endT && receive.endT >= throwBall.endT, `${name}: 포구 cue가 공 도착 시점을 감싸지 않습니다.`);
+    assert.equal(receive.at, target, `${name}: 수신 수비수와 송구 도착 베이스가 다릅니다.`);
+  }
+
+  const infieldOut = compiled.find(({ name }) => name === "infield-out")?.timeline;
+  const firstCover = infieldOut?.tracks.fielders.find((cue) => cue.who === "1B" && cue.phase === "cover-first");
+  assert.deepEqual(firstCover?.path, ["1B", "first"], "내야 땅볼에서 1루수가 1루 포구 위치로 움직이지 않습니다.");
+  const supportKeys = new Set(
+    infieldOut?.tracks.fielders
+      .filter((cue) => cue.phase === "defensive-shift")
+      .map((cue) => cue.who)
+  );
+  assert(supportKeys.size >= 5, `내야 땅볼 커버 수비가 부족합니다: ${[...supportKeys].join(", ")}`);
+
+  const doublePlay = compiled.find(({ name }) => name === "double-play")?.timeline;
+  assert(
+    doublePlay?.tracks.fielders.some((cue) => cue.phase === "relay-receive-first" && cue.at === "first"),
+    "병살 릴레이에서 1루 포구 수비수가 움직이지 않습니다."
+  );
+  const relayBall = doublePlay?.tracks.ball.find((cue) => cue.phase === "relay-throw");
+  const relayReceive = doublePlay?.tracks.fielders.find((cue) => cue.phase === "relay-receive-first");
+  assert(
+    relayBall && relayReceive && relayReceive.t <= relayBall.endT && relayReceive.endT >= relayBall.endT,
+    "병살 1루 포구 cue가 릴레이 공 도착 시점을 감싸지 않습니다."
+  );
+}
+
+function verifyFielderPositionMatrix() {
+  const positions = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
+  const plays = [
+    ["single", { outcome: "single", battedBallType: "lineDrive" }],
+    ["double", { outcome: "double", battedBallType: "lineDrive" }],
+    ["triple", { outcome: "triple", battedBallType: "flyBall" }],
+    ["infield-out", { outcome: "out", battedBallType: "groundBall", outsAfter: 1 }],
+    ["outfield-out", { outcome: "out", battedBallType: "flyBall", outsAfter: 1 }],
+    ["double-play", {
+      outcome: "out",
+      battedBallType: "groundBall",
+      doublePlay: true,
+      outsAfter: 2,
+      basesBefore: [true, false, false],
+      baseRunnerIdsBefore: ["r1", "", ""]
+    }],
+    ["error", { outcome: "error", battedBallType: "groundBall" }]
+  ];
+
+  for (const [playName, overrides] of plays) {
+    for (const fieldingPosition of positions) {
+      const timeline = compilePlayTimeline(
+        { ...BASE_EVENT, ...overrides, fieldingPosition },
+        { anchors: ANCHORS }
+      );
+      verifyFielderCueIntervals(`${playName}-${fieldingPosition}`, timeline);
+      if (playName === "double-play" && fieldingPosition === "1B") {
+        const firstReceiver = timeline.tracks.fielders.find((cue) => cue.phase === "relay-receive-first");
+        assert.equal(firstReceiver?.who, "P", "1루수 병살 타구에서 투수가 최종 1루 커버를 맡지 않습니다.");
+      }
+    }
+  }
 }
 
 function verifyPurity(event) {

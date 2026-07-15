@@ -41,6 +41,7 @@ const ANIM = GAMECAST2_ATLAS_ANIMATION_CONTRACT;
 const BASE_ROUTE = Object.freeze(["home", "first", "second", "third", "home"]);
 const INFIELDERS = Object.freeze(["SS", "2B", "3B", "1B", "P", "C"]);
 const OUTFIELDERS = Object.freeze(["CF", "LF", "RF"]);
+const DEFENDERS = Object.freeze(["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]);
 const RESULT_BADGES = Object.freeze({
   strikeout: "삼진",
   walk: "볼넷",
@@ -184,13 +185,30 @@ function buildFieldedBall(context, spec) {
   if (context.template === "outfieldOut" && Number(context.event?.runs ?? 0) > 0) {
     throwTarget = "home";
   }
+  let defensiveRotation = null;
   if (throwTarget && spec.throwEndT) {
+    defensiveRotation = addDefensiveRotation(context, {
+      primary: fielderKey,
+      landing: "landing",
+      landingT: spec.landingT,
+      fieldEndT: spec.fieldEndT,
+      throwTarget,
+      throwEndT: spec.throwEndT
+    });
     addFieldingThrow(context, {
       who: fielderKey,
       from: "landing",
       to: throwTarget,
       startT: spec.fieldEndT,
       endT: spec.throwEndT
+    });
+  } else {
+    addDefensiveSupport(context, {
+      primary: fielderKey,
+      receiver: "",
+      landing: "landing",
+      landingT: spec.landingT,
+      fieldEndT: spec.fieldEndT
     });
   }
 
@@ -215,7 +233,10 @@ function buildFieldedBall(context, spec) {
     fielder: fielderKey,
     landingPoint: "landing",
     ballArrivalT: roundTime(spec.landingT),
-    fielderArrivalT: roundTime(spec.landingT)
+    fielderArrivalT: roundTime(spec.landingT),
+    throwTarget: throwTarget || null,
+    receiver: defensiveRotation?.receiver ?? null,
+    receiverArrivalT: defensiveRotation?.arrivalT ?? null
   };
   context.durationMs = spec.durationMs;
   context.suggestedResultT = Math.max(spec.runnerEndT, spec.throwEndT ?? spec.fieldEndT) + 0.05;
@@ -234,20 +255,8 @@ function buildDoublePlay(context) {
   buildFieldedBall(context, spec);
 
   const primary = context.fielding?.fielder ?? selectFielderKey(context.event, context.points);
-  const relay = selectRelayFielder(context.points, primary);
-  context.tracks.fielders.push(cue(0.31, 0.56, {
-    who: relay,
-    anim: ANIM.run,
-    path: [relay, "second"],
-    phase: "cover-second"
-  }));
-  context.tracks.fielders.push(cue(0.56, 0.62, {
-    who: relay,
-    anim: ANIM.catch,
-    at: "second",
-    phase: "relay-catch"
-  }));
-  context.tracks.fielders.push(cue(0.62, 0.7, {
+  const relay = context.fielding?.receiver ?? selectRelayFielder(context.points, primary);
+  context.tracks.fielders.push(cue(0.63, 0.7, {
     who: relay,
     anim: ANIM.throw,
     at: "second",
@@ -259,6 +268,14 @@ function buildDoublePlay(context) {
     arc: 0.08,
     phase: "relay-throw"
   }));
+  addThrowReceiver(context, {
+    primary: relay,
+    receiver: primary === "1B" ? "P" : "",
+    to: "first",
+    moveStartT: 0.46,
+    throwEndT: 0.72,
+    phasePrefix: "relay-"
+  });
   context.durationMs = spec.durationMs;
   context.suggestedResultT = 0.8;
 }
@@ -389,6 +406,87 @@ function addFieldingThrow(context, { who, from, to, startT, endT }) {
     arc: 0.12,
     phase: "fielding-throw"
   }));
+}
+
+function addDefensiveRotation(context, {
+  primary,
+  landing,
+  landingT,
+  fieldEndT,
+  throwTarget,
+  throwEndT
+}) {
+  const receiver = selectThrowReceiver(context.points, primary, throwTarget);
+  addDefensiveSupport(context, {
+    primary,
+    receiver,
+    landing,
+    landingT,
+    fieldEndT
+  });
+  if (!receiver) return null;
+  return addThrowReceiver(context, {
+    primary,
+    receiver,
+    to: throwTarget,
+    moveStartT: Math.max(0.235, Math.min(0.31, landingT - 0.1)),
+    throwEndT
+  });
+}
+
+function addDefensiveSupport(context, { primary, receiver, landing, landingT, fieldEndT }) {
+  const target = context.points[landing];
+  if (!target) return;
+  const moveStartT = 0.245;
+  const moveEndT = Math.min(fieldEndT + 0.015, landingT + 0.055);
+  for (const key of DEFENDERS) {
+    if (key === primary || key === receiver || !context.points[key]) continue;
+    const amount = OUTFIELDERS.includes(key) ? 0.075 : ["P", "C"].includes(key) ? 0.08 : 0.12;
+    const pointName = defensiveShiftPointName(key);
+    context.points[pointName] = interpolatePoint(context.points[key], target, amount);
+    if (pointDistance(context.points[key], context.points[pointName]) < 4) continue;
+    context.tracks.fielders.push(cue(moveStartT, moveEndT, {
+      who: key,
+      anim: ANIM.run,
+      path: [key, pointName],
+      phase: "defensive-shift",
+      assignment: "cover"
+    }));
+  }
+}
+
+function addThrowReceiver(context, {
+  primary,
+  receiver = "",
+  to,
+  moveStartT,
+  throwEndT,
+  phasePrefix = ""
+}) {
+  const selected = receiver || selectThrowReceiver(context.points, primary, to);
+  if (!selected || !context.points[selected] || !context.points[to]) return null;
+  const shiftedStart = defensiveShiftPointName(selected);
+  const from = context.points[shiftedStart] ? shiftedStart : selected;
+  const arrivalT = roundTime(Math.max(moveStartT + 0.08, throwEndT - 0.05));
+  context.tracks.fielders.push(cue(moveStartT, arrivalT, {
+    who: selected,
+    anim: ANIM.run,
+    path: [from, to],
+    phase: `${phasePrefix}cover-${to}`,
+    assignment: "receiver"
+  }));
+  context.tracks.fielders.push(cue(arrivalT, Math.min(0.97, throwEndT + 0.04), {
+    who: selected,
+    anim: ANIM.catch,
+    at: to,
+    phase: `${phasePrefix}receive-${to}`,
+    assignment: "receiver"
+  }));
+  return { receiver: selected, arrivalT };
+}
+
+function defensiveShiftPointName(key) {
+  return `defenseShift${String(key).replace(/[^A-Za-z0-9]/g, "")}`;
 }
 
 function addBatterAdvance(context, startT, endT, options) {
@@ -611,11 +709,25 @@ function selectRelayFielder(points, primary) {
   return firstAvailableAnchor(points, candidates);
 }
 
+function selectThrowReceiver(points, primary, target) {
+  const candidates = {
+    first: ["1B", "P", "2B"],
+    second: ["2B", "SS", "CF"],
+    third: ["3B", "SS", "LF"],
+    home: ["C", "P", "1B"]
+  }[target] ?? ["1B", "2B", "SS", "3B", "P", "C"];
+  return candidates.find((candidate) => candidate !== primary && points[candidate]) ?? "";
+}
+
 function firstAvailableAnchor(points, candidates) {
   const key = candidates.find((candidate) => points[candidate]);
   if (key) return key;
   if (points.P) return "P";
   return "mound";
+}
+
+function pointDistance(a, b) {
+  return Math.hypot(Number(a?.x ?? 0) - Number(b?.x ?? 0), Number(a?.y ?? 0) - Number(b?.y ?? 0));
 }
 
 function fieldingLandingPoint(event, points, fielderKey) {

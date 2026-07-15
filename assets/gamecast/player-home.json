@@ -3539,6 +3539,7 @@
       "h": 256
     },
     "integerDownscale": 2,
+    "registrationScaleMode": "sheet-common",
     "safeOpaqueSize": {
       "w": 116,
       "h": 112

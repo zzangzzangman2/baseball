@@ -11,12 +11,15 @@ import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js";
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
 const FIELD_EDGE_PADDING = 8;
-const GAMECAST2_CAMERA_MAX_ZOOM = 1.12;
 const PLAYER_ATLAS_ROOT = "./assets/gamecast";
 const PLAYER_ATLAS_FRAME_SIZE = 128;
 const PLAYER_ATLAS_BASELINE_Y = 120;
 const PLAYER_ATLAS_VISUAL_SCALE = 1.4;
-const PLAYER_ATLAS_RENDER_SCALE = PLAYER_ATLAS_VISUAL_SCALE * (64 / PLAYER_ATLAS_FRAME_SIZE);
+const PLAYER_ATLAS_RENDER_SCALE = 0.875;
+const PLAYER_SCALE_CENTER = 0.9;
+const PLAYER_SCALE_COMPRESSION = 0.25;
+const PLAYER_SCALE_MIN = 0.86;
+const PLAYER_SCALE_MAX = 0.94;
 const PLAYER_ATLAS_KEYS = Object.freeze({
   home: "gamecast2-player-home",
   away: "gamecast2-player-away",
@@ -46,12 +49,12 @@ const PIXEL_GLYPHS = {
   "-": ["000", "000", "111", "000", "000"]
 };
 const DEFENDER_MOVE_ZONES = {
-  P: { x: 24, yTop: 10, yBottom: 52 },
-  C: { x: 14, yTop: 10, yBottom: 8 },
+  P: { x: 300, yTop: 110, yBottom: 220 },
+  C: { x: 30, yTop: 42, yBottom: 12 },
   "1B": { x: 54, yTop: 42, yBottom: 44 },
-  "2B": { x: 58, yTop: 46, yBottom: 52 },
+  "2B": { x: 132, yTop: 80, yBottom: 52 },
   "3B": { x: 54, yTop: 42, yBottom: 44 },
-  SS: { x: 58, yTop: 46, yBottom: 52 },
+  SS: { x: 184, yTop: 80, yBottom: 52 },
   LF: { x: 96, yTop: 58, yBottom: 74 },
   CF: { x: 116, yTop: 62, yBottom: 84 },
   RF: { x: 96, yTop: 58, yBottom: 74 }
@@ -247,8 +250,10 @@ function calculateMetrics(runtime) {
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   const cssW = Math.round(runtime.width * cssScale);
   const cssH = Math.round(runtime.height * cssScale);
-  const bufferW = Math.max(runtime.width, Math.round(cssW * dpr));
-  const bufferH = Math.max(runtime.height, Math.round(cssH * dpr));
+  // Match the backing buffer to its displayed size. Keeping a hidden 960x720
+  // minimum made the browser resample the complete pixel scene on narrow views.
+  const bufferW = Math.max(1, Math.round(cssW * dpr));
+  const bufferH = Math.max(1, Math.round(cssH * dpr));
   return {
     cssScale,
     dpr,
@@ -384,7 +389,8 @@ function rebuildStaticPlayers(scene, runtime) {
 function addStaticActor(scene, runtime, actor) {
   const sx = runtime.metrics.drawScaleX;
   const sy = runtime.metrics.drawScaleY;
-  const scale = Math.max(0.5, Number(actor.design?.scale ?? 1));
+  const anchorScale = Math.max(0.5, Number(actor.design?.scale ?? 1));
+  const scale = normalizePlayerVisualScale(depthScaleForY(actor.design?.y));
   const renderScale = Math.min(sx, sy) * scale;
   const initialTexture = gamecast2AtlasTexture(scene, runtime, null, actor) ?? actor.texture;
   const initialFrame = initialTexture !== actor.texture
@@ -408,7 +414,7 @@ function addStaticActor(scene, runtime, actor) {
     isTransient: Boolean(actor.isTransient),
     designX: actor.design.x,
     designY: actor.design.y,
-    anchorScale: scale,
+    anchorScale,
     atlasRenderScale,
     visualScale: usesAtlas ? PLAYER_ATLAS_VISUAL_SCALE : 1,
     baseX: actor.design.x * sx,
@@ -472,17 +478,25 @@ function updateStaticPlayerIdle(runtime, frame = null) {
     if (!actor) continue;
     const state = play.actors.get(actor.key) ?? {};
     const idleT = elapsed / 430 + actor.phase;
-    const bob = actor.role === "catcher" ? 0 : Math.sin(idleT) * pixel * 0.55 * actor.anchorScale;
+    const bob = actor.role === "catcher"
+      ? 0
+      : Math.round(Math.sin(idleT) * pixel * 0.55 * actor.anchorScale);
     const pose = state.pose ?? defaultPoseForActor(actor);
     const rawPosition = state.position ?? { x: actor.designX, y: actor.designY };
     const position = clampActorDesignPosition(actor, rawPosition, runtime);
     const renderX = position.x * runtime.metrics.drawScaleX;
     const renderY = position.y * runtime.metrics.drawScaleY;
-    const designScale = Math.max(0.5, Number(position.scale ?? actor.anchorScale));
-    const renderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY)
+    const sourceDesignScale = depthScaleForY(position.y);
+    const designScale = normalizePlayerVisualScale(sourceDesignScale);
+    const rawRenderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY)
       * designScale
       * Number(actor.atlasRenderScale ?? 1);
-    const lean = Number(state.angle ?? (actor.role === "batter" ? Math.sin(idleT * 0.58) * 1.5 : 0));
+    const renderScale = Math.max(1 / 32, Math.round(rawRenderScale * 32) / 32);
+    const requestedLean = Number(state.angle ?? 0);
+    const shadowAngle = Math.round(requestedLean / 5) * 5;
+    // The authored atlas already carries each pose's lean. Rotating the bitmap
+    // itself would move every dot off the pixel grid, even at a five-degree step.
+    const renderAngle = 0;
     const facing = Number(state.facing ?? (actor.role === "batter" ? -1 : 1));
     const visible = state.visible !== false;
     if (visible) {
@@ -491,19 +505,25 @@ function updateStaticPlayerIdle(runtime, frame = null) {
         y: renderY,
         scale: designScale * Number(actor.visualScale ?? 1),
         pose: `${actor.role}-${state.shadowPose ?? pose}`,
-        angle: lean
+        angle: shadowAngle
       });
     }
     applyGamecast2ActorTexture(sprite, runtime, frame, actor, state, pose);
     sprite.setVisible(visible);
-    sprite.setPosition(renderX, renderY + (state.position ? 0 : bob));
-    sprite.setScale(renderScale * (1 + Math.sin(idleT * 0.5) * 0.012) * (facing < 0 ? -1 : 1), renderScale);
-    sprite.setAngle(lean);
+    const snappedRenderX = Math.round(renderX);
+    const snappedRenderY = Math.round(renderY + (state.position ? 0 : bob));
+    sprite.setPosition(snappedRenderX, snappedRenderY);
+    sprite.setScale(renderScale * (facing < 0 ? -1 : 1), renderScale);
+    sprite.setAngle(renderAngle);
     sprite.setDepth(Math.round(position.y * 10) + (actor.key === "batter" ? 8 : 0));
     actor.currentDesignX = position.x;
     actor.currentDesignY = position.y;
     actor.currentDesignScale = designScale;
+    actor.currentRenderX = snappedRenderX;
+    actor.currentRenderY = snappedRenderY;
     actor.currentRenderScale = renderScale;
+    actor.currentRenderAngle = renderAngle;
+    actor.currentFacing = facing < 0 ? -1 : 1;
     actor.currentPose = pose;
     actor.currentShadowPose = state.shadowPose ?? pose;
   }
@@ -1269,7 +1289,6 @@ function updateHomeRunCamera(runtime, frame = null) {
   const event = frame?.event;
   const progress = clamp01(Number(frame?.progress ?? 0));
   let focus = 0;
-  let zoom = 1;
   let centerX = baseX;
   let centerY = baseY;
 
@@ -1280,8 +1299,6 @@ function updateHomeRunCamera(runtime, frame = null) {
     if (localT < 0.16) focus = easeOutCubic(localT / 0.16);
     else if (localT > 0.84) focus = 1 - easeInOutCubic((localT - 0.84) / 0.16);
     else focus = 1;
-    const cueZoom = clampNumber(Number(cameraCue.cue.zoom ?? 1.1), 1, GAMECAST2_CAMERA_MAX_ZOOM);
-    zoom = Math.min(GAMECAST2_CAMERA_MAX_ZOOM, 1 + (cueZoom - 1) * focus);
     if (cameraCue.cue.follow === "ball") {
       const ball = buildBallState(runtime, frame);
       const target = ball ?? battedBallTargetForEvent(event, runtime.anchors?.anchors ?? {});
@@ -1292,10 +1309,13 @@ function updateHomeRunCamera(runtime, frame = null) {
     }
   }
 
-  camera.setZoom?.(Math.min(GAMECAST2_CAMERA_MAX_ZOOM, Math.max(1, zoom)));
+  // Camera panning keeps the cinematic cue without rescaling every source pixel.
+  // Any non-1 zoom can turn a valid 32-step actor scale into half-pixel output.
+  const snappedZoom = 1;
+  camera.setZoom?.(snappedZoom);
   camera.centerOn?.(Math.round(centerX), Math.round(centerY));
   runtime.gamecast2CameraState = {
-    zoom: Math.min(GAMECAST2_CAMERA_MAX_ZOOM, Math.max(1, zoom)),
+    zoom: snappedZoom,
     x: centerX / Math.max(0.01, runtime.metrics.drawScaleX),
     y: centerY / Math.max(0.01, runtime.metrics.drawScaleY),
     active: focus > 0
@@ -1402,9 +1422,13 @@ function exposeMotionDebug(runtime, frame = null) {
   const play = buildVisualPlay(runtime, frame);
   const ballVisible = Boolean(runtime.scene?.ballSprite?.visible);
   const positionGuard = collectGamecast2PositionGuard(runtime);
+  const actorSnapshots = (runtime.scene?.playerActors ?? []).map(publicActorSnapshot);
+  const renderScales = actorSnapshots.map((actor) => Number(actor.renderScale)).filter(Number.isFinite);
+  const renderScaleSpread = renderScales.length > 0 ? Math.max(...renderScales) - Math.min(...renderScales) : 0;
   runtime.screen.dataset.gamecast2MovingDefenseCount = String(play.movingDefenseCount ?? 0);
   runtime.screen.dataset.gamecast2BallVisible = ballVisible ? "1" : "0";
   runtime.screen.dataset.gamecast2PositionViolations = String(positionGuard.violations.length);
+  runtime.screen.dataset.gamecast2RenderScaleSpread = renderScaleSpread.toFixed(4);
   runtime.screen.dataset.gamecastAbilityUnderlays = String(runtime.gamecast2RatingTokens?.length ?? 0);
   runtime.screen.dataset.gamecast2TimelineTemplate = String(play.timeline?.template ?? "fallback");
   runtime.screen.__gamecast2Frame = {
@@ -1421,7 +1445,7 @@ function exposeMotionDebug(runtime, frame = null) {
       invariants: play.timeline.meta?.invariants ?? {}
     } : null,
     ratingTokens: runtime.gamecast2RatingTokens ?? [],
-    actors: (runtime.scene?.playerActors ?? []).map(publicActorSnapshot),
+    actors: actorSnapshots,
     scoreboard: runtime.scoreboardState ?? null,
     camera: runtime.gamecast2CameraState ?? { zoom: 1, active: false },
     particles: runtime.gamecast2ParticleState ?? { impact: 0, dust: 0, confetti: 0, total: 0, tonedDown: false }
@@ -1661,6 +1685,19 @@ function outfieldWallYForDesignX(anchors, x) {
 
 function clampNumber(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
+}
+
+function normalizePlayerVisualScale(value) {
+  const raw = Math.max(0.5, Number(value) || 1);
+  return clampNumber(
+    PLAYER_SCALE_CENTER + (raw - PLAYER_SCALE_CENTER) * PLAYER_SCALE_COMPRESSION,
+    PLAYER_SCALE_MIN,
+    PLAYER_SCALE_MAX
+  );
+}
+
+function depthScaleForY(y) {
+  return clampNumber(0.56 + Number(y ?? GAMECAST2_DESIGN_H / 2) / GAMECAST2_DESIGN_H * 0.52, 0.62, 1.04);
 }
 
 function curvedRoute(from, to, t, bend = 0) {
@@ -2164,9 +2201,15 @@ function publicActorSnapshot(actor) {
     isDefender: actor.isDefender,
     isOutfielder: actor.isOutfielder,
     isTransient: actor.isTransient,
-    x: Math.round(actor.designX * 100) / 100,
-    y: Math.round(actor.designY * 100) / 100,
-    scale: Math.round(actor.anchorScale * 100) / 100,
+    x: Math.round(Number(actor.currentDesignX ?? actor.designX) * 100) / 100,
+    y: Math.round(Number(actor.currentDesignY ?? actor.designY) * 100) / 100,
+    scale: Math.round(Number(actor.currentDesignScale ?? normalizePlayerVisualScale(depthScaleForY(actor.designY))) * 1000) / 1000,
+    anchorScale: Math.round(actor.anchorScale * 100) / 100,
+    renderX: Math.round(Number(actor.currentRenderX ?? 0) * 100) / 100,
+    renderY: Math.round(Number(actor.currentRenderY ?? 0) * 100) / 100,
+    renderScale: Math.round(Number(actor.currentRenderScale ?? 0) * 10000) / 10000,
+    renderAngle: Number(actor.currentRenderAngle ?? 0),
+    renderFacing: Number(actor.currentFacing ?? 1),
     currentPose: String(actor.currentPose ?? ""),
     atlasFrame: String(actor.atlasFrame ?? "")
   };

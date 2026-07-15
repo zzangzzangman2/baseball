@@ -17,6 +17,7 @@ from build_gamecast_sprites import (
     BASELINE_Y,
     CENTER_X,
     DEFAULT_SOURCE,
+    SOURCE_REFERENCE,
     LEGACY_REFERENCE_SOURCE,
     LEGACY_TO_V2_BASE,
     LEGACY_TO_V2_SHIFT,
@@ -34,6 +35,8 @@ from build_gamecast_sprites import (
     shift_frame,
     validate_animation_metadata,
     validate_art_rules,
+    validate_common_pose_scale,
+    validate_leg_gaps,
     validate_registration,
     validate_source_grid,
     write_props_atlas,
@@ -65,7 +68,6 @@ V3_ANIMATIONS = {
             ("follow2", 2, 1),
         ],
         "durations": [30, 30, 28, 28, 24, 22, 20, 18, 18, 18, 20, 22, 30, 34, 28, 26, 28, 30, 32, 34, 38, 42, 46, 54],
-        "smear": True,
     },
     "pitch": {
         "count": 24,
@@ -79,7 +81,6 @@ V3_ANIMATIONS = {
             ("pitch_follow2", 1, 1),
         ],
         "durations": [36, 34, 32, 30, 30, 28, 26, 24, 22, 20, 18, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 40, 44, 50],
-        "smear": True,
     },
     "run": {
         "count": 8,
@@ -97,7 +98,6 @@ V3_ANIMATIONS = {
         "count": 12,
         "keys": [("throw_plant", -1, 0), ("throw_release", 2, 0), ("throw_follow", 2, 1)],
         "durations": [42, 38, 34, 30, 24, 20, 20, 24, 28, 32, 38, 44],
-        "smear": True,
     },
     "catch": {
         "count": 10,
@@ -108,7 +108,6 @@ V3_ANIMATIONS = {
         "count": 10,
         "keys": [("dive_launch", 1, -1), ("dive_slide", 2, 1), ("dive_getup", -1, 1), ("field", 0, 0)],
         "durations": [42, 38, 34, 32, 34, 42, 52, 62, 72, 82],
-        "smear": True,
     },
     "slide": {
         "count": 8,
@@ -208,15 +207,6 @@ def validate_motion_contract(specs: Mapping[str, Mapping[str, object]]) -> None:
     )
 
 
-def with_alpha(image: Image.Image, alpha_scale: float) -> Image.Image:
-    image = image.copy().convert("RGBA")
-    if alpha_scale >= 0.995:
-        return image
-    channel = image.getchannel("A").point(lambda value: max(0, min(255, round(value * alpha_scale))))
-    image.putalpha(channel)
-    return image
-
-
 def offset_frame(frame: Image.Image, dx: float = 0, dy: float = 0) -> Image.Image:
     return shift_frame(frame, round(dx), round(dy))
 
@@ -227,24 +217,20 @@ def tween_frame(
     t: float,
     first_shift: Tuple[float, float] = (0, 0),
     second_shift: Tuple[float, float] = (0, 0),
-    smear: bool = False,
 ) -> Image.Image:
     t = max(0.0, min(1.0, t))
     dx = first_shift[0] + (second_shift[0] - first_shift[0]) * t
     dy = first_shift[1] + (second_shift[1] - first_shift[1]) * t
     main = first if t < 0.5 else second
-    trail = second if t < 0.5 else first
     frame = Image.new("RGBA", (FRAME, FRAME), (0, 0, 0, 0))
-    if smear and 0.34 < t < 0.78:
-        trail_dx = dx - (second_shift[0] - first_shift[0]) * 0.55
-        trail_dy = dy - (second_shift[1] - first_shift[1]) * 0.55
-        frame.alpha_composite(with_alpha(offset_frame(trail, trail_dx, trail_dy), 0.18))
     frame.alpha_composite(offset_frame(main, dx, dy))
     return frame
 
 
-def build_v2_base_frames(source: Image.Image, uniform: str) -> Dict[str, Image.Image]:
+def build_v2_base_frames(source: Image.Image, uniform: str, strict_art: bool = False) -> Dict[str, Image.Image]:
     legacy_frames = build_legacy_normalized_frames(source, uniform)
+    validate_leg_gaps(legacy_frames, strict_art)
+    validate_common_pose_scale(legacy_frames, strict_art)
     frames: Dict[str, Image.Image] = {}
     for pose in V2_GRID:
         base_name = LEGACY_TO_V2_BASE.get(pose)
@@ -267,7 +253,6 @@ def build_animation_frames(
 ) -> Dict[str, Image.Image]:
     count = int(spec["count"])
     keys = list(spec["keys"])
-    smear = bool(spec.get("smear", False))
     output: Dict[str, Image.Image] = {}
     if count <= 1 or len(keys) <= 1:
         output[f"{prefix}_00"] = frame_for(base, str(keys[0][0]))
@@ -287,7 +272,6 @@ def build_animation_frames(
             local_t,
             (float(left_dx), float(left_dy)),
             (float(right_dx), float(right_dy)),
-            smear=smear,
         )
         output[f"{prefix}_{index:02d}"] = frame
     return output
@@ -327,6 +311,7 @@ def write_v3_json(
             "centerX": CENTER_X,
             "sourceCellSize": {"w": SOURCE_CELL, "h": SOURCE_CELL},
             "integerDownscale": SOURCE_DOWNSCALE,
+            "registrationScaleMode": "sheet-common",
             "safeOpaqueSize": {"w": MAX_SPRITE_WIDTH, "h": MAX_SPRITE_HEIGHT},
             "minimumFrames": MOTION_MINIMUM_FRAMES,
             "artContract": "docs/gamecast-sprite-art-spec.md",
@@ -346,7 +331,7 @@ def write_v3_atlas(
 ) -> None:
     variant = f"{uniform}-night" if night else uniform
     image_name = f"player-{variant}.png"
-    base = build_v2_base_frames(source, uniform)
+    base = build_v2_base_frames(source, uniform, strict_art)
     dense_frames: Dict[str, Image.Image] = {}
     for name, spec in V3_ANIMATIONS.items():
         dense_frames.update(build_animation_frames(base, name, spec))
@@ -385,7 +370,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--source",
-        default=DEFAULT_SOURCE if DEFAULT_SOURCE.exists() else LEGACY_REFERENCE_SOURCE,
+        default=(
+            DEFAULT_SOURCE
+            if DEFAULT_SOURCE.exists()
+            else SOURCE_REFERENCE
+            if SOURCE_REFERENCE.exists()
+            else LEGACY_REFERENCE_SOURCE
+        ),
         type=Path,
     )
     parser.add_argument("--out", default=Path("assets/gamecast"), type=Path)

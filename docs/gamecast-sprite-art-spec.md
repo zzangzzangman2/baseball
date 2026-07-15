@@ -9,16 +9,17 @@
 - 발바닥 baseline: `y=120`. 불투명 bbox의 하단은 파이썬/Pillow의 exclusive 좌표로 120이며, 마지막 불투명 픽셀은 `y=119`다.
 - 수평 중심: `x=64`.
 - 권장 불투명 bbox: 최대 116×112px. 모션 오프셋 여유를 위해 기준 포즈는 최대 108×108px 안에 등록한다.
-- 출력 셀 가장자리는 투명해야 한다. 안티에일리어싱과 반투명 외곽선은 금지한다. 단, v3 스미어 트레일의 제어된 반투명도는 예외다.
+- 출력 셀 가장자리는 투명해야 한다. 안티에일리어싱, 반투명 외곽선, 반투명 스미어는 금지한다. 모든 출력 알파는 `0` 또는 `255`여야 한다.
 
-새 원본은 셀당 256px로 제작한다. 현재 기본 원본 `assets/gamecast/source/player-sheet-64-imagegen.png`은 생성기 고유 해상도인 1402×1122이므로, 빌더가 이를 5×4로 결정론적으로 분할하고 각 칸을 256×256 계약 셀로 정규화한다. 이후 단계는 항상 256→128 정수 축소다. 미래 원본을 정확한 5×4×256(1280×1024) 또는 v2 8×6×256(2048×1536)으로 납품하면 `--strict-source-grid`도 통과한다.
+기본 원본은 정확한 5×4×256(1280×1024) 계약 시트인 `assets/gamecast/source/player-sheet-128-contract.png`다. 이 파일은 생성기 참조 시트 `assets/gamecast/source/player-sheet-64-imagegen.png`를 전처리하고, 모든 포즈에 하나의 공통 배율을 적용해 만든다. 배포 아틀라스는 계약 시트의 256px 셀을 nearest-neighbor로 정확히 128px까지 2배 축소한다. 포즈마다 개별 최대 맞춤 배율을 적용하면 동작 전환 중 선수 크기가 달라지므로 금지한다.
 
 원본 배경은 투명 또는 키 컬러를 권장한다. 빌더는 다음 순서로 전처리한다.
 
 1. 셀 바깥 경계에 연결된 밝은 무채색 체크/코너 배경을 flood fill로 제거한다.
 2. 기존 마젠타 키 배경을 제거한다.
-3. 포즈 bbox를 256px 계약 셀의 `centerX=128`, `baselineY=240`에 맞춘다.
-4. 좌표와 크기를 2의 배수로 스냅한 뒤 128px로 2배 축소한다.
+3. 시트 전체에서 공통 등록 배율 하나를 계산하고 모든 포즈에 동일하게 적용한다.
+4. 포즈 bbox를 256px 계약 셀의 `centerX=128`, `baselineY=240`에 맞춘다.
+5. 좌표와 크기를 2의 배수로 스냅한 뒤 128px로 2배 축소한다.
 
 레거시 포즈 입력은 5열×4행이며, v2 키 포즈 입력은 8열×6행이다. v3 출력은 프레임을 16열로 패킹한다. 런타임은 열·행을 추측하지 않고 JSON의 `frames` 좌표를 진실 원본으로 사용해야 한다.
 
@@ -92,16 +93,22 @@ v2 키 포즈는 타격, 투구, 주루, 송구, 포구, 다이브, 슬라이드
 
 ## 7. 빌드와 검증
 
+참조 시트에서 정확한 계약 시트 재생성:
+
+```powershell
+python tools/build_gamecast_sprites.py --source assets/gamecast/source/player-sheet-64-imagegen.png --contract-output assets/gamecast/source/player-sheet-128-contract.png
+```
+
 기본 밀집 아틀라스 빌드:
 
 ```powershell
-python tools/build_gamecast_motion_v3.py --strict-registration --strict-art
+python tools/build_gamecast_motion_v3.py --strict-source-grid --strict-registration --strict-art
 ```
 
 키 포즈 v2 아틀라스 빌드:
 
 ```powershell
-python tools/build_gamecast_sprites.py --strict-registration --strict-art
+python tools/build_gamecast_sprites.py --strict-source-grid --strict-registration --strict-art
 ```
 
-정확한 256px 원본 시트까지 강제하는 CI/납품 검사는 `--strict-source-grid`를 추가한다. 현재 생성기 고유 해상도 원본은 이 검사에서 의도적으로 실패하며, 일반 빌드에서는 정규화 사실을 경고로 남긴다. `tools/verify_app.mjs`는 배포 아틀라스 네 벌의 128px 크기, 등록점, 주·야간 메타와 밀집 모션 하한을 다시 검사한다.
+`--strict-source-grid`는 기본 계약 시트가 정확히 1280×1024이고 각 셀이 256px인지 강제한다. 빌더는 공통 포즈 배율, 발 사이 투명 간격, 바닥 그림자 잔여물, 이진 알파도 함께 검사한다. `tools/verify_app.mjs`는 배포 아틀라스 네 벌의 128px 크기, 등록점, 주·야간 메타와 밀집 모션 하한을 다시 검사한다.

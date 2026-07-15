@@ -1755,6 +1755,8 @@ async function checkGamecastLab() {
       const particleState = motionFrame?.particles ?? null;
       const cameraState = motionFrame?.camera ?? null;
       const ratingTokens = motionFrame?.ratingTokens ?? [];
+      const motionActors = motionFrame?.actors ?? [];
+      const actorRenderScales = motionActors.map((actor) => Number(actor.renderScale)).filter(Number.isFinite);
       return {
         engine: screen?.dataset?.gamecastEngineCurrent ?? "",
         field: screen?.dataset?.gamecast2Field ?? "",
@@ -1773,7 +1775,16 @@ async function checkGamecastLab() {
         anchorCount: Number(screen?.dataset?.gamecast2AnchorCount ?? 0),
         defenderCount: Number(screen?.dataset?.gamecast2DefenderCount ?? 0),
         playerCount: Number(screen?.dataset?.gamecast2PlayerCount ?? 0),
-        actors: motionFrame?.actors ?? [],
+        actors: motionActors,
+        actorPixelGridOk: motionActors.length > 0 && motionActors.every((actor) =>
+          Number.isInteger(Number(actor.renderX)) &&
+          Number.isInteger(Number(actor.renderY)) &&
+          Number(actor.renderAngle) === 0 &&
+          Math.abs(Number(actor.renderScale) * 32 - Math.round(Number(actor.renderScale) * 32)) < 0.0001
+        ),
+        actorRenderScaleSpread: actorRenderScales.length > 0
+          ? Math.max(...actorRenderScales) - Math.min(...actorRenderScales)
+          : 0,
         keys,
         missing: required.filter((key) => !keys.includes(key)),
         missingDefenders: defenseRequired.filter((key) => !defenderKeys.includes(key)),
@@ -1784,6 +1795,7 @@ async function checkGamecastLab() {
         canvasHeight: Math.round(rect?.height ?? 0),
         canvasBufferW: Number(canvas?.width ?? 0),
         canvasBufferH: Number(canvas?.height ?? 0),
+        devicePixelRatio: Number(window.devicePixelRatio || 1),
         positionViolations: Number(screen?.dataset?.gamecast2PositionViolations ?? 0),
         motionViolations: Number(screen?.__gamecast2Frame?.positionGuard?.violations?.length ?? 0),
         motionViolationActors: screen?.__gamecast2Frame?.positionGuard?.violations ?? [],
@@ -1807,13 +1819,9 @@ async function checkGamecastLab() {
     "src/gamecast2/scene.js"
   );
   assert(
-    Number.isFinite(anchorProbe.cameraZoom) &&
-      anchorProbe.cameraZoom >= 1 &&
-      anchorProbe.cameraZoom <= 1.1201 &&
-      Number.isFinite(anchorProbe.cameraState?.zoom) &&
-      anchorProbe.cameraState.zoom >= 1 &&
-      anchorProbe.cameraState.zoom <= 1.1201,
-    `v2 camera zoom cap이 지켜지지 않았습니다: ${JSON.stringify(anchorProbe)}`,
+    Math.abs(anchorProbe.cameraZoom - 1) <= 0.000001 &&
+      Math.abs(Number(anchorProbe.cameraState?.zoom) - 1) <= 0.000001,
+    `v2 pixel camera zoom이 1로 고정되지 않았습니다: ${JSON.stringify(anchorProbe)}`,
     "src/gamecast2/scene.js"
   );
   assert(
@@ -1838,7 +1846,14 @@ async function checkGamecastLab() {
   assert(anchorProbe.anchorCount >= 15 && anchorProbe.missing.length === 0, `v2 앵커가 부족합니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(anchorProbe.canvasPixelW === 960 && anchorProbe.canvasPixelH === 720, `v2 필드 해상도 계약이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.canvasWidth >= 900 && anchorProbe.canvasHeight >= 675, `v2 데스크톱 캔버스가 고해상도로 표시되지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/styles.css");
-  assert(anchorProbe.canvasBufferW >= 960 && anchorProbe.canvasBufferH >= 720, `v2 내부 렌더 버퍼가 960x720 미만입니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(
+    Math.abs(anchorProbe.canvasBufferW - anchorProbe.canvasWidth * anchorProbe.devicePixelRatio) <= 1 &&
+      Math.abs(anchorProbe.canvasBufferH - anchorProbe.canvasHeight * anchorProbe.devicePixelRatio) <= 1,
+    `v2 backing buffer와 CSS 표시 크기가 다릅니다: ${JSON.stringify(anchorProbe)}`,
+    "src/gamecast2/scene.js"
+  );
+  assert(anchorProbe.actorPixelGridOk, `v2 선수가 정수 픽셀 그리드에 맞지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.actorRenderScaleSpread <= 0.07, `v2 선수 크기 편차가 큽니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.positionViolations === 0 && anchorProbe.motionViolations === 0, `v2 선수 좌표가 허용 구역 밖입니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.baseDirectionOk && anchorProbe.baseBagOk && anchorProbe.depthOk && anchorProbe.pitcherOk, `v2 앵커 배치가 어긋났습니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(

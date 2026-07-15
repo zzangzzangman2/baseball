@@ -23,11 +23,17 @@ MAX_SPRITE_HEIGHT = 112
 REGISTERED_SPRITE_WIDTH = 108
 REGISTERED_SPRITE_HEIGHT = 108
 MAX_OPAQUE_RGB_COLORS = 32
+ENCLOSED_CHECKER_MIN_AREA_RATIO = 0.002
+ENCLOSED_CHECKER_MAX_CHROMA = 5
+ENCLOSED_CHECKER_MIN_ACHROMATIC_SHARE = 0.94
+ENCLOSED_CHECKER_MIN_LUMA_SPREAD = 10
+ENCLOSED_CHECKER_MIN_EDGE_PALETTE_SHARE = 0.90
 LEGACY_COLS = 5
 LEGACY_ROWS = 4
 V2_COLS = 8
 V2_ROWS = 6
-DEFAULT_SOURCE = Path("assets/gamecast/source/player-sheet-64-imagegen.png")
+DEFAULT_SOURCE = Path("assets/gamecast/source/player-sheet-128-contract.png")
+SOURCE_REFERENCE = Path("assets/gamecast/source/player-sheet-64-imagegen.png")
 LEGACY_REFERENCE_SOURCE = Path("assets/gamecast/source/player-sheet-imagegen.png")
 
 OUTLINE = (32, 32, 42, 255)
@@ -88,6 +94,40 @@ POSE_GRID = {
 
 SOURCE_GRID = dict(POSE_GRID)
 SOURCE_GRID["walk2"] = SOURCE_GRID["walk1"]
+
+GROUND_SHADOW_STRIP_POSES = frozenset({
+    "stance",
+    "swing",
+    "follow",
+    "miss",
+    "take",
+    "idle",
+    "run1",
+    "run2",
+    "walk1",
+    "windup",
+    "pitch",
+    "field",
+    "catch",
+    "catcher",
+    "lookUp",
+})
+
+# Transparent probes sit between the legs of each checked-in upright source pose.
+# They prevent a flattened checkerboard from becoming a false white pant leg again.
+LEG_GAP_PROBES = {
+    "stance": (55, 98, 71, BASELINE_Y),
+    "swing": (54, 99, 67, BASELINE_Y),
+    "follow": (70, 100, 80, BASELINE_Y),
+    "miss": (48, 102, 60, BASELINE_Y),
+    "take": (58, 100, 70, BASELINE_Y),
+    "idle": (61, 99, 65, BASELINE_Y),
+    "walk1": (57, 106, 67, BASELINE_Y),
+    "field": (50, 99, 65, BASELINE_Y),
+    "catch": (52, 102, 63, BASELINE_Y),
+    "catcher": (50, 108, 63, BASELINE_Y),
+    "lookUp": (48, 102, 64, BASELINE_Y),
+}
 
 V2_GRID = {
     "stance": (0, 0),
@@ -403,7 +443,120 @@ def validate_source_grid(source: Image.Image, sheet_cols: int, sheet_rows: int, 
     return issues
 
 
-def crop_source_cell(source: Image.Image, col: int, row: int, sheet_cols: int, sheet_rows: int) -> Image.Image:
+def alpha_intervals(image: Image.Image, y: int) -> List[Tuple[int, int]]:
+    xs = [x for x in range(image.width) if image.getpixel((x, y))[3] > 0]
+    if not xs:
+        return []
+    intervals: List[Tuple[int, int]] = []
+    start = previous = xs[0]
+    for x in xs[1:]:
+        if x > previous + 1:
+            intervals.append((start, previous))
+            start = x
+        previous = x
+    intervals.append((start, previous))
+    return intervals
+
+
+def remove_baked_ground_shadow(image: Image.Image) -> Image.Image:
+    """Remove the baked oval while preserving shoe pixels that continue into it."""
+    image = image.copy().convert("RGBA")
+    bbox = opaque_bbox(image)
+    if bbox is None:
+        return image
+    left, top, right, bottom = bbox
+    sprite_width = right - left
+    scan_depth = min(28, max(8, round((bottom - top) * 0.14)))
+    scan_top = max(top, bottom - scan_depth)
+    minimum_shadow_width = max(24, round(sprite_width * 0.40))
+    band_top: int | None = None
+    for y in range(scan_top, bottom):
+        widest = max((end - start + 1 for start, end in alpha_intervals(image, y)), default=0)
+        if widest >= minimum_shadow_width:
+            band_top = y
+            break
+
+    if band_top is None or not (4 <= bottom - band_top <= 20):
+        return image
+
+    pixels = image.load()
+    seed_intervals = [
+        interval
+        for interval in alpha_intervals(image, max(top, band_top - 1))
+        if interval[1] - interval[0] + 1 >= 4
+    ]
+    preserved: set[Tuple[int, int]] = set()
+    for start, end in seed_intervals:
+        allowed_left = max(0, start - 6)
+        allowed_right = min(image.width - 1, end + 6)
+        previous = set(range(start, end + 1))
+        for y in range(band_top, bottom):
+            connected: set[int] = set()
+            for x in range(allowed_left, allowed_right + 1):
+                red, green, blue, alpha = pixels[x, y]
+                shoe_color = (
+                    alpha > 0
+                    and (
+                        max(red, green, blue) < 115
+                        or min(red, green, blue) > 170
+                        or (red > 115 and red - green > 20 and red - blue > 15)
+                    )
+                )
+                if shoe_color and any(px in previous for px in range(x - 2, x + 3)):
+                    connected.add(x)
+                    preserved.add((x, y))
+            previous = connected
+
+    for y in range(band_top, bottom):
+        for x in range(image.width):
+            if (x, y) not in preserved:
+                pixels[x, y] = (0, 0, 0, 0)
+    return image
+
+
+def retain_largest_alpha_component(image: Image.Image) -> Image.Image:
+    """Discard detached neighboring-cell fragments and generated dust/ball debris."""
+    image = image.copy().convert("RGBA")
+    pixels = image.load()
+    visited: set[Tuple[int, int]] = set()
+    components: List[List[Tuple[int, int]]] = []
+    for seed_y in range(image.height):
+        for seed_x in range(image.width):
+            seed = (seed_x, seed_y)
+            if seed in visited or pixels[seed_x, seed_y][3] == 0:
+                continue
+            component: List[Tuple[int, int]] = []
+            queue: deque[Tuple[int, int]] = deque([seed])
+            visited.add(seed)
+            while queue:
+                x, y = queue.popleft()
+                component.append((x, y))
+                for ny in range(max(0, y - 1), min(image.height, y + 2)):
+                    for nx in range(max(0, x - 1), min(image.width, x + 2)):
+                        point = (nx, ny)
+                        if point not in visited and pixels[nx, ny][3] > 0:
+                            visited.add(point)
+                            queue.append(point)
+            components.append(component)
+
+    if not components:
+        return image
+    keep = set(max(components, key=len))
+    for y in range(image.height):
+        for x in range(image.width):
+            if pixels[x, y][3] > 0 and (x, y) not in keep:
+                pixels[x, y] = (0, 0, 0, 0)
+    return image
+
+
+def crop_source_cell(
+    source: Image.Image,
+    col: int,
+    row: int,
+    sheet_cols: int,
+    sheet_rows: int,
+    strip_ground_shadow: bool = False,
+) -> Image.Image:
     width, height = source.size
     cell_w = width / sheet_cols
     cell_h = height / sheet_rows
@@ -414,6 +567,8 @@ def crop_source_cell(source: Image.Image, col: int, row: int, sheet_cols: int, s
     cell = clear_source_background(source.crop((left, top, right, bottom)).convert("RGBA"))
     if cell.size != (SOURCE_CELL, SOURCE_CELL):
         cell = cell.resize((SOURCE_CELL, SOURCE_CELL), Image.Resampling.NEAREST)
+    if strip_ground_shadow:
+        cell = clear_source_background(remove_baked_ground_shadow(cell))
     return cell
 
 
@@ -473,6 +628,62 @@ def clear_source_background(image: Image.Image) -> Image.Image:
             if 0 <= nx < width and 0 <= ny < height:
                 enqueue(nx, ny)
 
+    # The generated source is flattened over a checkerboard. Feet and the baked
+    # ground shadow can completely enclose a checker pocket, so an edge flood by
+    # itself cannot reach it. Promote only sufficiently large, almost perfectly
+    # achromatic, two-tone components that match the checker palette learned from
+    # the exterior. White uniforms are slightly tinted and fail this signature.
+    exterior_luminance = {
+        round(sum(pixels[x, y][:3]) / 3)
+        for x, y in background
+        if pixels[x, y][3] > 0
+    }
+    visited = set(background)
+    minimum_area = max(1, round(width * height * ENCLOSED_CHECKER_MIN_AREA_RATIO))
+    for seed_y in range(height):
+        for seed_x in range(width):
+            seed = (seed_x, seed_y)
+            if seed in visited or not is_checker_background_candidate(pixels[seed_x, seed_y]):
+                continue
+
+            component: List[Tuple[int, int]] = []
+            component_queue: deque[Tuple[int, int]] = deque([seed])
+            visited.add(seed)
+            while component_queue:
+                x, y = component_queue.popleft()
+                component.append((x, y))
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                    point = (nx, ny)
+                    if (
+                        0 <= nx < width
+                        and 0 <= ny < height
+                        and point not in visited
+                        and is_checker_background_candidate(pixels[nx, ny])
+                    ):
+                        visited.add(point)
+                        component_queue.append(point)
+
+            if len(component) < minimum_area:
+                continue
+            component_luminance = [round(sum(pixels[x, y][:3]) / 3) for x, y in component]
+            achromatic_count = sum(
+                max(pixels[x, y][:3]) - min(pixels[x, y][:3]) <= ENCLOSED_CHECKER_MAX_CHROMA
+                for x, y in component
+            )
+            achromatic_share = achromatic_count / len(component)
+            luminance_spread = max(component_luminance) - min(component_luminance)
+            edge_palette_matches = sum(
+                any(abs(value - exterior) <= 3 for exterior in exterior_luminance)
+                for value in component_luminance
+            )
+            edge_palette_share = edge_palette_matches / len(component)
+            if (
+                achromatic_share >= ENCLOSED_CHECKER_MIN_ACHROMATIC_SHARE
+                and luminance_spread >= ENCLOSED_CHECKER_MIN_LUMA_SPREAD
+                and edge_palette_share >= ENCLOSED_CHECKER_MIN_EDGE_PALETTE_SHARE
+            ):
+                background.update(component)
+
     # Remove the bright neutral fringe immediately connected to the checker/key region.
     fringe = set(background)
     for x, y in tuple(background):
@@ -512,6 +723,55 @@ def align_output_frame(frame: Image.Image) -> Image.Image:
     return aligned
 
 
+def remove_isolated_leg_bridges(
+    frame: Image.Image,
+    probe: Tuple[int, int, int, int] | None = None,
+) -> Image.Image:
+    """Remove a one-row dark shadow seam when transparent leg gaps exist above and below."""
+    output = frame.copy().convert("RGBA")
+    alpha = output.getchannel("A")
+    pixels = output.load()
+    bbox = opaque_bbox(output)
+    if bbox is None:
+        return output
+    left, top, right, bottom = bbox
+    probe_left, _probe_top, probe_right, _probe_bottom = probe or (left, top, right, bottom)
+
+    def transparent_runs(y: int) -> List[Tuple[int, int]]:
+        runs: List[Tuple[int, int]] = []
+        start: int | None = None
+        for x in range(left, right):
+            transparent = alpha.getpixel((x, y)) == 0
+            if transparent and start is None:
+                start = x
+            if not transparent and start is not None:
+                if x - start >= 4:
+                    runs.append((start, x - 1))
+                start = None
+        if start is not None and right - start >= 4:
+            runs.append((start, right - 1))
+        return runs
+
+    for y in range(max(top + 1, bottom - 12), bottom - 1):
+        above = transparent_runs(y - 1)
+        below = transparent_runs(y + 1)
+        for a_start, a_end in above:
+            for b_start, b_end in below:
+                gap_start = max(a_start, b_start, probe_left)
+                gap_end = min(a_end, b_end, probe_right - 1)
+                if gap_end - gap_start + 1 < 4:
+                    continue
+                bridge = [
+                    x
+                    for x in range(gap_start, gap_end + 1)
+                    if pixels[x, y][3] > 0 and pixels[x, y][:3] in SEL_OUTLINE_COLORS
+                ]
+                if len(bridge) >= gap_end - gap_start:
+                    for x in bridge:
+                        pixels[x, y] = (0, 0, 0, 0)
+    return output
+
+
 def apply_selout(frame: Image.Image) -> Image.Image:
     output = frame.copy().convert("RGBA")
     source = frame.convert("RGBA")
@@ -548,7 +808,7 @@ def apply_night_rimlight(frame: Image.Image) -> Image.Image:
     return output
 
 
-def register_source_cell(source_cell: Image.Image) -> Image.Image:
+def register_source_cell(source_cell: Image.Image, registration_scale: float = 1.0) -> Image.Image:
     cleaned = clear_source_background(source_cell)
     bbox = transparent_bbox(cleaned)
     registered = Image.new("RGBA", (SOURCE_CELL, SOURCE_CELL), (0, 0, 0, 0))
@@ -556,9 +816,7 @@ def register_source_cell(source_cell: Image.Image) -> Image.Image:
         return registered
 
     cropped = cleaned.crop(bbox)
-    max_w = REGISTERED_SPRITE_WIDTH * SOURCE_DOWNSCALE
-    max_h = REGISTERED_SPRITE_HEIGHT * SOURCE_DOWNSCALE
-    scale = min(max_w / cropped.width, max_h / cropped.height)
+    scale = max(0.01, float(registration_scale))
     scaled_w = max(SOURCE_DOWNSCALE, round(cropped.width * scale / SOURCE_DOWNSCALE) * SOURCE_DOWNSCALE)
     scaled_h = max(SOURCE_DOWNSCALE, round(cropped.height * scale / SOURCE_DOWNSCALE) * SOURCE_DOWNSCALE)
     resized = cropped.resize((scaled_w, scaled_h), Image.Resampling.NEAREST)
@@ -570,7 +828,8 @@ def register_source_cell(source_cell: Image.Image) -> Image.Image:
 
 def normalize_frame(source_cell: Image.Image, uniform: str) -> Image.Image:
     if source_cell.size == (SOURCE_CELL, SOURCE_CELL):
-        # Registration is normalized on the 256px cell, then preserved through a true 2x downscale.
+        # The exact contract sheet is already registered with one sheet-wide scale.
+        # Re-centering is allowed here, but per-pose resizing is not.
         registered = register_source_cell(source_cell)
         resized = registered.resize((FRAME, FRAME), Image.Resampling.NEAREST)
         quantized = quantize_frame(resized, uniform)
@@ -597,6 +856,44 @@ def normalize_frame(source_cell: Image.Image, uniform: str) -> Image.Image:
     output.alpha_composite(resized, (paste_x, paste_y))
 
     return apply_selout(align_output_frame(quantize_frame(output, uniform)))
+
+
+def build_contract_source_sheet(source: Image.Image) -> Tuple[Image.Image, float]:
+    """Convert the flattened reference into an exact 5x4, common-scale source."""
+    cleaned_cells: Dict[str, Image.Image] = {}
+    for pose, (col, row) in POSE_GRID.items():
+        cell = crop_source_cell(
+            source,
+            col,
+            row,
+            LEGACY_COLS,
+            LEGACY_ROWS,
+            strip_ground_shadow=pose in GROUND_SHADOW_STRIP_POSES,
+        )
+        cleaned_cells[pose] = retain_largest_alpha_component(cell)
+
+    bboxes = [transparent_bbox(cell) for cell in cleaned_cells.values()]
+    opaque_bboxes = [bbox for bbox in bboxes if bbox is not None]
+    if not opaque_bboxes:
+        raise SystemExit("contract source has no opaque sprite cells")
+    widest = max(right - left for left, _top, right, _bottom in opaque_bboxes)
+    tallest = max(bottom - top for _left, top, _right, bottom in opaque_bboxes)
+    max_w = REGISTERED_SPRITE_WIDTH * SOURCE_DOWNSCALE
+    max_h = REGISTERED_SPRITE_HEIGHT * SOURCE_DOWNSCALE
+    common_scale = min(1.0, max_w / widest, max_h / tallest)
+
+    sheet = Image.new(
+        "RGBA",
+        (LEGACY_COLS * SOURCE_CELL, LEGACY_ROWS * SOURCE_CELL),
+        (0, 0, 0, 0),
+    )
+    for pose, (col, row) in POSE_GRID.items():
+        registered = register_source_cell(cleaned_cells[pose], common_scale)
+        if pose in GROUND_SHADOW_STRIP_POSES:
+            registered = remove_baked_ground_shadow(registered)
+        registered = retain_largest_alpha_component(registered)
+        sheet.alpha_composite(registered, (col * SOURCE_CELL, row * SOURCE_CELL))
+    return sheet, common_scale
 
 
 def shift_frame(frame: Image.Image, dx: int = 0, dy: int = 0) -> Image.Image:
@@ -787,11 +1084,18 @@ def validate_art_rules(
     issues: List[str] = []
     used_rgb: set[Tuple[int, int, int]] = set()
     boundaries: List[Tuple[int, int, int]] = []
+    partial_alpha_count = 0
     for frame in frames.values():
         image = frame.convert("RGBA")
         pixels = image.get_flattened_data() if hasattr(image, "get_flattened_data") else image.getdata()
         used_rgb.update(pixel[:3] for pixel in pixels if pixel[3] > 0)
+        partial_alpha_count += sum(0 < pixel[3] < 255 for pixel in pixels)
         boundaries.extend(boundary_rgb(image))
+
+    if partial_alpha_count:
+        issues.append(
+            f"atlas contains {partial_alpha_count} partially transparent pixels; pixel art alpha must be binary"
+        )
 
     if len(used_rgb) > MAX_OPAQUE_RGB_COLORS:
         issues.append(f"palette has {len(used_rgb)} opaque RGB colors; maximum is {MAX_OPAQUE_RGB_COLORS}")
@@ -855,6 +1159,80 @@ def validate_art_rules(
     return issues
 
 
+def validate_leg_gaps(frames: Mapping[str, Image.Image], strict: bool = False) -> List[str]:
+    issues: List[str] = []
+    checked = 0
+    for pose, probe in LEG_GAP_PROBES.items():
+        frame = frames.get(pose)
+        if frame is None:
+            continue
+        checked += 1
+        left, top, right, bottom = probe
+        alpha = frame.convert("RGBA").getchannel("A")
+        values = [alpha.getpixel((x, y)) for y in range(top, bottom) for x in range(left, right)]
+        transparent_share = sum(value == 0 for value in values) / max(1, len(values))
+        connected_gap_rows = sum(
+            all(alpha.getpixel((x, y)) != 0 for x in range(left, right))
+            for y in range(max(top, bottom - 12), bottom)
+        )
+        bbox = opaque_bbox(frame)
+        wide_ground_rows = 0
+        if bbox is not None:
+            sprite_left, _sprite_top, sprite_right, sprite_bottom = bbox
+            minimum_strip_width = max(24, round((sprite_right - sprite_left) * 0.40))
+            for y in range(max(top, sprite_bottom - 12), sprite_bottom):
+                widest = max((end - start + 1 for start, end in alpha_intervals(frame, y)), default=0)
+                wide_ground_rows += widest >= minimum_strip_width
+        if transparent_share < 0.50 or wide_ground_rows >= 3 or connected_gap_rows:
+            issues.append(
+                f"{pose}: leg-gap probe is only {transparent_share:.1%} transparent "
+                f"with {wide_ground_rows} wide strips and {connected_gap_rows} gap bridges"
+            )
+
+    if issues:
+        print("leg-gap validation:")
+        for issue in issues:
+            print(f"  {'ERROR' if strict else 'WARN'} {issue}")
+    elif checked:
+        print(f"leg-gap validation: ok ({checked} upright poses)")
+    if strict and issues:
+        raise SystemExit("leg-gap validation failed")
+    return issues
+
+
+def validate_common_pose_scale(frames: Mapping[str, Image.Image], strict: bool = False) -> List[str]:
+    """Guard against per-pose max-fit resizing that makes one actor change size."""
+    issues: List[str] = []
+
+    def frame_height(name: str) -> int:
+        bbox = opaque_bbox(frames[name]) if name in frames else None
+        return 0 if bbox is None else bbox[3] - bbox[1]
+
+    stance_h = frame_height("stance")
+    field_h = frame_height("field")
+    catch_h = frame_height("catch")
+    catcher_h = frame_height("catcher")
+    if field_h and catch_h and abs(field_h - catch_h) > 2:
+        issues.append(f"field/catch height pop is {field_h}px -> {catch_h}px")
+    if stance_h and catcher_h:
+        catcher_ratio = catcher_h / stance_h
+        if not 0.72 <= catcher_ratio <= 0.82:
+            issues.append(f"catcher/stance height ratio is {catcher_ratio:.3f}; expected 0.72..0.82")
+
+    if issues:
+        print("common pose-scale validation:")
+        for issue in issues:
+            print(f"  {'ERROR' if strict else 'WARN'} {issue}")
+    elif stance_h:
+        print(
+            "common pose-scale validation: ok "
+            f"(stance {stance_h}px, field/catch {field_h}/{catch_h}px, catcher {catcher_h}px)"
+        )
+    if strict and issues:
+        raise SystemExit("common pose-scale validation failed")
+    return issues
+
+
 def validate_animation_metadata(frames: Mapping[str, object], animations: Mapping[str, object] | None) -> List[str]:
     if not animations:
         return []
@@ -913,7 +1291,22 @@ def write_player_atlas(
     validation_frames: Dict[str, Image.Image] = {}
 
     for pose, (col, row) in pose_grid.items():
-        frame = normalize_frame(crop_source_cell(source, col, row, sheet_cols, sheet_rows), uniform)
+        frame = normalize_frame(
+            crop_source_cell(
+                source,
+                col,
+                row,
+                sheet_cols,
+                sheet_rows,
+                strip_ground_shadow=(
+                    pose in GROUND_SHADOW_STRIP_POSES
+                    and source.size != (sheet_cols * SOURCE_CELL, sheet_rows * SOURCE_CELL)
+                ),
+            ),
+            uniform,
+        )
+        if pose == "walk1":
+            frame = remove_isolated_leg_bridges(frame, LEG_GAP_PROBES[pose])
         if night:
             frame = apply_night_rimlight(frame)
         x = col * FRAME
@@ -928,6 +1321,8 @@ def write_player_atlas(
 
     validate_registration(validation_frames, strict_registration)
     validate_art_rules(validation_frames, uniform, strict_art, night)
+    validate_leg_gaps(validation_frames, strict_art)
+    validate_common_pose_scale(validation_frames, strict_art)
 
     atlas.save(output_dir / image_name)
     write_json(output_dir / f"player-{variant}.json", image_name, atlas.size, frames, layout_name, animations)
@@ -936,7 +1331,22 @@ def write_player_atlas(
 def build_legacy_normalized_frames(source: Image.Image, uniform: str) -> Dict[str, Image.Image]:
     frames: Dict[str, Image.Image] = {}
     for pose, (col, row) in POSE_GRID.items():
-        frames[pose] = normalize_frame(crop_source_cell(source, col, row, LEGACY_COLS, LEGACY_ROWS), uniform)
+        frames[pose] = normalize_frame(
+            crop_source_cell(
+                source,
+                col,
+                row,
+                LEGACY_COLS,
+                LEGACY_ROWS,
+                strip_ground_shadow=(
+                    pose in GROUND_SHADOW_STRIP_POSES
+                    and source.size != (LEGACY_COLS * SOURCE_CELL, LEGACY_ROWS * SOURCE_CELL)
+                ),
+            ),
+            uniform,
+        )
+        if pose == "walk1":
+            frames[pose] = remove_isolated_leg_bridges(frames[pose], LEG_GAP_PROBES[pose])
     return frames
 
 
@@ -976,6 +1386,8 @@ def write_synthesized_v2_atlas(
 
     validate_registration(validation_frames, strict_registration)
     validate_art_rules(validation_frames, uniform, strict_art, night)
+    validate_leg_gaps(legacy_frames, strict_art)
+    validate_common_pose_scale(legacy_frames, strict_art)
 
     atlas.save(output_dir / image_name)
     write_json(output_dir / f"player-{variant}.json", image_name, atlas.size, frames, "v2", V2_ANIMATIONS)
@@ -1033,6 +1445,8 @@ def write_json(
             "lighting": "night" if "-night." in image_name else "day",
         },
     }
+    if image_name.startswith("player-"):
+        payload["meta"]["registrationScaleMode"] = "sheet-common"
     if animations:
         validate_animation_metadata(frames, animations)
         payload["animations"] = animations
@@ -1052,9 +1466,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--source",
-        default=DEFAULT_SOURCE if DEFAULT_SOURCE.exists() else LEGACY_REFERENCE_SOURCE,
+        default=(
+            DEFAULT_SOURCE
+            if DEFAULT_SOURCE.exists()
+            else SOURCE_REFERENCE
+            if SOURCE_REFERENCE.exists()
+            else LEGACY_REFERENCE_SOURCE
+        ),
         type=Path,
         help="Imagegen source sprite sheet",
+    )
+    parser.add_argument(
+        "--contract-output",
+        type=Path,
+        help="Write an exact 1280x1024 common-scale source sheet and exit",
     )
     parser.add_argument("--out", default=Path("assets/gamecast"), type=Path, help="Output asset directory")
     parser.add_argument("--layout", choices=("auto", "legacy", "v2"), default="auto", help="Source grid layout")
@@ -1063,6 +1488,15 @@ def main() -> None:
     parser.add_argument("--strict-source-grid", action="store_true", help="Require an exact 256px-per-cell source sheet")
     parser.add_argument("--strict-art", action="store_true", help="Fail 3-tone, selout, reserved-color, and palette checks")
     args = parser.parse_args()
+
+    if args.contract_output:
+        source = Image.open(args.source).convert("RGBA")
+        contract, common_scale = build_contract_source_sheet(source)
+        args.contract_output.parent.mkdir(parents=True, exist_ok=True)
+        contract.save(args.contract_output)
+        print(f"contract source: {args.contract_output} ({contract.width}x{contract.height})")
+        print(f"registration scale mode: sheet-common ({common_scale:.6f})")
+        return
 
     output_dir = args.out
     source_dir = output_dir / "source"
