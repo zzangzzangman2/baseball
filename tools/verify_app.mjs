@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { verifyGamecastTimeline } from "./verify_gamecast_timeline.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,6 +12,12 @@ const ASSET_DIR = path.join(ROOT_DIR, "assets");
 const REPORT_DIR = path.join(ROOT_DIR, "reports");
 const REPORT_PATH = path.join(REPORT_DIR, "verification.md");
 const GAMECAST_PLAYER_ATLAS_PATH = path.join(ASSET_DIR, "gamecast", "player-home.json");
+const GAMECAST_PLAYER_ATLAS_VARIANTS = [
+  ["player-home.json", "day"],
+  ["player-away.json", "day"],
+  ["player-home-night.json", "night"],
+  ["player-away-night.json", "night"]
+];
 const GAMECAST_MOTION_MIN_FRAMES = {
   swing: 18,
   pitch: 18,
@@ -285,6 +292,7 @@ async function main() {
   await runCheck("선수 누적 기록 모델", checkPlayerSeasonStats);
   await runCheck("경기 박스스코어/eventLog", checkGameBoxScoreEventLog);
   await runCheck("게임캐스트 v3 모션 아틀라스", checkGamecastMotionAtlas);
+  await runCheck("게임캐스트 v2 선언형 타임라인", verifyGamecastTimeline);
   await runCheck("하프이닝 경기 AI/작전", checkHalfInningGameAiTactics);
   await runCheck("로테이션/불펜 운용 snapshot", checkPitchingSnapshotUsage);
   await runCheck("수동 투수 운용 우선 적용", checkManualPitchingPlan);
@@ -433,7 +441,8 @@ function checkCreateInitialState() {
   assert(initialState && typeof initialState === "object", "초기 상태 객체가 생성되지 않았습니다.", MODULE_PATHS.data);
   assert(Array.isArray(initialState.teams), "초기 상태의 teams가 배열이 아닙니다.", MODULE_PATHS.data);
   assert(Array.isArray(initialState.eventLog), "초기 상태의 eventLog가 배열이 아닙니다.", MODULE_PATHS.data);
-  return `초기 날짜 ${initialState.currentDate}, 팀 ${initialState.teams.length}개`;
+  assert(initialState.ui?.gamecastEngine === "v2", `기본 게임캐스트 엔진이 v2가 아닙니다: ${initialState.ui?.gamecastEngine}`, MODULE_PATHS.data);
+  return `초기 날짜 ${initialState.currentDate}, 팀 ${initialState.teams.length}개, 게임캐스트 v2 기본`;
 }
 
 function checkTeamCount() {
@@ -1153,8 +1162,22 @@ function checkGamecastMotionAtlas() {
 
   assert(meta.layout === "v3", `게임캐스트 선수 아틀라스 layout=${meta.layout}; v3 필요`, GAMECAST_PLAYER_ATLAS_PATH);
   assert(fs.existsSync(imagePath), `아틀라스 이미지가 없습니다: ${relativePath(imagePath)}`, imagePath);
-  assert(safeInteger(meta.frameSize?.w) >= 48 && safeInteger(meta.frameSize?.h) >= 48, `프레임 크기 메타가 작습니다: ${JSON.stringify(meta.frameSize)}`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(safeInteger(meta.frameSize?.w) === 64 && safeInteger(meta.frameSize?.h) === 64, `프레임 크기는 64x64여야 합니다: ${JSON.stringify(meta.frameSize)}`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(safeInteger(meta.baselineY) === 60 && safeInteger(meta.centerX) === 32, `64px 등록점 메타가 잘못되었습니다: baseline=${meta.baselineY}, center=${meta.centerX}`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(safeInteger(meta.sourceCellSize?.w) === 256 && safeInteger(meta.sourceCellSize?.h) === 256 && safeInteger(meta.integerDownscale) === 4, `256px 소스 셀/4x 축소 메타가 잘못되었습니다: ${JSON.stringify(meta.sourceCellSize)}/${meta.integerDownscale}`, GAMECAST_PLAYER_ATLAS_PATH);
   assert(safeInteger(meta.size?.w) >= safeInteger(meta.frameSize?.w) * 8, `아틀라스 폭이 너무 작습니다: ${JSON.stringify(meta.size)}`, GAMECAST_PLAYER_ATLAS_PATH);
+
+  for (const [fileName, lighting] of GAMECAST_PLAYER_ATLAS_VARIANTS) {
+    const atlasPath = path.join(path.dirname(GAMECAST_PLAYER_ATLAS_PATH), fileName);
+    assert(fs.existsSync(atlasPath), `64px 아틀라스 변형이 없습니다: ${fileName}`, atlasPath);
+    const variant = JSON.parse(fs.readFileSync(atlasPath, "utf8"));
+    const variantMeta = variant.meta ?? {};
+    const variantImage = path.join(path.dirname(atlasPath), String(variantMeta.image ?? fileName.replace(/\.json$/u, ".png")));
+    assert(fs.existsSync(variantImage), `64px 아틀라스 이미지가 없습니다: ${relativePath(variantImage)}`, variantImage);
+    assert(safeInteger(variantMeta.frameSize?.w) === 64 && safeInteger(variantMeta.frameSize?.h) === 64, `${fileName} 프레임이 64x64가 아닙니다.`, atlasPath);
+    assert(safeInteger(variantMeta.baselineY) === 60 && safeInteger(variantMeta.centerX) === 32, `${fileName} 등록점이 60/32가 아닙니다.`, atlasPath);
+    assert(variantMeta.lighting === lighting, `${fileName} lighting=${variantMeta.lighting}; ${lighting} 필요`, atlasPath);
+  }
 
   const problems = [];
   for (const [name, minimum] of Object.entries(GAMECAST_MOTION_MIN_FRAMES)) {

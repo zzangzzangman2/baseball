@@ -90,7 +90,8 @@ def save_contact_sheet(
     if not rows:
         return
 
-    frame_size = 48 * scale
+    first_frame = next(iter(frames.values()))
+    frame_size = int(first_frame["frame"]["w"]) * scale
     label_h = 12
     gap = 4
     max_frames = max(len(sequence) for _, sequence in rows)

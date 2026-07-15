@@ -16,20 +16,41 @@ from build_gamecast_sprites import (
     FRAME,
     BASELINE_Y,
     CENTER_X,
+    DEFAULT_SOURCE,
+    LEGACY_REFERENCE_SOURCE,
     LEGACY_TO_V2_BASE,
     LEGACY_TO_V2_SHIFT,
+    LEGACY_COLS,
+    LEGACY_ROWS,
+    MAX_SPRITE_HEIGHT,
+    MAX_SPRITE_WIDTH,
+    SOURCE_CELL,
+    SOURCE_DOWNSCALE,
     V2_GRID,
+    apply_night_rimlight,
     atlas_frame,
     build_legacy_normalized_frames,
     count_colors,
     shift_frame,
     validate_animation_metadata,
+    validate_art_rules,
     validate_registration,
+    validate_source_grid,
     write_props_atlas,
 )
 
 
 V3_COLS = 16
+MOTION_MINIMUM_FRAMES = {
+    "swing": 10,
+    "pitch": 8,
+    "run": 6,
+    "throw": 3,
+    "catch": 3,
+    "dive": 3,
+    "slide": 2,
+    "catcher": 2,
+}
 V3_ANIMATIONS = {
     "swing": {
         "count": 24,
@@ -54,8 +75,8 @@ V3_ANIMATIONS = {
             ("pitch_stride", 1, 0),
             ("pitch_cock", -1, 0),
             ("pitch_release", 2, 0),
-            ("pitch_follow1", 2, 1),
-            ("pitch_follow2", 3, 1),
+            ("pitch_follow1", 1, 1),
+            ("pitch_follow2", 1, 1),
         ],
         "durations": [36, 34, 32, 30, 30, 28, 26, 24, 22, 20, 18, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 40, 44, 50],
         "smear": True,
@@ -151,6 +172,40 @@ V3_ALIASES = {
     "coach": "idle",
     "umpire": "idle",
 }
+
+
+def validate_motion_contract(specs: Mapping[str, Mapping[str, object]]) -> None:
+    issues = []
+    for name, minimum in MOTION_MINIMUM_FRAMES.items():
+        spec = specs.get(name)
+        if not spec:
+            issues.append(f"missing required animation '{name}'")
+            continue
+        count = int(spec.get("count", 0))
+        durations = list(spec.get("durations") or [])
+        if count < minimum:
+            issues.append(f"{name}: {count} frames is below the {minimum}-frame contract")
+        if len(durations) != count:
+            issues.append(f"{name}: {len(durations)} durations for {count} frames")
+
+    pitch_keys = [str(key[0]) for key in V3_ANIMATIONS.get("pitch", {}).get("keys", [])]
+    if "pitch_release" not in pitch_keys:
+        issues.append("pitch: release key is missing")
+    else:
+        release_index = pitch_keys.index("pitch_release")
+        follow_through = [name for name in pitch_keys[release_index + 1:] if name.startswith("pitch_follow")]
+        if not follow_through:
+            issues.append("pitch: at least one follow-through key must come after release")
+
+    if issues:
+        for issue in issues:
+            print(f"motion contract: ERROR {issue}")
+        raise SystemExit("motion contract validation failed")
+    print(
+        "motion contract validation: ok "
+        f"(swing {V3_ANIMATIONS['swing']['count']}, pitch {V3_ANIMATIONS['pitch']['count']}, "
+        f"run {V3_ANIMATIONS['run']['count']}; pitch follow-through present)"
+    )
 
 
 def with_alpha(image: Image.Image, alpha_scale: float) -> Image.Image:
@@ -261,7 +316,7 @@ def write_v3_json(
         "animations": animations,
         "meta": {
             "app": "Codex Gamecast Sprite Pipeline",
-            "version": "3.0",
+            "version": "3.1",
             "image": image_name,
             "format": "RGBA8888",
             "size": {"w": size[0], "h": size[1]},
@@ -270,29 +325,35 @@ def write_v3_json(
             "layout": "v3",
             "baselineY": BASELINE_Y,
             "centerX": CENTER_X,
-            "minimumFrames": {
-                "swing": 18,
-                "pitch": 18,
-                "run": 8,
-                "throw": 12,
-                "catch": 8,
-                "dive": 8,
-                "slide": 8,
-                "catcher": 8,
-            },
+            "sourceCellSize": {"w": SOURCE_CELL, "h": SOURCE_CELL},
+            "integerDownscale": SOURCE_DOWNSCALE,
+            "safeOpaqueSize": {"w": MAX_SPRITE_WIDTH, "h": MAX_SPRITE_HEIGHT},
+            "minimumFrames": MOTION_MINIMUM_FRAMES,
+            "artContract": "docs/gamecast-sprite-art-spec.md",
+            "lighting": "night" if "-night." in image_name else "day",
         },
     }
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
 
-def write_v3_atlas(source: Image.Image, output_dir: Path, uniform: str, strict_registration: bool) -> None:
-    image_name = f"player-{uniform}.png"
+def write_v3_atlas(
+    source: Image.Image,
+    output_dir: Path,
+    uniform: str,
+    strict_registration: bool,
+    strict_art: bool,
+    night: bool = False,
+) -> None:
+    variant = f"{uniform}-night" if night else uniform
+    image_name = f"player-{variant}.png"
     base = build_v2_base_frames(source, uniform)
     dense_frames: Dict[str, Image.Image] = {}
     for name, spec in V3_ANIMATIONS.items():
         dense_frames.update(build_animation_frames(base, name, spec))
     for pose in STATIC_POSES:
         dense_frames[pose] = frame_for(base, pose)
+    if night:
+        dense_frames = {name: apply_night_rimlight(frame) for name, frame in dense_frames.items()}
 
     ordered_names = list(dense_frames.keys())
     rows = math.ceil(len(ordered_names) / V3_COLS)
@@ -314,16 +375,23 @@ def write_v3_atlas(source: Image.Image, output_dir: Path, uniform: str, strict_r
             frames[alias] = frames[target]
 
     validate_registration(validation_frames, strict_registration)
+    validate_art_rules(validation_frames, uniform, strict_art, night)
     animations = animation_metadata()
     atlas.save(output_dir / image_name)
-    write_v3_json(output_dir / f"player-{uniform}.json", image_name, atlas.size, frames, animations)
+    write_v3_json(output_dir / f"player-{variant}.json", image_name, atlas.size, frames, animations)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", default=Path("assets/gamecast/source/player-sheet-imagegen.png"), type=Path)
+    parser.add_argument(
+        "--source",
+        default=DEFAULT_SOURCE if DEFAULT_SOURCE.exists() else LEGACY_REFERENCE_SOURCE,
+        type=Path,
+    )
     parser.add_argument("--out", default=Path("assets/gamecast"), type=Path)
     parser.add_argument("--strict-registration", action="store_true")
+    parser.add_argument("--strict-source-grid", action="store_true", help="Require an exact 5x4 sheet of 256px source cells")
+    parser.add_argument("--strict-art", action="store_true", help="Fail 3-tone, selout, reserved-color, and palette checks")
     args = parser.parse_args()
 
     output_dir = args.out
@@ -332,17 +400,29 @@ def main() -> None:
     source_dir.mkdir(parents=True, exist_ok=True)
 
     source = Image.open(args.source).convert("RGBA")
-    source_copy = source_dir / "player-sheet-imagegen.png"
+    validate_source_grid(source, LEGACY_COLS, LEGACY_ROWS, args.strict_source_grid)
+    validate_motion_contract(V3_ANIMATIONS)
+    source_copy = source_dir / args.source.name
     if args.source.resolve() != source_copy.resolve():
         shutil.copyfile(args.source, source_copy)
 
-    write_v3_atlas(source, output_dir, "home", args.strict_registration)
-    write_v3_atlas(source, output_dir, "away", args.strict_registration)
+    for uniform in ("home", "away"):
+        for night in (False, True):
+            write_v3_atlas(
+                source,
+                output_dir,
+                uniform,
+                args.strict_registration,
+                args.strict_art,
+                night,
+            )
     write_props_atlas(output_dir)
 
     counts = count_colors([
         output_dir / "player-home.png",
+        output_dir / "player-home-night.png",
         output_dir / "player-away.png",
+        output_dir / "player-away-night.png",
         output_dir / "props.png",
     ])
     for name, count in counts.items():

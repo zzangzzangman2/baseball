@@ -184,7 +184,7 @@ const GAMECAST_RESUME_COUNTDOWN_MS = 400;
 const GAMECAST_HOLD_LEVERAGE_THRESHOLD = 0.55;
 const GAMECAST_SCORE_SLOW_RATE = 0.35;
 const GAMECAST_FAST_BALL_RATE = 1.5;
-const GAMECAST_DEFAULT_ENGINE = "phaser";
+const GAMECAST_DEFAULT_ENGINE = "v2";
 // Ballpark dimensions are visual rendering data only. Sources:
 // Jamsil: venue listings commonly publish LF/RF 100m, CF 125m.
 // Sajik: Korean venue records publish LF/RF 95.8m, L/R-center 113m, CF 121m.
@@ -3561,7 +3561,8 @@ function bindActions(root, state) {
         gamecastEngine: nextEngine
       };
       render(root, state);
-      setStatus(root, nextEngine === "phaser" ? "Phaser 중계 엔진으로 전환했습니다." : "Canvas 중계 엔진으로 전환했습니다.");
+      const engineLabel = nextEngine === "v2" ? "게임캐스트 v2" : nextEngine === "phaser" ? "Phaser" : "Canvas";
+      setStatus(root, `${engineLabel} 중계 엔진으로 전환했습니다.`);
     });
   });
 
@@ -5902,6 +5903,8 @@ function normalizeGamecastEvent(event, state, gamecastContext = null) {
     outsAfter,
     basesBefore: toBaseTriple(event?.basesBefore),
     basesAfter: toBaseTriple(event?.basesAfter),
+    baseRunnerIdsBefore: Array.from({ length: 3 }, (_, index) => String(event?.baseRunnerIdsBefore?.[index] ?? "")),
+    baseRunnerIdsAfter: Array.from({ length: 3 }, (_, index) => String(event?.baseRunnerIdsAfter?.[index] ?? "")),
     scoredRunners,
     scoredRunnerCount: scoredRunners.length,
     inningEnded,
@@ -6312,7 +6315,7 @@ function initGamecastPixelScreen(root, appState = null) {
     };
 
     const phaserScreen = screen.classList.contains("gamecast-screen-large");
-    if (engine === "v2" && phaserScreen && canUseGamecast2()) {
+    if (engine === "v2" && canUseGamecast2()) {
       const controller = createGamecastPhaserController({ ...controllerOptions, renderer: "v2" });
       if (controller) {
         controllers.push(controller);
@@ -6714,6 +6717,11 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
 
   const intersectionObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver((entries) => {
     state.visible = entries.some((entry) => entry.isIntersecting);
+    // A completed replay can be remounted after a dashboard tab switch. Let
+    // Phaser present that final frame once before its runtime schedules the
+    // loop shutdown; pausing here can otherwise stop the loader/renderer on a
+    // freshly created, still-blank canvas.
+    if (state.done) return;
     if (shouldRunGamecastPlayback(state)) rendererHandle.resume();
     else rendererHandle.pause();
   }, { threshold: 0.05 }) : null;
@@ -8756,7 +8764,8 @@ function gamecastCriticalBallPhase(frame) {
   const event = frame?.event;
   if (!event || frame.done) return false;
   const progress = Number(frame.progress ?? 0);
-  if (progress < gamecastPitchEnd(event)) return true;
+  const pitchStarts = event.outcome === "walk" ? [0, 0.2, 0.4] : event.outcome === "strikeout" ? [0, 0.23, 0.46] : [0];
+  if (pitchStarts.some((start) => progress >= start && progress <= start + 0.22)) return true;
   return isBattedBallOutcome(event.outcome) && progress < gamecastBallFlightEnd(event);
 }
 
@@ -9679,14 +9688,18 @@ function gamecastThrowEndProgress(event) {
 
 function gamecastResultRevealProgress(event) {
   if (!event) return 0.82;
-  if (event.outcome === "homeRun") return 0.93;
-  if (event.outcome === "triple") return 0.9;
-  if (event.outcome === "double") return 0.86;
-  if (event.outcome === "single" || event.outcome === "error") return 0.82;
-  if (event.outcome === "walk") return 0.78;
-  if (event.outcome === "strikeout") return 0.64;
-  if (event.doublePlay) return 0.84;
-  if (event.outcome === "out") return 0.82;
+  if (event.outcome === "homeRun") return 0.97;
+  if (event.outcome === "triple") return 0.95;
+  if (event.outcome === "double") return 0.92;
+  if (event.outcome === "single") return 0.87;
+  if (event.outcome === "error") return 0.89;
+  if (event.outcome === "walk") return 0.93;
+  if (event.outcome === "strikeout") return 0.75;
+  if (event.doublePlay) return 0.8;
+  if (event.outcome === "out") {
+    const battedBallType = String(event.battedBallType ?? "").toLowerCase();
+    return battedBallType.includes("fly") || battedBallType.includes("line") ? 0.85 : 0.75;
+  }
   return 0.82;
 }
 

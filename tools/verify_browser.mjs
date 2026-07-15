@@ -954,6 +954,7 @@ async function checkViewport(viewport) {
 
   const tabCoverage = await collectTabbedCoverage();
   await switchDashboardTab("standings");
+  await waitForGamecastCanvasPaint();
   const baseResult = await evaluateInBrowser(`
     (() => {
       const expectedTeamNames = ${JSON.stringify(EXPECTED_TEAM_NAMES)};
@@ -1011,10 +1012,17 @@ async function checkViewport(viewport) {
         if (!image) return { unique: 0, alpha: 0 };
         const colors = new Set();
         let alpha = 0;
-        for (let i = 0; i < image.data.length; i += 4 * Math.max(1, Math.floor(image.data.length / 1200))) {
-          const a = image.data[i + 3];
-          if (a > 0) alpha += 1;
-          colors.add(image.data[i] + "," + image.data[i + 1] + "," + image.data[i + 2] + "," + a);
+        const columns = 32;
+        const rows = 24;
+        for (let row = 0; row < rows; row += 1) {
+          for (let column = 0; column < columns; column += 1) {
+            const x = Math.min(gamecastCanvas.width - 1, Math.floor((column + 0.5) * gamecastCanvas.width / columns));
+            const y = Math.min(gamecastCanvas.height - 1, Math.floor((row + 0.5) * gamecastCanvas.height / rows));
+            const i = (y * gamecastCanvas.width + x) * 4;
+            const a = image.data[i + 3];
+            if (a > 0) alpha += 1;
+            colors.add(image.data[i] + "," + image.data[i + 1] + "," + image.data[i + 2] + "," + a);
+          }
         }
         return { unique: colors.size, alpha };
       })() : { unique: 0, alpha: 0 };
@@ -1172,6 +1180,7 @@ async function checkViewport(viewport) {
         hasGamecastPanel: Boolean(gamecastPanel),
         hasGamecastScreen: Boolean(gamecastScreen),
         hasGamecastCanvas: Boolean(gamecastCanvas),
+        gamecastEngine: gamecastScreen?.dataset?.gamecastEngineCurrent ?? "",
         gamecastCanvasWidth: gamecastCanvas?.width ?? 0,
         gamecastCanvasHeight: gamecastCanvas?.height ?? 0,
         gamecastCanvasCssWidth: gamecastCanvasRect?.width ?? 0,
@@ -1240,7 +1249,7 @@ async function checkViewport(viewport) {
   const gamecastScaleX = result.gamecastCanvasCssWidth / Math.max(1, result.gamecastCanvasPixelW);
   const gamecastScaleY = result.gamecastCanvasCssHeight / Math.max(1, result.gamecastCanvasPixelH);
   assert(Math.abs(gamecastScaleX - gamecastScaleY) < 0.02, `게임캐스트 표시 비율이 내부 해상도와 다릅니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/styles.css");
-  assert(viewport.width < result.gamecastCanvasPixelW || result.gamecastCanvasCssWidth >= result.gamecastCanvasPixelW, `데스크톱 게임캐스트 표시 크기가 내부 해상도보다 작습니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/styles.css");
+  assert(result.gamecastEngine === "v2" || viewport.width < result.gamecastCanvasPixelW || result.gamecastCanvasCssWidth >= result.gamecastCanvasPixelW, `데스크톱 게임캐스트 표시 크기가 내부 해상도보다 작습니다: ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}, base ${result.gamecastCanvasPixelW}x${result.gamecastCanvasPixelH}`, "src/styles.css");
   assert(result.gamecastCanvasWidth >= result.gamecastCanvasCssWidth && result.gamecastCanvasHeight >= result.gamecastCanvasCssHeight, `픽셀 캔버스 버퍼가 CSS 표시 크기보다 작습니다: buffer ${result.gamecastCanvasWidth}x${result.gamecastCanvasHeight}, css ${result.gamecastCanvasCssWidth}x${result.gamecastCanvasCssHeight}`, "src/ui.js");
   assert(/pixelated|crisp-edges/i.test(result.gamecastCanvasImageRendering), `픽셀 캔버스 image-rendering=${result.gamecastCanvasImageRendering}`, "src/styles.css");
   assert(result.gamecastCanvasPixelUnique >= 6 && result.gamecastCanvasAlphaSamples > 0, `픽셀 캔버스가 비었거나 팔레트가 너무 단조롭습니다: unique=${result.gamecastCanvasPixelUnique}, alpha=${result.gamecastCanvasAlphaSamples}`, "src/ui.js");
@@ -1621,16 +1630,32 @@ async function checkGamecastLab() {
   await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fullscreen=1&step=1&speed=4&holds=0&qa=lab-step-${Date.now()}` });
   await loadEvent;
   await waitForGamecastLabModal();
-  await delay(2600);
-  const stepHoldProbe = await evaluateInBrowser(`
-    (() => ({
-      feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
-      overlayVisible: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay].is-visible")),
-      holdType: document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay]")?.dataset?.holdType ?? "",
-      activeSpeed: document.querySelector("[data-gamecast-modal] [data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? "",
-      stepActive: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-step].is-active"))
-    }))()
-  `);
+  const stepHoldStartedAt = Date.now();
+  let stepHoldProbe = null;
+  const stepHoldDeadline = stepHoldStartedAt + 9000;
+  while (Date.now() < stepHoldDeadline) {
+    stepHoldProbe = await evaluateInBrowser(`
+      (() => {
+        const screen = document.querySelector("[data-gamecast-modal] [data-gamecast-screen]");
+        const frame = screen?.__gamecastDebugFrame ?? screen?.__gamecast2Frame ?? null;
+        const overlay = document.querySelector("[data-gamecast-modal] [data-gamecast-pause-overlay]");
+        return {
+          feedCount: document.querySelectorAll("[data-gamecast-modal] .gamecast-feed li[data-gamecast-event-id]").length,
+          overlayVisible: Boolean(overlay?.classList.contains("is-visible")),
+          holdType: overlay?.dataset?.holdType ?? "",
+          activeSpeed: document.querySelector("[data-gamecast-modal] [data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? "",
+          stepActive: Boolean(document.querySelector("[data-gamecast-modal] [data-gamecast-step].is-active")),
+          engine: screen?.dataset?.gamecastEngineCurrent ?? "",
+          frameOutcome: frame?.event?.outcome ?? frame?.outcome ?? "",
+          frameProgress: Number(frame?.progress ?? 0),
+          frameDone: Boolean(frame?.done)
+        };
+      })()
+    `);
+    if (stepHoldProbe.overlayVisible && stepHoldProbe.holdType === "step") break;
+    await delay(120);
+  }
+  stepHoldProbe.waitedMs = Date.now() - stepHoldStartedAt;
   await delay(1500);
   const stepStillProbe = await evaluateInBrowser(`
     (() => ({
@@ -1704,10 +1729,10 @@ async function checkGamecastLab() {
     mobile: false
   });
   loadEvent = cdp.once("Page.loadEventFired");
-  await cdp.send("Page.navigate", { url: `${labUrl}?engine=v2&debug=anchors&field=field-gocheok-dome&team=kiwoom&days=3&fullscreen=1&holds=0&qa=lab-v2-anchors-${Date.now()}` });
+  await cdp.send("Page.navigate", { url: `${labUrl}?debug=anchors&field=field-gocheok-dome&team=kiwoom&days=3&fullscreen=1&holds=0&qa=lab-v2-default-${Date.now()}` });
   await loadEvent;
   await waitForGamecastLabModal();
-  await delay(900);
+  await waitForModalGamecast2Diagnostics();
   const anchorProbe = await evaluateInBrowser(`
     (() => {
       const screen = document.querySelector("[data-gamecast-modal] [data-gamecast-screen]");
@@ -1721,9 +1746,25 @@ async function checkGamecastLab() {
       const defenderKeys = (players.defenders ?? []).map((actor) => actor.fieldingKey || actor.key).sort();
       const outfieldScales = (players.defenders ?? []).filter((actor) => actor.isOutfielder).map((actor) => Number(actor.scale ?? 0));
       const infieldScales = (players.defenders ?? []).filter((actor) => !actor.isOutfielder && actor.fieldingKey !== "P" && actor.fieldingKey !== "C").map((actor) => Number(actor.scale ?? 0));
+      const motionFrame = screen?.__gamecast2Frame ?? null;
+      const particleState = motionFrame?.particles ?? null;
+      const cameraState = motionFrame?.camera ?? null;
+      const ratingTokens = motionFrame?.ratingTokens ?? [];
       return {
         engine: screen?.dataset?.gamecastEngineCurrent ?? "",
         field: screen?.dataset?.gamecast2Field ?? "",
+        playerAtlas: screen?.dataset?.gamecast2PlayerAtlas ?? "",
+        timelineTemplate: screen?.dataset?.gamecast2TimelineTemplate ?? "",
+        scoreboardVisible: screen?.dataset?.gamecast2Scoreboard === "1",
+        scoreboardState: motionFrame?.scoreboard ?? null,
+        cameraZoom: Number(screen?.dataset?.gamecast2CameraZoom ?? NaN),
+        cameraState,
+        particleCount: Number(screen?.dataset?.gamecast2ParticleCount ?? NaN),
+        particleTone: screen?.dataset?.gamecast2ParticleTone ?? "",
+        particleState,
+        abilityTokenCount: Number(screen?.dataset?.gamecastAbilityUnderlays ?? 0),
+        visibleAbilityUnderlays: Number(screen?.dataset?.gamecast2VisibleAbilityUnderlays ?? 0),
+        ratingTokenCount: ratingTokens.length,
         anchorCount: Number(screen?.dataset?.gamecast2AnchorCount ?? 0),
         defenderCount: Number(screen?.dataset?.gamecast2DefenderCount ?? 0),
         playerCount: Number(screen?.dataset?.gamecast2PlayerCount ?? 0),
@@ -1747,6 +1788,44 @@ async function checkGamecastLab() {
     })()
   `);
   assert(anchorProbe.engine === "v2", `v2 엔진이 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/ui.js");
+  assert(anchorProbe.playerAtlas === "64-day", `v2 64px day atlas가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.timelineTemplate && anchorProbe.timelineTemplate !== "fallback", `v2 timeline template가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/timeline.js");
+  assert(
+    anchorProbe.scoreboardVisible &&
+      Number.isFinite(anchorProbe.scoreboardState?.x) &&
+      Number.isFinite(anchorProbe.scoreboardState?.y) &&
+      String(anchorProbe.scoreboardState?.batter ?? "").length > 0,
+    `v2 code scoreboard가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`,
+    "src/gamecast2/scene.js"
+  );
+  assert(
+    Number.isFinite(anchorProbe.cameraZoom) &&
+      anchorProbe.cameraZoom >= 1 &&
+      anchorProbe.cameraZoom <= 1.1201 &&
+      Number.isFinite(anchorProbe.cameraState?.zoom) &&
+      anchorProbe.cameraState.zoom >= 1 &&
+      anchorProbe.cameraState.zoom <= 1.1201,
+    `v2 camera zoom cap이 지켜지지 않았습니다: ${JSON.stringify(anchorProbe)}`,
+    "src/gamecast2/scene.js"
+  );
+  assert(
+    Number.isFinite(anchorProbe.particleCount) &&
+      anchorProbe.particleCount >= 0 &&
+      anchorProbe.particleCount <= 64 &&
+      anchorProbe.particleTone === "day" &&
+      anchorProbe.particleState &&
+      anchorProbe.particleState.total === anchorProbe.particleCount,
+    `v2 particle 상태 계약이 어긋났습니다: ${JSON.stringify(anchorProbe)}`,
+    "src/gamecast2/scene.js"
+  );
+  assert(
+    anchorProbe.abilityTokenCount >= 9 &&
+      anchorProbe.ratingTokenCount === anchorProbe.abilityTokenCount &&
+      anchorProbe.visibleAbilityUnderlays >= 1 &&
+      anchorProbe.visibleAbilityUnderlays <= 3,
+    `v2 ability underlay 표시 수가 어긋났습니다: ${JSON.stringify(anchorProbe)}`,
+    "src/gamecast2/scene.js"
+  );
   assert(anchorProbe.field === "field-gocheok-dome", `v2 필드 선택이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
   assert(anchorProbe.anchorCount >= 15 && anchorProbe.missing.length === 0, `v2 앵커가 부족합니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(anchorProbe.canvasPixelW === 960 && anchorProbe.canvasPixelH === 720, `v2 필드 해상도 계약이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
@@ -1763,6 +1842,45 @@ async function checkGamecastLab() {
     "src/gamecast2/scene.js"
   );
 
+  loadEvent = cdp.once("Page.loadEventFired");
+  await cdp.send("Page.navigate", { url: `${labUrl}?field=field-gocheok-dome&team=kiwoom&days=3&fullscreen=0&holds=0&qa=lab-v2-inline-default-${Date.now()}` });
+  await loadEvent;
+  await waitForInlineGamecastV2();
+  const inlineV2Probe = await evaluateInBrowser(`
+    (() => {
+      const screen = document.querySelector("#gamecast [data-gamecast-screen]");
+      const canvas = screen?.querySelector("[data-gamecast-canvas].gamecast-pixel-canvas");
+      const rect = canvas?.getBoundingClientRect();
+      return {
+        engine: screen?.dataset?.gamecastEngineCurrent ?? "",
+        inModal: Boolean(screen?.closest("[data-gamecast-modal]")),
+        largeScreen: Boolean(screen?.classList.contains("gamecast-screen-large")),
+        playerAtlas: screen?.dataset?.gamecast2PlayerAtlas ?? "",
+        timelineTemplate: screen?.dataset?.gamecast2TimelineTemplate ?? "",
+        scoreboardVisible: screen?.dataset?.gamecast2Scoreboard === "1",
+        canvasWidth: Math.round(rect?.width ?? 0),
+        canvasHeight: Math.round(rect?.height ?? 0),
+        canvasPixelW: Number(canvas?.dataset?.pixelW ?? 0),
+        canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0)
+      };
+    })()
+  `);
+  assert(
+    inlineV2Probe.engine === "v2" &&
+      !inlineV2Probe.inModal &&
+      !inlineV2Probe.largeScreen &&
+      inlineV2Probe.playerAtlas === "64-day" &&
+      inlineV2Probe.timelineTemplate &&
+      inlineV2Probe.timelineTemplate !== "fallback" &&
+      inlineV2Probe.scoreboardVisible &&
+      inlineV2Probe.canvasWidth > 0 &&
+      inlineV2Probe.canvasHeight > 0 &&
+      inlineV2Probe.canvasPixelW === 960 &&
+      inlineV2Probe.canvasPixelH === 720,
+    `inline default v2 mount가 어긋났습니다: ${JSON.stringify(inlineV2Probe)}`,
+    "src/ui.js"
+  );
+
   return [
     `desktop ${Math.round(desktopProbe.cssWidth)}x${Math.round(desktopProbe.cssHeight)}`,
     `feed ${desktopProbe.feedCount}/${desktopProbe.totalEvents}`,
@@ -1773,8 +1891,64 @@ async function checkGamecastLab() {
     `playfeel ball ${playFeelProbe.ballFrames}/${playFeelSamples.length}`,
     `midview ${viewportSweep.map((probe) => probe.width).join("/")}`,
     `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`,
-    `v2 anchors ${anchorProbe.anchorCount}, players ${anchorProbe.playerCount}`
+    `v2 anchors ${anchorProbe.anchorCount}, players ${anchorProbe.playerCount}`,
+    `v2 atlas/timeline ${anchorProbe.playerAtlas}/${anchorProbe.timelineTemplate}`,
+    `v2 fx camera<=${anchorProbe.cameraZoom.toFixed(3)}, particles ${anchorProbe.particleCount}, underlays ${anchorProbe.visibleAbilityUnderlays}`,
+    `inline default ${inlineV2Probe.engine} ${inlineV2Probe.canvasPixelW}x${inlineV2Probe.canvasPixelH}`
   ].join(", ");
+}
+
+async function waitForInlineGamecastV2() {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const ready = await evaluateInBrowser(`
+      (() => {
+        const screen = document.querySelector("#gamecast [data-gamecast-screen]");
+        const canvas = screen?.querySelector("[data-gamecast-canvas].gamecast-pixel-canvas");
+        return Boolean(
+          screen &&
+          !screen.closest("[data-gamecast-modal]") &&
+          screen.dataset.gamecastEngineCurrent === "v2" &&
+          screen.dataset.gamecast2PlayerAtlas?.startsWith("64-") &&
+          screen.dataset.gamecast2TimelineTemplate &&
+          screen.dataset.gamecast2Scoreboard === "1" &&
+          Number(canvas?.dataset?.pixelW ?? 0) === 960 &&
+          Number(canvas?.dataset?.pixelH ?? 0) === 720
+        );
+      })()
+    `);
+    if (ready) return true;
+    await delay(120);
+  }
+  throw new VerificationError("inline default v2 gamecast mount timeout", "src/ui.js");
+}
+
+async function waitForModalGamecast2Diagnostics() {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const ready = await evaluateInBrowser(`
+      (() => {
+        const screen = document.querySelector("[data-gamecast-modal] [data-gamecast-screen]");
+        const frame = screen?.__gamecast2Frame ?? null;
+        return Boolean(
+          screen?.dataset?.gamecastEngineCurrent === "v2" &&
+          screen.dataset.gamecast2PlayerAtlas?.startsWith("64-") &&
+          screen.dataset.gamecast2TimelineTemplate &&
+          screen.dataset.gamecast2TimelineTemplate !== "fallback" &&
+          screen.dataset.gamecast2Scoreboard === "1" &&
+          Number.isFinite(Number(screen.dataset.gamecast2CameraZoom)) &&
+          Number.isFinite(Number(screen.dataset.gamecast2ParticleCount)) &&
+          Number(screen.dataset.gamecast2VisibleAbilityUnderlays) >= 1 &&
+          frame?.scoreboard &&
+          frame?.camera &&
+          frame?.particles
+        );
+      })()
+    `);
+    if (ready) return true;
+    await delay(120);
+  }
+  throw new VerificationError("v2 modal diagnostics timeout", "src/gamecast2/scene.js");
 }
 
 async function waitForGamecastLabModal() {
@@ -2230,6 +2404,48 @@ async function waitForGamecastPlayerLabel() {
   }
 
   throw new VerificationError(`게임캐스트 선수 이름표 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "src/ui.js");
+}
+
+async function waitForGamecastCanvasPaint() {
+  const deadline = Date.now() + 10000;
+  let lastProbe = null;
+
+  while (Date.now() < deadline) {
+    try {
+      lastProbe = await evaluateInBrowser(`
+        (() => {
+          const screen = document.querySelector("#gamecast [data-gamecast-screen]");
+          const canvas = screen?.querySelector("[data-gamecast-canvas].gamecast-pixel-canvas");
+          const context = canvas?.getContext?.("2d");
+          if (!screen || !canvas || !context || canvas.width <= 0 || canvas.height <= 0) {
+            return { ready: false, engine: screen?.dataset?.gamecastEngineCurrent ?? "", unique: 0 };
+          }
+          const image = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          const colors = new Set();
+          for (let row = 0; row < 12; row += 1) {
+            for (let column = 0; column < 16; column += 1) {
+              const x = Math.min(canvas.width - 1, Math.floor((column + 0.5) * canvas.width / 16));
+              const y = Math.min(canvas.height - 1, Math.floor((row + 0.5) * canvas.height / 12));
+              const index = (y * canvas.width + x) * 4;
+              colors.add(image[index] + "," + image[index + 1] + "," + image[index + 2] + "," + image[index + 3]);
+            }
+          }
+          const engine = screen.dataset.gamecastEngineCurrent ?? "";
+          const diagnosticsReady = engine !== "v2" || (
+            screen.dataset.gamecast2PlayerAtlas?.startsWith("64-") &&
+            screen.dataset.gamecast2Scoreboard === "1"
+          );
+          return { ready: diagnosticsReady && colors.size >= 6, engine, unique: colors.size };
+        })()
+      `);
+      if (lastProbe?.ready) return;
+    } catch (_error) {
+      // A tab switch can briefly replace the canvas while Phaser remounts.
+    }
+    await delay(80);
+  }
+
+  throw new VerificationError(`게임캐스트 캔버스 페인트 대기 시간 초과: ${JSON.stringify(lastProbe)}`, "src/gamecast2/scene.js");
 }
 
 async function evaluateInBrowser(expression) {

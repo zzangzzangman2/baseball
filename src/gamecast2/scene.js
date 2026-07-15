@@ -5,20 +5,52 @@ import {
   normalizeGamecast2Anchors,
   selectGamecast2Field
 } from "./assets.js";
+import { compilePlayTimeline } from "./timeline.js";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
 const FIELD_EDGE_PADDING = 8;
+const GAMECAST2_CAMERA_MAX_ZOOM = 1.12;
+const PLAYER_ATLAS_ROOT = "./assets/gamecast";
+const PLAYER_ATLAS_KEYS = Object.freeze({
+  home: "gamecast2-player-home",
+  away: "gamecast2-player-away",
+  homeNight: "gamecast2-player-home-night",
+  awayNight: "gamecast2-player-away-night"
+});
+const SCOREBOARD_DESIGN_W = 156;
+const SCOREBOARD_DESIGN_H = 68;
+const PIXEL_GLYPHS = {
+  "0": ["111", "101", "101", "101", "111"],
+  "1": ["010", "110", "010", "010", "111"],
+  "2": ["110", "001", "111", "100", "111"],
+  "3": ["110", "001", "111", "001", "110"],
+  "4": ["101", "101", "111", "001", "001"],
+  "5": ["111", "100", "110", "001", "110"],
+  "6": ["011", "100", "111", "101", "111"],
+  "7": ["111", "001", "010", "010", "010"],
+  "8": ["111", "101", "111", "101", "111"],
+  "9": ["111", "101", "111", "001", "110"],
+  A: ["010", "101", "111", "101", "101"],
+  B: ["110", "101", "110", "101", "110"],
+  H: ["101", "101", "111", "101", "101"],
+  O: ["111", "101", "101", "101", "111"],
+  P: ["110", "101", "110", "100", "100"],
+  T: ["111", "010", "010", "010", "010"],
+  U: ["101", "101", "101", "101", "111"],
+  "-": ["000", "000", "111", "000", "000"]
+};
 const DEFENDER_MOVE_ZONES = {
-  P: { x: 10, yTop: 6, yBottom: 10 },
+  P: { x: 24, yTop: 10, yBottom: 52 },
   C: { x: 14, yTop: 10, yBottom: 8 },
   "1B": { x: 54, yTop: 42, yBottom: 44 },
-  "2B": { x: 58, yTop: 46, yBottom: 44 },
+  "2B": { x: 58, yTop: 46, yBottom: 52 },
   "3B": { x: 54, yTop: 42, yBottom: 44 },
-  SS: { x: 58, yTop: 46, yBottom: 44 },
-  LF: { x: 96, yTop: 58, yBottom: 64 },
-  CF: { x: 116, yTop: 62, yBottom: 68 },
-  RF: { x: 96, yTop: 58, yBottom: 64 }
+  SS: { x: 58, yTop: 46, yBottom: 52 },
+  LF: { x: 96, yTop: 58, yBottom: 74 },
+  CF: { x: 116, yTop: 62, yBottom: 84 },
+  RF: { x: 96, yTop: 58, yBottom: 74 }
 };
 const PLAYER_TEXTURE_KEYS = {
   defense: {
@@ -73,6 +105,7 @@ export function mountGamecast2(options) {
     currentFrame: null,
     scene: null,
     game: null,
+    stopRaf: 0,
     resizeObserver: null,
     anchors: null,
     metrics: null
@@ -85,6 +118,12 @@ export function mountGamecast2(options) {
     preload() {
       this.load.image(field.id, field.imageUrl);
       this.load.json(`${field.id}-anchors`, field.anchorsUrl);
+      for (const [variant, key] of Object.entries(PLAYER_ATLAS_KEYS)) {
+        const suffix = variant.endsWith("Night") ? `-${variant.startsWith("home") ? "home" : "away"}-night` : `-${variant}`;
+        const basename = `player${suffix}`;
+        this.load.atlas(key, `${PLAYER_ATLAS_ROOT}/${basename}.png`, `${PLAYER_ATLAS_ROOT}/${basename}.json`);
+        this.load.json(`${key}-meta`, `${PLAYER_ATLAS_ROOT}/${basename}.json`);
+      }
     },
     create() {
       createScene(this, runtime);
@@ -153,6 +192,8 @@ export function mountGamecast2(options) {
     cleanup() {
       runtime.resizeObserver?.disconnect();
       runtime.resizeObserver = null;
+      if (runtime.stopRaf) window.cancelAnimationFrame?.(runtime.stopRaf);
+      runtime.stopRaf = 0;
       try {
         runtime.game?.destroy(true);
       } catch (_error) {
@@ -167,6 +208,13 @@ export function mountGamecast2(options) {
       runtime.screen.removeAttribute("data-gamecast2-player-count");
       runtime.screen.removeAttribute("data-gamecast2-moving-defense-count");
       runtime.screen.removeAttribute("data-gamecast2-ball-visible");
+      runtime.screen.removeAttribute("data-gamecast2-scoreboard");
+      runtime.screen.removeAttribute("data-gamecast2-camera-zoom");
+      runtime.screen.removeAttribute("data-gamecast2-particle-count");
+      runtime.screen.removeAttribute("data-gamecast2-particle-tone");
+      runtime.screen.removeAttribute("data-gamecast2-visible-ability-underlays");
+      runtime.screen.removeAttribute("data-gamecast2-timeline-template");
+      runtime.screen.removeAttribute("data-gamecast2-player-atlas");
       delete runtime.screen.__gamecast2Anchors;
       delete runtime.screen.__gamecast2Players;
       delete runtime.screen.__gamecast2Frame;
@@ -215,8 +263,8 @@ function applyCanvasContract(runtime) {
   canvas.dataset.gamecastCanvas = "";
   canvas.dataset.pixelW = String(width);
   canvas.dataset.pixelH = String(height);
-  canvas.width = metrics.bufferW;
-  canvas.height = metrics.bufferH;
+  if (canvas.width !== metrics.bufferW) canvas.width = metrics.bufferW;
+  if (canvas.height !== metrics.bufferH) canvas.height = metrics.bufferH;
   canvas.style.width = `${metrics.cssW}px`;
   canvas.style.height = `${metrics.cssH}px`;
   canvas.style.imageRendering = "pixelated";
@@ -248,7 +296,16 @@ function createScene(scene, runtime) {
   scene.playerMap = new Map();
   scene.ballSprite = null;
   scene.ballTrail = null;
+  scene.shadowGraphics = scene.add.graphics().setDepth(1);
+  scene.scoreboardGraphics = scene.add.graphics().setDepth(100);
+  scene.scoreboardBatterText = scene.add.text(0, 0, "", {
+    fontFamily: '"Malgun Gothic", "Noto Sans KR", monospace',
+    fontSize: "10px",
+    color: "#fff6c7",
+    resolution: 1
+  }).setDepth(101).setOrigin(0, 0);
   scene.abilityGraphics = scene.add.graphics().setDepth(500);
+  scene.fxGraphics = scene.add.graphics().setDepth(27000);
   scene.anchorGraphics = scene.add.graphics().setDepth(30000);
   scene.anchorLabels = [];
 
@@ -273,6 +330,8 @@ function clearStaticPlayers(scene) {
   for (const object of scene.playerObjects ?? []) object.destroy();
   scene.ballSprite?.destroy();
   scene.ballTrail?.destroy();
+  scene.shadowGraphics?.clear();
+  scene.fxGraphics?.clear();
   scene.abilityGraphics?.clear();
   scene.playerObjects = [];
   scene.playerActors = [];
@@ -323,8 +382,12 @@ function addStaticActor(scene, runtime, actor) {
   const sy = runtime.metrics.drawScaleY;
   const scale = Math.max(0.5, Number(actor.design?.scale ?? 1));
   const renderScale = Math.min(sx, sy) * scale;
-  const sprite = scene.add.image(actor.design.x * sx, actor.design.y * sy, actor.texture)
-    .setOrigin(0.5, 0.94)
+  const initialTexture = gamecast2AtlasTexture(scene, runtime, null, actor) ?? actor.texture;
+  const initialFrame = initialTexture !== actor.texture
+    ? gamecast2AtlasFrame(scene, initialTexture, actor, { pose: defaultPoseForActor(actor) }, defaultPoseForActor(actor), runtime, null)
+    : undefined;
+  const sprite = scene.add.image(actor.design.x * sx, actor.design.y * sy, initialTexture, initialFrame)
+    .setOrigin(0.5, 60 / 64)
     .setScale(renderScale)
     .setDepth(Math.round(actor.design.y * 10));
   sprite.setDataEnabled?.();
@@ -336,18 +399,34 @@ function addStaticActor(scene, runtime, actor) {
     role: actor.role,
     isDefender: Boolean(actor.isDefender),
     isOutfielder: OUTFIELD_ANCHORS.has(actor.fieldingKey),
+    isTransient: Boolean(actor.isTransient),
     designX: actor.design.x,
     designY: actor.design.y,
     anchorScale: scale,
     baseX: actor.design.x * sx,
     baseY: actor.design.y * sy,
     baseScale: renderScale,
-    phase: actorPhase(actor.key)
+    phase: actorPhase(actor.key),
+    abilityHovered: false
   };
+  sprite.setInteractive?.();
+  sprite.on?.("pointerover", () => {
+    sprite.__gamecast2Actor.abilityHovered = true;
+    refreshAbilityPlates(runtime);
+  });
+  sprite.on?.("pointerout", () => {
+    sprite.__gamecast2Actor.abilityHovered = false;
+    refreshAbilityPlates(runtime);
+  });
   scene.playerObjects.push(sprite);
   scene.playerActors.push(sprite.__gamecast2Actor);
   scene.playerMap.set(actor.key, sprite);
   return sprite;
+}
+
+function refreshAbilityPlates(runtime) {
+  const frame = runtime.currentFrame;
+  updateAbilityPlates(runtime, frame, buildVisualPlay(runtime, frame));
 }
 
 function sortStaticPlayers(scene) {
@@ -360,20 +439,26 @@ function sortStaticPlayers(scene) {
 }
 
 function updateGamecast2Playback(runtime, frame = null) {
-  updateStaticPlayerIdle(runtime, frame);
+  const play = updateStaticPlayerIdle(runtime, frame);
   updateBallFlight(runtime, frame);
+  updateCodeScoreboard(runtime, frame);
+  updatePixelEffects(runtime, frame, play);
+  updateHomeRunCamera(runtime, frame);
   exposeMotionDebug(runtime, frame);
 }
 
 function updateStaticPlayerIdle(runtime, frame = null) {
   const scene = runtime.scene;
   if (!scene?.playerObjects?.length) {
+    scene?.shadowGraphics?.clear();
     scene?.abilityGraphics?.clear();
-    return;
+    return { actors: new Map(), movingDefenseCount: 0 };
   }
+  scene.shadowGraphics?.clear();
   const elapsed = Number(runtime.elapsedMs ?? 0);
   const pixel = Math.max(1, Math.round(runtime.metrics.drawScaleY));
   const play = buildVisualPlay(runtime, frame);
+  syncTimelineRunnerActors(scene, runtime, play);
   for (const sprite of scene.playerObjects) {
     const actor = sprite.__gamecast2Actor;
     if (!actor) continue;
@@ -388,17 +473,68 @@ function updateStaticPlayerIdle(runtime, frame = null) {
     const designScale = Math.max(0.5, Number(position.scale ?? actor.anchorScale));
     const renderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY) * designScale;
     const lean = Number(state.angle ?? (actor.role === "batter" ? Math.sin(idleT * 0.58) * 1.5 : 0));
-    sprite.setTexture(textureForRole(actor.role, pose));
+    const facing = Number(state.facing ?? (actor.role === "batter" ? -1 : 1));
+    const visible = state.visible !== false;
+    if (visible) {
+      drawPoseLinkedShadow(scene.shadowGraphics, runtime, {
+        x: renderX,
+        y: renderY,
+        scale: designScale,
+        pose: `${actor.role}-${state.shadowPose ?? pose}`,
+        angle: lean
+      });
+    }
+    applyGamecast2ActorTexture(sprite, runtime, frame, actor, state, pose);
+    sprite.setVisible(visible);
     sprite.setPosition(renderX, renderY + (state.position ? 0 : bob));
-    sprite.setScale(renderScale * (1 + Math.sin(idleT * 0.5) * 0.012), renderScale);
+    sprite.setScale(renderScale * (1 + Math.sin(idleT * 0.5) * 0.012) * (facing < 0 ? -1 : 1), renderScale);
     sprite.setAngle(lean);
     sprite.setDepth(Math.round(position.y * 10) + (actor.key === "batter" ? 8 : 0));
     actor.currentDesignX = position.x;
     actor.currentDesignY = position.y;
     actor.currentDesignScale = designScale;
     actor.currentRenderScale = renderScale;
+    actor.currentPose = pose;
+    actor.currentShadowPose = state.shadowPose ?? pose;
   }
   updateAbilityPlates(runtime, frame, play);
+  return play;
+}
+
+function drawPoseLinkedShadow(graphics, runtime, state) {
+  if (!graphics) return;
+  const profile = shadowProfileForPose(state.pose);
+  const scale = Math.max(0.5, Number(state.scale ?? 1));
+  const sx = runtime.metrics.drawScaleX;
+  const sy = runtime.metrics.drawScaleY;
+  const offsetDirection = Number(state.angle ?? 0) < 0 ? -1 : 1;
+  const offsetX = Number(profile.offsetX ?? 0) * offsetDirection * scale * sx;
+  const width = Math.max(3, Math.round(profile.width * scale * sx));
+  const height = Math.max(2, Math.round(profile.height * scale * sy));
+  graphics.fillStyle(0x07120f, profile.alpha);
+  graphics.fillEllipse(
+    Math.round(Number(state.x ?? 0) + offsetX),
+    Math.round(Number(state.y ?? 0) + sy),
+    width,
+    height
+  );
+}
+
+function shadowProfileForPose(pose) {
+  const key = String(pose ?? "idle").toLowerCase();
+  if (key.includes("dive") || key.includes("slide")) {
+    return { width: 42, height: 6, alpha: 0.34, offsetX: 6 };
+  }
+  if (key.includes("air") || key.includes("jump")) {
+    return { width: 18, height: 4, alpha: 0.16, offsetX: 1 };
+  }
+  if (key.includes("run")) {
+    return { width: 31, height: 5, alpha: 0.27, offsetX: 2 };
+  }
+  if (key.includes("catcher")) {
+    return { width: 34, height: 7, alpha: 0.3, offsetX: 0 };
+  }
+  return { width: 27, height: 5, alpha: 0.28, offsetX: 0 };
 }
 
 function updateAbilityPlates(runtime, frame = null, play = null) {
@@ -409,29 +545,34 @@ function updateAbilityPlates(runtime, frame = null, play = null) {
   const event = frame?.event;
   const minScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY);
   const ratingTokens = [];
+  let visiblePlateCount = 0;
   for (const sprite of scene.playerObjects ?? []) {
     const actor = sprite.__gamecast2Actor;
     const ability = gamecast2AbilityForActor(event, actor);
     if (!actor || !ability?.grade || !ability?.color || !sprite.visible) {
       continue;
     }
-    const activeFieldingKey = String(event?.fieldingPosition ?? event?.defenderPosition ?? play?.fielderKey ?? "").toUpperCase();
+    const activeFieldingKey = String(event?.fieldingPosition || event?.defenderPosition || play?.fielderKey || "").toUpperCase();
     const active = actor.key === "batter"
       || actor.fieldingKey === "P"
       || actor.fieldingKey === activeFieldingKey;
+    const visible = active || actor.abilityHovered;
     const designScale = Math.max(0.5, Number(actor.currentDesignScale ?? actor.anchorScale ?? 1));
-    const width = Math.max(14, Math.round((active ? 20 : 17) * minScale * designScale));
-    const height = Math.max(6, Math.round((active ? 8 : 7) * minScale * Math.max(0.82, designScale)));
+    const width = Math.max(12, Math.round((active ? 16 : 14) * minScale * designScale));
+    const height = Math.max(6, Math.round((active ? 7 : 6) * minScale * Math.max(0.82, designScale)));
     const left = Math.round(sprite.x - width / 2);
     const top = Math.round(sprite.y - height * 0.58);
     const color = hexToColor(ability.color, "#64748b");
-    graphics.fillStyle(0x061018, active ? 0.92 : 0.78);
-    graphics.fillRoundedRect(left - 2, top - 2, width + 4, height + 4, Math.max(2, Math.round(height / 2)));
-    graphics.fillStyle(color, active ? 0.96 : 0.72);
-    graphics.fillRoundedRect(left, top, width, height, Math.max(2, Math.round(height / 2)));
-    graphics.fillStyle(0x102737, 0.96);
-    graphics.fillRoundedRect(left + 2, top + 2, Math.max(2, width - 4), Math.max(2, height - 4), Math.max(1, Math.round((height - 4) / 2)));
-    drawGamecast2GradeGlyph(graphics, String(ability.grade).slice(0, 1), left + width - 5, top + 1, color);
+    if (visible) {
+      visiblePlateCount += 1;
+      graphics.fillStyle(0x061018, active ? 0.9 : 0.76);
+      graphics.fillRoundedRect(left - 1, top - 1, width + 2, height + 2, Math.max(2, Math.round(height / 2)));
+      graphics.fillStyle(color, active ? 0.94 : 0.7);
+      graphics.fillRoundedRect(left, top, width, height, Math.max(2, Math.round(height / 2)));
+      graphics.fillStyle(0x102737, 0.96);
+      graphics.fillRoundedRect(left + 2, top + 2, Math.max(2, width - 4), Math.max(2, height - 4), Math.max(1, Math.round((height - 4) / 2)));
+      drawGamecast2GradeGlyph(graphics, String(ability.grade).slice(0, 1), left + width - 5, top + 1, color);
+    }
     actor.abilityGrade = String(ability.grade);
     actor.abilityColor = String(ability.color);
     actor.abilityScore = Number(ability.score ?? 0);
@@ -447,11 +588,13 @@ function updateAbilityPlates(runtime, frame = null, play = null) {
       y: Number(actor.currentDesignY ?? actor.designY),
       width: width / Math.max(0.01, runtime.metrics.drawScaleX),
       height: height / Math.max(0.01, runtime.metrics.drawScaleY),
-      active
+      active,
+      visible
     });
   }
   runtime.gamecast2RatingTokens = ratingTokens;
   runtime.screen.dataset.gamecastAbilityUnderlays = String(ratingTokens.length);
+  runtime.screen.dataset.gamecast2VisibleAbilityUnderlays = String(visiblePlateCount);
 }
 
 function drawGamecast2GradeGlyph(graphics, grade, x, y, color) {
@@ -495,6 +638,9 @@ function buildVisualPlay(runtime, frame = null) {
   const anchors = runtime.anchors?.anchors ?? {};
   if (!event || frame?.done) return { actors, movingDefenseCount: 0 };
 
+  const timeline = getCompiledPlayTimeline(runtime, event, anchors);
+  if (timeline) return buildTimelineVisualPlay(runtime, event, progress, timeline);
+
   const pitchEnd = pitchEndForEvent(event);
   const batted = isBattedBallOutcome(event.outcome);
   const runnerStart = runnerStartForEvent(event);
@@ -518,13 +664,15 @@ function buildVisualPlay(runtime, frame = null) {
       actors.set("batter", {
         pose: Math.floor(progress * 18) % 2 ? "run1" : "run2",
         position: batterRunPosition(anchors, event, progress, runnerStart),
-        angle: 0
+        angle: 0,
+        shadowPose: runnerShadowPose(event, progress, runnerStart)
       });
     }
   } else if (event.outcome === "walk") {
     actors.set("batter", progress < pitchEnd ? { pose: "stance" } : {
       pose: Math.floor(progress * 16) % 2 ? "run1" : "run2",
-      position: batterRunPosition(anchors, event, progress, runnerStart)
+      position: batterRunPosition(anchors, event, progress, runnerStart),
+      shadowPose: "run"
     });
   } else if (event.outcome === "strikeout") {
     actors.set("batter", progress < pitchEnd ? { pose: "load" } : { pose: "follow", angle: -8 });
@@ -574,11 +722,268 @@ function buildVisualPlay(runtime, frame = null) {
     actors.set(fielderKey, {
       pose,
       position: progress >= routeStart && progress < (homeRun ? 0.96 : throwEnd) ? position : null,
-      angle: !homeRun && pose === "throw" ? (fieldSpot.x < Number(anchors.home?.x ?? 480) ? -7 : 7) : 0
+      angle: !homeRun && pose === "throw" ? (fieldSpot.x < Number(anchors.home?.x ?? 480) ? -7 : 7) : 0,
+      shadowPose: fielderShadowPose(event, progress, catchTime, pose)
     });
   }
 
   return { actors, fielderKey, fieldSpot, movingDefenseCount };
+}
+
+function getCompiledPlayTimeline(runtime, event, anchors) {
+  if (!event || !anchors?.home) return null;
+  const key = `${runtime.field?.id ?? "field"}|${event.id ?? event.sequence ?? event.outcome ?? "play"}`;
+  runtime.timelineCache ??= new Map();
+  if (runtime.timelineCache.has(key)) return runtime.timelineCache.get(key);
+  try {
+    const timeline = compilePlayTimeline(event, anchors);
+    runtime.timelineCache.set(key, timeline);
+    if (runtime.timelineCache.size > 32) runtime.timelineCache.delete(runtime.timelineCache.keys().next().value);
+    return timeline;
+  } catch (_error) {
+    runtime.timelineCache.set(key, null);
+    return null;
+  }
+}
+
+function buildTimelineVisualPlay(runtime, event, progress, timeline) {
+  const actors = new Map();
+  const batted = isBattedBallOutcome(event.outcome);
+  const pitcher = activeTimelineCue(timeline.tracks.pitcher, progress);
+  actors.set("P", pitcher
+    ? {
+        pose: pitcher.localT < 0.58 ? "windup" : "release",
+        angle: pitcher.localT < 0.58 ? -3 : 2,
+        shadowPose: pitcher.localT > 0.54 && pitcher.localT < 0.82 ? "airborne" : "idle",
+        animationT: pitcher.localT
+      }
+    : { pose: "idle" });
+
+  const batterCue = heldTimelineCue(timeline.tracks.batter, progress, timeline.resultAt);
+  if (batterCue) {
+    actors.set("batter", timelineActorState(batterCue, timeline, progress, "batter"));
+  } else if (progress >= timeline.resultAt) {
+    actors.set("batter", { pose: "stance", visible: false });
+  } else {
+    actors.set("batter", { pose: event.outcome === "strikeout" && progress > 0.65 ? "follow" : "stance" });
+  }
+
+  const catcherCue = activeTimelineCue(timeline.tracks.catcher, progress);
+  actors.set("C", catcherCue
+    ? timelineActorState(catcherCue, timeline, progress, "catcher")
+    : { pose: "idle" });
+
+  if (batted) {
+    for (const key of DEFENSE_ANCHORS) {
+      if (key !== "P" && key !== "C") actors.set(key, { pose: "ready" });
+    }
+  }
+
+  const fieldersByKey = groupTimelineCues(timeline.tracks.fielders, (cue) => String(cue.who ?? ""));
+  let movingDefenseCount = 0;
+  for (const [key, cues] of fieldersByKey) {
+    if (!key || !runtime.anchors?.anchors?.[key]) continue;
+    const cue = heldTimelineCue(cues, progress, timeline.resultAt);
+    if (!cue) continue;
+    const state = timelineActorState(cue, timeline, progress, "fielder");
+    actors.set(key, state);
+    if (cue.cue.path?.length > 1 && progress <= Number(cue.cue.endT ?? cue.cue.t)) movingDefenseCount += 1;
+  }
+
+  const runnersByKey = groupTimelineCues(timeline.tracks.runners, (cue) => `runner:${cue.who ?? cue.runnerId ?? "base"}`);
+  for (const [key, cues] of runnersByKey) {
+    const cue = heldTimelineCue(cues, progress, timeline.resultAt);
+    if (cue) actors.set(key, timelineActorState(cue, timeline, progress, "runner"));
+  }
+  addTimelineBaseOccupants(actors, event, timeline, progress);
+
+  const fielderKey = String(timeline.meta?.fielding?.fielder ?? "");
+  return {
+    actors,
+    fielderKey,
+    fieldSpot: timeline.points?.landing ?? null,
+    movingDefenseCount,
+    timeline
+  };
+}
+
+function addTimelineBaseOccupants(actors, event, timeline, progress) {
+  const afterResult = progress >= Number(timeline.resultAt ?? 1);
+  const bases = afterResult ? event?.basesAfter : event?.basesBefore;
+  const ids = afterResult ? event?.baseRunnerIdsAfter : event?.baseRunnerIdsBefore;
+  const profiles = afterResult ? event?.baseRunnerProfilesAfter : event?.baseRunnerProfilesBefore;
+  const anchorNames = ["first", "second", "third"];
+  for (let index = 0; index < 3; index += 1) {
+    if (!bases?.[index]) continue;
+    const explicitId = String(ids?.[index] ?? profiles?.[index]?.id ?? profiles?.[index]?.playerId ?? "").trim();
+    const key = `runner:${explicitId || `base-${index + 1}`}`;
+    if (actors.has(key)) continue;
+    const position = timeline.points?.[anchorNames[index]];
+    if (!position) continue;
+    actors.set(key, {
+      pose: "stance",
+      position: { ...position },
+      facing: index === 2 ? 1 : -1,
+      shadowPose: "idle",
+      animationKey: "",
+      animationT: 0,
+      transientRole: "runner"
+    });
+  }
+}
+
+function groupTimelineCues(cues, keyForCue) {
+  const groups = new Map();
+  for (const cue of cues ?? []) {
+    const key = keyForCue(cue);
+    if (!key) continue;
+    const entries = groups.get(key) ?? [];
+    entries.push(cue);
+    groups.set(key, entries);
+  }
+  return groups;
+}
+
+function activeTimelineCue(cues, progress) {
+  const candidates = (cues ?? []).filter((cue) => progress >= Number(cue.t ?? 0) && progress <= Number(cue.endT ?? cue.t ?? 0));
+  const cue = candidates.sort((a, b) => Number(b.t ?? 0) - Number(a.t ?? 0))[0];
+  return cue ? timelineCueSample(cue, progress) : null;
+}
+
+function heldTimelineCue(cues, progress, holdUntil = 1) {
+  if (progress > Number(holdUntil ?? 1)) return null;
+  const cue = [...(cues ?? [])]
+    .filter((entry) => progress >= Number(entry.t ?? 0))
+    .sort((a, b) => Number(b.t ?? 0) - Number(a.t ?? 0))[0];
+  return cue ? timelineCueSample(cue, progress) : null;
+}
+
+function timelineCueSample(cue, progress) {
+  const start = Number(cue.t ?? 0);
+  const end = Math.max(start, Number(cue.endT ?? start));
+  return {
+    cue,
+    localT: end > start ? clamp01((progress - start) / (end - start)) : 1
+  };
+}
+
+function timelineActorState(sample, timeline, progress, role) {
+  const { cue, localT } = sample;
+  const position = timelineCuePosition(cue, timeline.points, localT, role);
+  const animation = String(cue.anim ?? "idle");
+  let pose = animation;
+  if (animation === "swing") pose = localT < 0.22 ? "load" : localT < 0.75 ? "swing" : "follow";
+  else if (animation === "run" || animation === "walk") pose = Math.floor((progress + localT) * (animation === "walk" ? 12 : 22)) % 2 ? "run1" : "run2";
+  else if (animation === "catcher") pose = "catch";
+  else if (animation === "catch") pose = "catch";
+  else if (animation === "dive") pose = "catch";
+  else if (animation === "slide") pose = "run2";
+  else if (animation === "throw") pose = "throw";
+  return {
+    pose,
+    position,
+    angle: timelineCueAngle(cue, timeline.points, localT),
+    facing: timelineCueFacing(cue, timeline.points, localT, role),
+    shadowPose: animation === "slide" || animation === "dive" ? animation : animation === "run" ? "run" : pose,
+    animationKey: animation,
+    animationT: localT,
+    transientRole: role
+  };
+}
+
+function timelineCuePosition(cue, points, localT, role = "") {
+  const batterBox = role === "batter" ? derivePlateActor(points, "batter") : null;
+  if (cue.at && points?.[cue.at]) {
+    if (cue.at === "home" && batterBox) return { ...batterBox };
+    return { ...points[cue.at] };
+  }
+  const route = (cue.path ?? []).map((key, index) => (
+    index === 0 && key === "home" && batterBox ? batterBox : points?.[key]
+  )).filter(Boolean);
+  if (route.length === 0) return null;
+  if (route.length === 1) return { ...route[0] };
+  return pointAlongTimelineRoute(route, localT);
+}
+
+function pointAlongTimelineRoute(points, progress) {
+  const lengths = [];
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const length = Math.max(0.001, distance(points[index - 1], points[index]));
+    lengths.push(length);
+    total += length;
+  }
+  let cursor = clamp01(progress) * total;
+  for (let index = 0; index < lengths.length; index += 1) {
+    if (cursor <= lengths[index] || index === lengths.length - 1) {
+      return lerpPoint(points[index], points[index + 1], cursor / lengths[index]);
+    }
+    cursor -= lengths[index];
+  }
+  return { ...points.at(-1) };
+}
+
+function timelineCueAngle(cue, points, localT) {
+  const route = (cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
+  if (route.length < 2) return cue.toward && points?.[cue.toward] && cue.at && points?.[cue.at]
+    ? Math.atan2(points[cue.toward].y - points[cue.at].y, points[cue.toward].x - points[cue.at].x) * 180 / Math.PI * 0.08
+    : 0;
+  const from = pointAlongTimelineRoute(route, Math.max(0, localT - 0.02));
+  const to = pointAlongTimelineRoute(route, Math.min(1, localT + 0.02));
+  return clampNumber((to.x - from.x) * 0.08, -8, 8);
+}
+
+function timelineCueFacing(cue, points, localT, role) {
+  const route = (cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
+  if (route.length < 2) return role === "batter" ? -1 : 1;
+  const from = pointAlongTimelineRoute(route, Math.max(0, localT - 0.025));
+  const to = pointAlongTimelineRoute(route, Math.min(1, localT + 0.025));
+  const delta = to.x - from.x;
+  return Math.abs(delta) < 0.01 ? 1 : delta >= 0 ? 1 : -1;
+}
+
+function syncTimelineRunnerActors(scene, runtime, play) {
+  const desired = new Map(
+    [...(play?.actors?.entries?.() ?? [])]
+      .filter(([key, state]) => String(key).startsWith("runner:") && state?.position)
+  );
+  for (const sprite of [...(scene.playerObjects ?? [])]) {
+    const actor = sprite.__gamecast2Actor;
+    if (!actor?.isTransient || desired.has(actor.key)) continue;
+    sprite.destroy();
+    scene.playerMap.delete(actor.key);
+    scene.playerObjects = scene.playerObjects.filter((entry) => entry !== sprite);
+    scene.playerActors = scene.playerActors.filter((entry) => entry !== actor);
+  }
+  for (const [key, state] of desired) {
+    if (scene.playerMap.has(key)) continue;
+    addStaticActor(scene, runtime, {
+      key,
+      role: "batter",
+      texture: textureForRole("batter", "run1"),
+      design: state.position,
+      isTransient: true
+    });
+  }
+  runtime.screen.dataset.gamecast2PlayerCount = String(scene.playerActors?.length ?? 0);
+}
+
+function runnerShadowPose(event, progress, start) {
+  if (["homeRun", "walk"].includes(String(event?.outcome ?? ""))) return "run";
+  const advance = gamecast2AdvanceCount(event?.outcome);
+  const duration = Math.max(0.12, Math.min(0.94 - start, 0.32 + Math.max(0, advance - 1) * 0.1));
+  const routeT = easeInOutCubic(clamp01((progress - start) / duration));
+  const traveled = routeT * advance;
+  const localT = traveled - Math.floor(traveled);
+  return progress < start + duration && localT > 0.76 ? "slide" : "run";
+}
+
+function fielderShadowPose(event, progress, catchTime, pose) {
+  const type = String(event?.battedBallType ?? "").toLowerCase();
+  const catchWindow = progress >= catchTime - 0.055 && progress <= catchTime + 0.035;
+  if (catchWindow && (type.includes("fly") || type.includes("line"))) return "airborne";
+  if (catchWindow && event?.outcome === "out" && Math.abs(eventNoise(event, 37)) > 0.34) return "dive";
+  return pose;
 }
 
 function updateBallFlight(runtime, frame = null) {
@@ -607,6 +1012,286 @@ function updateBallFlight(runtime, frame = null) {
   }
 }
 
+function updateCodeScoreboard(runtime, frame = null) {
+  const scene = runtime.scene;
+  const graphics = scene?.scoreboardGraphics;
+  const batterText = scene?.scoreboardBatterText;
+  const anchor = runtime.anchors?.anchors?.scoreboardTl;
+  if (!graphics || !batterText) return;
+  graphics.clear();
+  if (!anchor) {
+    batterText.setVisible(false);
+    runtime.scoreboardState = null;
+    runtime.screen.dataset.gamecast2Scoreboard = "0";
+    return;
+  }
+
+  const sx = runtime.metrics.drawScaleX;
+  const sy = runtime.metrics.drawScaleY;
+  const minScale = Math.min(sx, sy);
+  const left = Math.round(anchor.x * sx);
+  const top = Math.round(anchor.y * sy);
+  const width = Math.round(SCOREBOARD_DESIGN_W * sx);
+  const height = Math.round(SCOREBOARD_DESIGN_H * sy);
+  const event = frame?.event ?? runtime.sequence?.events?.[0] ?? null;
+  const score = frame?.score ?? {
+    away: Number(runtime.sequence?.startAway ?? 0),
+    home: Number(runtime.sequence?.startHome ?? 0)
+  };
+  const inning = Math.max(1, Math.min(99, Math.floor(Number(event?.inning ?? 1))));
+  const half = event?.side === "home" ? "BOT" : "TOP";
+  const away = scoreboardNumber(score.away);
+  const home = scoreboardNumber(score.home);
+  const batter = shortenScoreboardName(event?.hitterName ?? "-");
+  const accent = hexToColor(event?.teamColor ?? runtime.palette?.ribbon ?? "#d94f75", "#d94f75");
+
+  graphics.fillStyle(0x03090d, 0.96);
+  graphics.fillRect(left, top, width, height);
+  graphics.lineStyle(Math.max(1, Math.round(minScale)), 0x607f72, 0.92);
+  graphics.strokeRect(left, top, width, height);
+  graphics.fillStyle(accent, 0.88);
+  graphics.fillRect(left + Math.round(4 * sx), top + Math.round(4 * sy), Math.max(2, Math.round(3 * sx)), Math.round(39 * sy));
+  graphics.lineStyle(Math.max(1, Math.round(minScale)), 0x29483d, 0.9);
+  graphics.lineBetween(
+    left + Math.round(7 * sx),
+    top + Math.round(45 * sy),
+    left + width - Math.round(6 * sx),
+    top + Math.round(45 * sy)
+  );
+
+  drawPixelString(
+    graphics,
+    `${half} ${String(inning).padStart(2, "0")}`,
+    left + Math.round(13 * sx),
+    top + Math.round(7 * sy),
+    Math.max(1, Math.round(2 * sx)),
+    Math.max(1, Math.round(2 * sy)),
+    0xa8d6c3
+  );
+  drawPixelString(
+    graphics,
+    `A${away}-H${home}`,
+    left + Math.round(13 * sx),
+    top + Math.round(24 * sy),
+    Math.max(1, Math.round(3 * sx)),
+    Math.max(1, Math.round(3 * sy)),
+    0xfff6c7
+  );
+  drawPixelString(
+    graphics,
+    "AB",
+    left + Math.round(8 * sx),
+    top + Math.round(52 * sy),
+    Math.max(1, Math.round(1.5 * sx)),
+    Math.max(1, Math.round(1.5 * sy)),
+    accent
+  );
+
+  batterText
+    .setVisible(true)
+    .setPosition(left + Math.round(25 * sx), top + Math.round(48 * sy))
+    .setFontSize(Math.max(7, Math.round(10 * minScale)))
+    .setColor(event?.teamColor ?? runtime.palette?.light ?? "#fff6c7")
+    .setText(batter);
+  runtime.scoreboardState = {
+    x: anchor.x,
+    y: anchor.y,
+    inning,
+    side: event?.side === "home" ? "bottom" : "top",
+    away: Number(score.away ?? 0),
+    home: Number(score.home ?? 0),
+    batter
+  };
+  runtime.screen.dataset.gamecast2Scoreboard = "1";
+}
+
+function drawPixelString(graphics, value, x, y, pixelX, pixelY, color) {
+  let cursorX = Math.round(x);
+  const stepX = Math.max(1, Math.round(pixelX));
+  const stepY = Math.max(1, Math.round(pixelY));
+  graphics.fillStyle(color, 1);
+  for (const character of String(value ?? "").toUpperCase()) {
+    const pattern = PIXEL_GLYPHS[character];
+    if (pattern) {
+      for (let row = 0; row < pattern.length; row += 1) {
+        for (let column = 0; column < pattern[row].length; column += 1) {
+          if (pattern[row][column] === "1") {
+            graphics.fillRect(cursorX + column * stepX, Math.round(y) + row * stepY, stepX, stepY);
+          }
+        }
+      }
+    }
+    cursorX += stepX * 4;
+  }
+}
+
+function scoreboardNumber(value) {
+  return String(Math.max(0, Math.min(99, Math.floor(Number(value) || 0)))).padStart(2, "0");
+}
+
+function shortenScoreboardName(value) {
+  const characters = Array.from(String(value ?? "").trim() || "-");
+  return characters.length > 9 ? `${characters.slice(0, 8).join("")}…` : characters.join("");
+}
+
+function updatePixelEffects(runtime, frame = null, play = null) {
+  const graphics = runtime.scene?.fxGraphics;
+  if (!graphics) return;
+  graphics.clear();
+  const event = frame?.event;
+  const night = String(runtime.field?.id ?? "").includes("night");
+  if (!event || frame?.done || runtime.prefersReducedMotion) {
+    publishParticleState(runtime, { impact: 0, dust: 0, confetti: 0 }, night);
+    return;
+  }
+
+  const progress = clamp01(Number(frame?.progress ?? 0));
+  const anchors = runtime.anchors?.anchors ?? {};
+  const countScale = night ? 0.55 : 1;
+  const alphaScale = night ? 0.52 : 1;
+  const counts = { impact: 0, dust: 0, confetti: 0 };
+  const timeline = getCompiledPlayTimeline(runtime, event, anchors);
+  const contactT = Number(timeline?.tracks?.ball?.find((cue) => cue.phase === "batted")?.t ?? pitchEndForEvent(event));
+
+  if (isBattedBallOutcome(event.outcome) && progress >= contactT - 0.015 && progress <= contactT + 0.14) {
+    const contact = derivePlateActor(anchors, "batter") ?? anchors.home;
+    const t = clamp01((progress - (contactT - 0.015)) / 0.155);
+    const total = Math.max(5, Math.round(16 * countScale));
+    for (let index = 0; index < total; index += 1) {
+      const noise = eventNoise(event, 200 + index);
+      const angle = index * 2.399963 + noise * 0.45;
+      const radius = 4 + t * (12 + Math.abs(noise) * 24);
+      const color = index % 3 === 0
+        ? hexToColor(runtime.palette?.ribbon ?? event.teamColor ?? "#d94f75", "#d94f75")
+        : index % 2 === 0 ? 0xfff6c7 : 0xffffff;
+      drawPixelParticle(
+        graphics,
+        runtime,
+        Number(contact?.x ?? anchors.home?.x ?? 480) + Math.cos(angle) * radius,
+        Number(contact?.y ?? anchors.home?.y ?? 617) - 34 + Math.sin(angle) * radius * 0.72,
+        index % 4 === 0 ? 3 : 2,
+        color,
+        Math.max(0, 1 - t * 0.72) * alphaScale
+      );
+      counts.impact += 1;
+    }
+  }
+
+  const runner = play?.actors?.get?.("batter");
+  if (runner?.position && progress >= runnerStartForEvent(event)) {
+    const sliding = String(runner.shadowPose ?? "").includes("slide");
+    const total = Math.max(3, Math.round((sliding ? 11 : 7) * countScale));
+    for (let index = 0; index < total; index += 1) {
+      const noiseX = eventNoise(event, 300 + index);
+      const noiseY = eventNoise(event, 340 + index);
+      const phase = positiveModulo(progress * (5.5 + index * 0.03) + noiseY, 1);
+      drawPixelParticle(
+        graphics,
+        runtime,
+        runner.position.x + noiseX * (sliding ? 19 : 12) - phase * 5,
+        runner.position.y - 1 - phase * (sliding ? 12 : 7),
+        index % 3 === 0 ? 3 : 2,
+        index % 2 ? 0xcaa25f : 0xe4bd76,
+        (0.52 - phase * 0.34) * alphaScale
+      );
+      counts.dust += 1;
+    }
+  }
+
+  if (event.outcome === "homeRun" && progress >= 0.62 && progress <= 0.99) {
+    const t = clamp01((progress - 0.62) / 0.37);
+    const total = Math.max(8, Math.round(26 * countScale));
+    const colors = [
+      hexToColor(event.teamColor ?? runtime.palette?.ribbon ?? "#d94f75", "#d94f75"),
+      0xfff6c7,
+      0x8dd7ff,
+      0xf59eae
+    ];
+    for (let index = 0; index < total; index += 1) {
+      const seedX = (eventNoise(event, 400 + index) + 1) / 2;
+      const seedY = (eventNoise(event, 460 + index) + 1) / 2;
+      const fall = positiveModulo(seedY * 0.7 + t * 1.35 + index * 0.071, 1);
+      drawPixelParticle(
+        graphics,
+        runtime,
+        90 + seedX * (GAMECAST2_DESIGN_W - 180) + Math.sin((t + seedY) * Math.PI * 4) * 8,
+        118 + fall * 280,
+        index % 3 === 0 ? 3 : 2,
+        colors[index % colors.length],
+        Math.min(0.9, (t < 0.12 ? t / 0.12 : 1 - Math.max(0, t - 0.76) / 0.24)) * alphaScale
+      );
+      counts.confetti += 1;
+    }
+  }
+
+  publishParticleState(runtime, counts, night);
+}
+
+function drawPixelParticle(graphics, runtime, x, y, size, color, alpha) {
+  const sx = runtime.metrics.drawScaleX;
+  const sy = runtime.metrics.drawScaleY;
+  graphics.fillStyle(color, clamp01(alpha));
+  graphics.fillRect(
+    Math.round(x * sx),
+    Math.round(y * sy),
+    Math.max(1, Math.round(Math.max(2, Math.min(3, size)) * sx)),
+    Math.max(1, Math.round(Math.max(2, Math.min(3, size)) * sy))
+  );
+}
+
+function publishParticleState(runtime, counts, night) {
+  const total = Number(counts.impact ?? 0) + Number(counts.dust ?? 0) + Number(counts.confetti ?? 0);
+  runtime.gamecast2ParticleState = { ...counts, total, tonedDown: Boolean(night) };
+  runtime.screen.dataset.gamecast2ParticleCount = String(total);
+  runtime.screen.dataset.gamecast2ParticleTone = night ? "night" : "day";
+}
+
+function positiveModulo(value, divisor) {
+  return ((Number(value) % divisor) + divisor) % divisor;
+}
+
+function updateHomeRunCamera(runtime, frame = null) {
+  const camera = runtime.scene?.cameras?.main;
+  if (!camera) return;
+  const baseX = runtime.metrics.bufferW / 2;
+  const baseY = runtime.metrics.bufferH / 2;
+  const event = frame?.event;
+  const progress = clamp01(Number(frame?.progress ?? 0));
+  let focus = 0;
+  let zoom = 1;
+  let centerX = baseX;
+  let centerY = baseY;
+
+  const timeline = event ? getCompiledPlayTimeline(runtime, event, runtime.anchors?.anchors ?? {}) : null;
+  const cameraCue = activeTimelineCue(timeline?.tracks?.camera, progress);
+  if (!runtime.prefersReducedMotion && !frame?.done && cameraCue) {
+    const localT = cameraCue.localT;
+    if (localT < 0.16) focus = easeOutCubic(localT / 0.16);
+    else if (localT > 0.84) focus = 1 - easeInOutCubic((localT - 0.84) / 0.16);
+    else focus = 1;
+    const cueZoom = clampNumber(Number(cameraCue.cue.zoom ?? 1.1), 1, GAMECAST2_CAMERA_MAX_ZOOM);
+    zoom = Math.min(GAMECAST2_CAMERA_MAX_ZOOM, 1 + (cueZoom - 1) * focus);
+    if (cameraCue.cue.follow === "ball") {
+      const ball = buildBallState(runtime, frame);
+      const target = ball ?? battedBallTargetForEvent(event, runtime.anchors?.anchors ?? {});
+      if (target) {
+        centerX = lerp(baseX, Number(target.x ?? GAMECAST2_DESIGN_W / 2) * runtime.metrics.drawScaleX, focus * 0.16);
+        centerY = lerp(baseY, Number(target.y ?? GAMECAST2_DESIGN_H / 2) * runtime.metrics.drawScaleY, focus * 0.16);
+      }
+    }
+  }
+
+  camera.setZoom?.(Math.min(GAMECAST2_CAMERA_MAX_ZOOM, Math.max(1, zoom)));
+  camera.centerOn?.(Math.round(centerX), Math.round(centerY));
+  runtime.gamecast2CameraState = {
+    zoom: Math.min(GAMECAST2_CAMERA_MAX_ZOOM, Math.max(1, zoom)),
+    x: centerX / Math.max(0.01, runtime.metrics.drawScaleX),
+    y: centerY / Math.max(0.01, runtime.metrics.drawScaleY),
+    active: focus > 0
+  };
+  runtime.screen.dataset.gamecast2CameraZoom = runtime.gamecast2CameraState.zoom.toFixed(3);
+}
+
 function buildBallState(runtime, frame = null) {
   const event = frame?.event;
   if (!event || frame?.done) return null;
@@ -617,6 +1302,8 @@ function buildBallState(runtime, frame = null) {
   const home = anchors.home;
   const catcher = anchors.C ?? home;
   if (!mound || !home) return null;
+  const timeline = getCompiledPlayTimeline(runtime, event, anchors);
+  if (timeline) return buildTimelineBallState(timeline, progress, event);
   const pitchStart = 0.04;
   if (progress < pitchStart) return null;
   if (progress <= pitchEnd) {
@@ -671,6 +1358,35 @@ function buildBallState(runtime, frame = null) {
   };
 }
 
+function buildTimelineBallState(timeline, progress, event) {
+  const sample = activeTimelineCue(timeline.tracks.ball, progress);
+  if (!sample) return null;
+  const point = timelineBallPoint(sample.cue, timeline.points, sample.localT);
+  if (!point) return null;
+  const trail = [];
+  for (let index = 4; index >= 0; index -= 1) {
+    const localT = Math.max(0, sample.localT - index * 0.045);
+    const trailPoint = timelineBallPoint(sample.cue, timeline.points, localT);
+    if (trailPoint) trail.push(trailPoint);
+  }
+  return {
+    ...point,
+    scale: sample.cue.phase === "pitch" ? 1.08 : event?.outcome === "homeRun" ? 1.02 : 1,
+    trail
+  };
+}
+
+function timelineBallPoint(cue, points, localT) {
+  const route = (cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
+  if (route.length === 0) return cue.at && points?.[cue.at] ? { ...points[cue.at] } : null;
+  const point = route.length === 1 ? { ...route[0] } : pointAlongTimelineRoute(route, localT);
+  const arc = Math.max(0, Number(cue.arc ?? 0));
+  if (arc > 0 && route.length >= 2) {
+    point.y -= Math.sin(clamp01(localT) * Math.PI) * Math.min(190, 8 + arc * 132);
+  }
+  return point;
+}
+
 function exposeMotionDebug(runtime, frame = null) {
   const play = buildVisualPlay(runtime, frame);
   const ballVisible = Boolean(runtime.scene?.ballSprite?.visible);
@@ -679,6 +1395,7 @@ function exposeMotionDebug(runtime, frame = null) {
   runtime.screen.dataset.gamecast2BallVisible = ballVisible ? "1" : "0";
   runtime.screen.dataset.gamecast2PositionViolations = String(positionGuard.violations.length);
   runtime.screen.dataset.gamecastAbilityUnderlays = String(runtime.gamecast2RatingTokens?.length ?? 0);
+  runtime.screen.dataset.gamecast2TimelineTemplate = String(play.timeline?.template ?? "fallback");
   runtime.screen.__gamecast2Frame = {
     eventId: String(frame?.event?.id ?? ""),
     outcome: String(frame?.event?.outcome ?? ""),
@@ -686,7 +1403,16 @@ function exposeMotionDebug(runtime, frame = null) {
     movingDefenseCount: play.movingDefenseCount ?? 0,
     ballVisible,
     positionGuard,
-    ratingTokens: runtime.gamecast2RatingTokens ?? []
+    timeline: play.timeline ? {
+      template: play.timeline.template,
+      durationMs: play.timeline.durationMs,
+      resultAt: play.timeline.resultAt,
+      invariants: play.timeline.meta?.invariants ?? {}
+    } : null,
+    ratingTokens: runtime.gamecast2RatingTokens ?? [],
+    scoreboard: runtime.scoreboardState ?? null,
+    camera: runtime.gamecast2CameraState ?? { zoom: 1, active: false },
+    particles: runtime.gamecast2ParticleState ?? { impact: 0, dust: 0, confetti: 0, total: 0, tonedDown: false }
   };
 }
 
@@ -1049,8 +1775,100 @@ function textureForRole(role, pose = "idle") {
   return textures[pose] ?? textures.idle ?? textures.stance ?? Object.values(textures)[0];
 }
 
+function hasGamecast2PlayerAtlases(scene) {
+  return Object.values(PLAYER_ATLAS_KEYS).every((key) => scene?.textures?.exists?.(key));
+}
+
+function gamecast2AtlasTexture(scene, runtime, event, actor) {
+  if (!hasGamecast2PlayerAtlases(scene) || !actor) return null;
+  const offenseActor = actor.role === "batter" || actor.isTransient;
+  const offenseHome = event?.side === "home";
+  const uniform = offenseActor
+    ? (offenseHome ? "home" : "away")
+    : (offenseHome ? "away" : "home");
+  const night = String(runtime.field?.id ?? "").includes("night");
+  const baseKey = night
+    ? (uniform === "home" ? PLAYER_ATLAS_KEYS.homeNight : PLAYER_ATLAS_KEYS.awayNight)
+    : (uniform === "home" ? PLAYER_ATLAS_KEYS.home : PLAYER_ATLAS_KEYS.away);
+  if (!event) return baseKey;
+  const accent = offenseActor ? event.teamColor : event.defenseColor;
+  return ensureTeamSpriteAtlas(scene, baseKey, accent ?? "#d23b3b");
+}
+
+function applyGamecast2ActorTexture(sprite, runtime, frame, actor, state, pose) {
+  const scene = runtime.scene;
+  const textureKey = gamecast2AtlasTexture(scene, runtime, frame?.event, actor);
+  if (!textureKey) {
+    sprite.setTexture(textureForRole(actor.role, pose));
+    return;
+  }
+  const frameName = gamecast2AtlasFrame(scene, textureKey, actor, state, pose, runtime, frame);
+  if (frameName && scene.textures.getFrame(textureKey, frameName)) sprite.setTexture(textureKey, frameName);
+  else sprite.setTexture(textureKey, "idle");
+}
+
+function gamecast2AtlasFrame(scene, textureKey, actor, state, pose, runtime, frame) {
+  const animationKey = gamecast2AnimationForPose(actor, state, pose);
+  const baseTextureKey = Object.values(PLAYER_ATLAS_KEYS).find((key) => textureKey === key || textureKey.startsWith(`${key}-`)) ?? textureKey;
+  const metadata = scene.cache?.json?.get?.(`${baseTextureKey}-meta`) ?? {};
+  const animation = metadata.animations?.[animationKey];
+  if (Array.isArray(animation?.frames) && animation.frames.length) {
+    const loop = Boolean(animation.loop) || animationKey === "run" || animationKey === "walk";
+    const explicitT = Number(state?.animationT);
+    const fallbackT = animationKey === "run" || animationKey === "walk"
+      ? Number(runtime.elapsedMs ?? 0) / (animationKey === "walk" ? 720 : 440)
+      : Number(frame?.progress ?? 0);
+    const normalizedT = loop ? fallbackT : (Number.isFinite(explicitT) ? explicitT : fallbackT);
+    return weightedAnimationFrame(animation, loop ? positiveModulo(normalizedT, 1) : clamp01(normalizedT));
+  }
+
+  const staticFrame = {
+    ready: "field",
+    windup: "pitch_set",
+    release: "pitch_release",
+    load: "load",
+    swing: "contact",
+    follow: "follow2",
+    run1: "run1",
+    run2: "run2",
+    throw: "throw_release",
+    catch: actor.role === "catcher" ? "catcher_frame" : "catch_squeeze",
+    slide: "slide_hold",
+    dive: "dive_slide"
+  }[pose] ?? pose ?? "idle";
+  return scene.textures.getFrame(textureKey, staticFrame) ? staticFrame : "idle";
+}
+
+function gamecast2AnimationForPose(actor, state, pose) {
+  const explicit = String(state?.animationKey ?? "");
+  if (explicit) return explicit;
+  if (pose === "windup" || pose === "release") return "pitch";
+  if (["load", "swing", "follow"].includes(pose)) return "swing";
+  if (pose === "run1" || pose === "run2") return "run";
+  if (pose === "throw") return "throw";
+  if (pose === "catch") return actor.role === "catcher" ? "catcher" : "catch";
+  if (pose === "slide") return "slide";
+  if (pose === "dive") return "dive";
+  return "";
+}
+
+function weightedAnimationFrame(animation, progress) {
+  const frames = animation.frames ?? [];
+  const durations = Array.isArray(animation.durations) && animation.durations.length === frames.length
+    ? animation.durations.map((value) => Math.max(1, Number(value) || 1))
+    : frames.map(() => 1);
+  const total = durations.reduce((sum, value) => sum + value, 0);
+  let cursor = clamp01(progress) * Math.max(1, total);
+  for (let index = 0; index < frames.length; index += 1) {
+    cursor -= durations[index];
+    if (cursor <= 0 || index === frames.length - 1) return frames[index];
+  }
+  return frames.at(-1) ?? "idle";
+}
+
 function ensurePlayerTextures(scene, runtime) {
-  if (scene.textures.exists(PLAYER_TEXTURE_KEYS.defense.idle)) return;
+  if (!scene.textures.exists(PLAYER_TEXTURE_KEYS.ball)) makeBallTexture(scene, PLAYER_TEXTURE_KEYS.ball, runtime.palette ?? {});
+  if (hasGamecast2PlayerAtlases(scene) || scene.textures.exists(PLAYER_TEXTURE_KEYS.defense.idle)) return;
   const palette = runtime.palette ?? {};
   const defense = {
     cap: palette.defenseAccentColor ?? palette.defender ?? "#315288",
@@ -1103,7 +1921,6 @@ function ensurePlayerTextures(scene, runtime) {
   makePlayerTexture(scene, PLAYER_TEXTURE_KEYS.batter.follow, batter, "batter-follow");
   makePlayerTexture(scene, PLAYER_TEXTURE_KEYS.batter.run1, batter, "runner-run1");
   makePlayerTexture(scene, PLAYER_TEXTURE_KEYS.batter.run2, batter, "runner-run2");
-  makeBallTexture(scene, PLAYER_TEXTURE_KEYS.ball, palette);
 }
 
 function makePlayerTexture(scene, key, colors, pose) {
@@ -1299,6 +2116,9 @@ function exposeSceneDebug(runtime) {
   runtime.screen.dataset.gamecast2DebugAnchors = runtime.debugAnchors ? "1" : "0";
   runtime.screen.dataset.gamecast2DefenderCount = String(defenders.length);
   runtime.screen.dataset.gamecast2PlayerCount = String(actors.length);
+  runtime.screen.dataset.gamecast2PlayerAtlas = hasGamecast2PlayerAtlases(runtime.scene)
+    ? `64-${String(runtime.field?.id ?? "").includes("night") ? "night" : "day"}`
+    : "procedural-fallback";
   runtime.screen.__gamecast2Anchors = runtime.anchors;
   runtime.screen.__gamecast2Players = {
     defenders: defenders.map(publicActorSnapshot),
@@ -1321,10 +2141,22 @@ function publicActorSnapshot(actor) {
 
 function resizeRuntime(runtime) {
   if (!runtime.game) return;
-  runtime.metrics = calculateMetrics(runtime);
+  const previous = runtime.metrics;
+  const next = calculateMetrics(runtime);
+  const sizeChanged = !previous
+    || previous.bufferW !== next.bufferW
+    || previous.bufferH !== next.bufferH
+    || previous.cssW !== next.cssW
+    || previous.cssH !== next.cssH;
+  runtime.metrics = next;
   applyCanvasContract(runtime);
+  if (!sizeChanged) return;
   runtime.game.scale?.resize?.(runtime.metrics.bufferW, runtime.metrics.bufferH);
   if (runtime.scene) rebuildField(runtime.scene, runtime);
+  if (runtime.done) {
+    startRuntimeLoop(runtime);
+    scheduleRuntimeLoopStop(runtime);
+  }
 }
 
 function updateRuntime(runtime, delta) {
@@ -1349,6 +2181,7 @@ function finishRuntime(runtime, frame = null) {
   runtime.elapsedMs = getRuntimeTotalMs(runtime);
   const finalFrame = frame ?? renderRuntimeFrame(runtime, true);
   runtime.currentFrame = finalFrame;
+  scheduleRuntimeLoopStop(runtime);
   runtime.onDone?.(finalFrame);
 }
 
@@ -1377,4 +2210,15 @@ function stopRuntimeLoop(runtime) {
   } catch (_error) {
     // Best effort during modal close and pause transitions.
   }
+}
+
+function scheduleRuntimeLoopStop(runtime) {
+  if (runtime.stopRaf || !window.requestAnimationFrame) {
+    if (!window.requestAnimationFrame) stopRuntimeLoop(runtime);
+    return;
+  }
+  runtime.stopRaf = window.requestAnimationFrame(() => {
+    runtime.stopRaf = 0;
+    stopRuntimeLoop(runtime);
+  });
 }

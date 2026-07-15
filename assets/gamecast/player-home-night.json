@@ -3520,7 +3520,7 @@
   "meta": {
     "app": "Codex Gamecast Sprite Pipeline",
     "version": "3.1",
-    "image": "player-away.png",
+    "image": "player-home-night.png",
     "format": "RGBA8888",
     "size": {
       "w": 1024,
@@ -3554,6 +3554,6 @@
       "catcher": 2
     },
     "artContract": "docs/gamecast-sprite-art-spec.md",
-    "lighting": "day"
+    "lighting": "night"
   }
 }

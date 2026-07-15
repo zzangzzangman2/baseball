@@ -1,6 +1,6 @@
 // 게임캐스트 QA 랩: 온보딩/프리시즌을 건너뛰고 정규시즌 경기 관전을 즉시 연다.
 // 사용: gamecast-lab.html 접속. 쿼리 옵션 —
-//   ?engine=canvas|phaser|v2  렌더러 강제 (기본 phaser)
+//   ?engine=canvas|phaser|v2  렌더러 강제 (기본 v2)
 //   ?debug=anchors           v2 앵커 오버레이 표시
 //   ?days=N                개막 후 N일 추가 진행 (기본 3)
 //   ?fullscreen=0          큰 화면 자동 열기 끄기
@@ -70,7 +70,9 @@ const clickWhenReady = (selector, timeoutMs = 6000) => new Promise((resolve) => 
     console.warn("[gamecast-lab] 경기 시작 버튼을 찾지 못했습니다. phase:", state.phase);
     return;
   }
-  if (params.get("fullscreen") !== "0") {
+  if (params.get("fullscreen") === "0") {
+    await clickWhenReady("[data-action='close-gamecast-broadcast']", 8000);
+  } else {
     await new Promise((resolve) => setTimeout(resolve, 900));
     await clickWhenReady("[data-action='open-gamecast-broadcast']", 8000);
   }

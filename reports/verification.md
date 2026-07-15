@@ -1,17 +1,17 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-15T01:16:27.729Z
+- 실행 시각: 2026-07-15T02:44:22.597Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Program Files\nodejs\node.exe (v24.18.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
-- 종합 결과: 통과 (39/39 통과)
+- 종합 결과: 통과 (40/40 통과)
 
 ## 체크 결과
 
 | 항목 | 결과 | 상세 | 위치 |
 | --- | --- | --- | --- |
 | ESM 모듈 import 및 핵심 export | PASS | src/data.js, src/engine.js, src/rosters/index.js, src/ui.js, src/main.js, src/systems.js, src/frontOffice.js, src/save.js import 완료 | - |
-| createInitialState 실행 | PASS | 초기 날짜 2026-03-01, 팀 10개 | - |
+| createInitialState 실행 | PASS | 초기 날짜 2026-03-01, 팀 10개, 게임캐스트 v2 기본 | - |
 | 팀 10개 | PASS | 10개 구단 확인 | - |
 | 팀명 실제 KBO명 | PASS | LG 트윈스, 두산 베어스, KIA 타이거즈, 삼성 라이온즈, 롯데 자이언츠, 한화 이글스, SSG 랜더스, KT 위즈, NC 다이노스, 키움 히어로즈 | - |
 | 총 선수 수 | PASS | 총 531명 (LG:55, 두산:53, KIA:55, 삼성:55, 롯데:53, 한화:53, SSG:49, KT:54, NC:52, 키움:52) | - |
@@ -28,6 +28,7 @@
 | 선수 누적 기록 모델 | PASS | 타자 90명/투수 29명 기록, 득점 34, PA 391, 투수아웃 264 | - |
 | 경기 박스스코어/eventLog | PASS | game.final 5개, 박스스코어 5경기, PA 이벤트 391개, 실책 0, 병살 0 | - |
 | 게임캐스트 v3 모션 아틀라스 | PASS | layout v3, 고유 모션 프레임 110개, pitch 24, swing 24, throw 12 | - |
+| 게임캐스트 v2 선언형 타임라인 | PASS | 12개 플레이, 12개 템플릿, atlas anim 9키 | - |
 | 하프이닝 경기 AI/작전 | PASS | 경기 81개, 희생번트 250, 대타 127, 세이브상황 CL 282/290, 9회말 생략 28, 끝내기 10 | - |
 | 로테이션/불펜 운용 snapshot | PASS | 7일 선발 41명, 등판 투수 104명, SU 24, CL 15, W-L 30-30, SV 17, HLD 9 | - |
 | 수동 투수 운용 우선 적용 | PASS | 수동 nextStarter 리오스, CL 김윤식, SV 김윤식, 부상 슬롯 자동 보정 확인 | - |

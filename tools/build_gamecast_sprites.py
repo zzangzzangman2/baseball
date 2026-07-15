@@ -1,42 +1,70 @@
 #!/usr/bin/env python3
-"""Build crisp 48px Gamecast sprite atlases from an imagegen source sheet."""
+"""Build crisp 64px Gamecast sprite atlases from an imagegen source sheet."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import shutil
+from collections import deque
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Tuple
 
 from PIL import Image, ImageDraw
 
 
-FRAME = 48
-BASELINE_Y = 45
-CENTER_X = 24
+FRAME = 64
+BASELINE_Y = 60
+CENTER_X = 32
+SOURCE_CELL = 256
+SOURCE_DOWNSCALE = SOURCE_CELL // FRAME
+MAX_SPRITE_WIDTH = 58
+MAX_SPRITE_HEIGHT = 56
+REGISTERED_SPRITE_WIDTH = 54
+REGISTERED_SPRITE_HEIGHT = 54
+MAX_OPAQUE_RGB_COLORS = 32
 LEGACY_COLS = 5
 LEGACY_ROWS = 4
 V2_COLS = 8
 V2_ROWS = 6
+DEFAULT_SOURCE = Path("assets/gamecast/source/player-sheet-64-imagegen.png")
+LEGACY_REFERENCE_SOURCE = Path("assets/gamecast/source/player-sheet-imagegen.png")
 
 OUTLINE = (32, 32, 42, 255)
 OUTLINE_SOFT = (65, 61, 72, 255)
 SKIN = (242, 199, 154, 255)
 SKIN_SHADOW = (207, 154, 106, 255)
+SKIN_HIGHLIGHT = (255, 224, 181, 255)
 CAP = (210, 59, 59, 255)
-SOCK = (178, 58, 72, 255)
+CAP_SHADOW = (178, 58, 72, 255)
+CAP_HIGHLIGHT = (237, 106, 95, 255)
+SOCK = CAP_SHADOW
 JERSEY_HOME = (247, 247, 242, 255)
 JERSEY_HOME_SHADOW = (220, 218, 210, 255)
+JERSEY_HOME_HIGHLIGHT = (255, 254, 251, 255)
 JERSEY_AWAY = (141, 138, 130, 255)
 JERSEY_AWAY_SHADOW = (99, 97, 91, 255)
+JERSEY_AWAY_HIGHLIGHT = (185, 182, 173, 255)
 PANTS = (58, 53, 80, 255)
 PANTS_SHADOW = (36, 34, 53, 255)
+PANTS_HIGHLIGHT = (90, 83, 116, 255)
 BAT = (138, 95, 57, 255)
 BAT_SHADOW = (95, 63, 39, 255)
+BAT_HIGHLIGHT = (187, 135, 80, 255)
 GLOVE = (112, 75, 45, 255)
+GLOVE_HIGHLIGHT = (165, 114, 67, 255)
 HIGHLIGHT = (255, 240, 168, 255)
-WHITE = (255, 254, 251, 255)
+RIMLIGHT_NIGHT = (157, 215, 255, 255)
+WHITE = JERSEY_HOME_HIGHLIGHT
+
+SEL_OUTLINE_COLORS = frozenset({OUTLINE[:3], OUTLINE_SOFT[:3]})
+RESERVED_RGB = {
+    "outline": OUTLINE[:3],
+    "selout": OUTLINE_SOFT[:3],
+    "team_primary": CAP[:3],
+    "team_shadow": CAP_SHADOW[:3],
+    "night_rimlight": RIMLIGHT_NIGHT[:3],
+}
 
 POSE_GRID = {
     "stance": (0, 0),
@@ -260,8 +288,23 @@ def is_key_color(pixel: Tuple[int, int, int, int]) -> bool:
     return a < 8 or (r > 185 and b > 175 and g < 85 and abs(r - b) < 80)
 
 
+def is_checker_background_candidate(pixel: Tuple[int, int, int, int], relaxed: bool = False) -> bool:
+    r, g, b, a = pixel
+    if is_key_color(pixel):
+        return True
+    floor = 174 if relaxed else 198
+    chroma_limit = 42 if relaxed else 30
+    return a > 0 and min(r, g, b) >= floor and max(r, g, b) - min(r, g, b) <= chroma_limit
+
+
 def luminance(r: int, g: int, b: int) -> float:
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+
+
+def jersey_tones(uniform: str) -> Tuple[Tuple[int, int, int, int], Tuple[int, int, int, int], Tuple[int, int, int, int]]:
+    if uniform == "away":
+        return (JERSEY_AWAY_SHADOW, JERSEY_AWAY, JERSEY_AWAY_HIGHLIGHT)
+    return (JERSEY_HOME_SHADOW, JERSEY_HOME, JERSEY_HOME_HIGHLIGHT)
 
 
 def classify_pixel(pixel: Tuple[int, int, int, int], uniform: str) -> Tuple[int, int, int, int]:
@@ -271,6 +314,7 @@ def classify_pixel(pixel: Tuple[int, int, int, int], uniform: str) -> Tuple[int,
 
     lum = luminance(r, g, b)
     chroma = max(r, g, b) - min(r, g, b)
+    jersey_shadow, jersey_base, jersey_highlight = jersey_tones(uniform)
 
     skin_like = (
         r > 115
@@ -281,14 +325,26 @@ def classify_pixel(pixel: Tuple[int, int, int, int], uniform: str) -> Tuple[int,
         and lum > 0.28
     )
     if skin_like:
-        return SKIN_SHADOW if lum < 0.58 else SKIN
+        if lum < 0.52:
+            return SKIN_SHADOW
+        if lum > 0.78:
+            return SKIN_HIGHLIGHT
+        return SKIN
 
     red_score = r - max(g, b)
     if r > 125 and red_score > 24 and g < 92 and b < 120:
-        return SOCK if lum < 0.42 else CAP
+        if r < 172:
+            return CAP_SHADOW
+        if r > 226 and g > 68:
+            return CAP_HIGHLIGHT
+        return CAP
 
     if r > 135 and g > 82 and b < 138 and r > b + 28:
-        return SKIN_SHADOW if lum < 0.62 else SKIN
+        if lum < 0.52:
+            return SKIN_SHADOW
+        if lum > 0.78:
+            return SKIN_HIGHLIGHT
+        return SKIN
 
     if lum < 0.16:
         return OUTLINE
@@ -296,27 +352,55 @@ def classify_pixel(pixel: Tuple[int, int, int, int], uniform: str) -> Tuple[int,
         return OUTLINE_SOFT
 
     if b >= r + 8 and b >= g + 4 and lum < 0.48:
-        return PANTS_SHADOW if lum < 0.24 else PANTS
+        if lum < 0.20:
+            return PANTS_SHADOW
+        if lum > 0.34:
+            return PANTS_HIGHLIGHT
+        return PANTS
 
     if r > 80 and g > 48 and b < 96 and r >= g + 12:
-        return BAT_SHADOW if lum < 0.38 else BAT
+        if lum < 0.34:
+            return BAT_SHADOW
+        if lum > 0.58:
+            return BAT_HIGHLIGHT
+        return BAT
 
     if abs(r - g) < 18 and abs(g - b) < 18 and lum < 0.62:
-        return JERSEY_AWAY_SHADOW if uniform == "away" else JERSEY_HOME_SHADOW
+        return jersey_shadow
 
     if r > 172 and g > 166 and b > 146:
-        return JERSEY_AWAY if uniform == "away" else JERSEY_HOME
+        return jersey_highlight if lum > 0.90 else jersey_base
 
     if r > 210 and g > 178 and b < 128:
         return HIGHLIGHT
 
     if lum > 0.78:
-        return JERSEY_AWAY if uniform == "away" else WHITE
+        return jersey_highlight
     if lum > 0.56:
-        return JERSEY_AWAY_SHADOW if uniform == "away" else JERSEY_HOME_SHADOW
+        return jersey_base
     if lum > 0.38:
-        return GLOVE
+        return GLOVE_HIGHLIGHT if lum > 0.54 else GLOVE
     return OUTLINE_SOFT
+
+
+def validate_source_grid(source: Image.Image, sheet_cols: int, sheet_rows: int, strict: bool = False) -> List[str]:
+    expected = (sheet_cols * SOURCE_CELL, sheet_rows * SOURCE_CELL)
+    if source.size == expected:
+        print(f"source grid validation: ok ({sheet_cols}x{sheet_rows}, {SOURCE_CELL}px cells, {SOURCE_DOWNSCALE}x integer downscale)")
+        return []
+
+    cell_w = source.width / sheet_cols
+    cell_h = source.height / sheet_rows
+    issues = [
+        f"source sheet {source.width}x{source.height} yields {cell_w:.2f}x{cell_h:.2f}px cells; "
+        f"the 64px contract requires {expected[0]}x{expected[1]} ({SOURCE_CELL}px per cell)"
+    ]
+    print("source grid validation:")
+    for issue in issues:
+        print(f"  {'ERROR' if strict else 'WARN'} {issue}")
+    if strict:
+        raise SystemExit("source grid validation failed")
+    return issues
 
 
 def crop_source_cell(source: Image.Image, col: int, row: int, sheet_cols: int, sheet_rows: int) -> Image.Image:
@@ -327,7 +411,10 @@ def crop_source_cell(source: Image.Image, col: int, row: int, sheet_cols: int, s
     top = round(row * cell_h)
     right = round((col + 1) * cell_w)
     bottom = round((row + 1) * cell_h)
-    return source.crop((left, top, right, bottom)).convert("RGBA")
+    cell = clear_source_background(source.crop((left, top, right, bottom)).convert("RGBA"))
+    if cell.size != (SOURCE_CELL, SOURCE_CELL):
+        cell = cell.resize((SOURCE_CELL, SOURCE_CELL), Image.Resampling.NEAREST)
+    return cell
 
 
 def transparent_bbox(image: Image.Image) -> Tuple[int, int, int, int] | None:
@@ -359,22 +446,146 @@ def opaque_bbox(image: Image.Image) -> Tuple[int, int, int, int] | None:
     return (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
 
 
+def clear_source_background(image: Image.Image) -> Image.Image:
+    image = image.copy().convert("RGBA")
+    pixels = image.load()
+    width, height = image.size
+    background: set[Tuple[int, int]] = set()
+    queue: deque[Tuple[int, int]] = deque()
+
+    def enqueue(x: int, y: int) -> None:
+        point = (x, y)
+        if point in background or not is_checker_background_candidate(pixels[x, y]):
+            return
+        background.add(point)
+        queue.append(point)
+
+    for x in range(width):
+        enqueue(x, 0)
+        enqueue(x, height - 1)
+    for y in range(height):
+        enqueue(0, y)
+        enqueue(width - 1, y)
+
+    while queue:
+        x, y = queue.popleft()
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < width and 0 <= ny < height:
+                enqueue(nx, ny)
+
+    # Remove the bright neutral fringe immediately connected to the checker/key region.
+    fringe = set(background)
+    for x, y in tuple(background):
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < width and 0 <= ny < height and is_checker_background_candidate(pixels[nx, ny], relaxed=True):
+                fringe.add((nx, ny))
+
+    for x, y in fringe:
+        pixels[x, y] = (0, 0, 0, 0)
+
+    # Key colors may also occur in enclosed checker pockets after generation.
+    for y in range(image.height):
+        for x in range(image.width):
+            if is_key_color(pixels[x, y]):
+                pixels[x, y] = (0, 0, 0, 0)
+    return image
+
+
+def quantize_frame(image: Image.Image, uniform: str) -> Image.Image:
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            pixels[x, y] = classify_pixel(pixels[x, y], uniform)
+    return image
+
+
+def align_output_frame(frame: Image.Image) -> Image.Image:
+    bbox = opaque_bbox(frame)
+    if bbox is None:
+        return frame
+    left, _top, right, bottom = bbox
+    center = (left + right) / 2
+    dx = round(CENTER_X - center)
+    dy = BASELINE_Y - bottom
+    aligned = Image.new("RGBA", (FRAME, FRAME), (0, 0, 0, 0))
+    aligned.alpha_composite(frame, (dx, dy))
+    return aligned
+
+
+def apply_selout(frame: Image.Image) -> Image.Image:
+    output = frame.copy().convert("RGBA")
+    source = frame.convert("RGBA")
+    source_pixels = source.load()
+    output_pixels = output.load()
+    for y in range(source.height):
+        for x in range(source.width):
+            if source_pixels[x, y][3] == 0:
+                continue
+            exposed = any(
+                nx < 0
+                or ny < 0
+                or nx >= source.width
+                or ny >= source.height
+                or source_pixels[nx, ny][3] == 0
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1))
+            )
+            if exposed and source_pixels[x, y][:3] not in SEL_OUTLINE_COLORS:
+                output_pixels[x, y] = OUTLINE_SOFT
+    return output
+
+
+def apply_night_rimlight(frame: Image.Image) -> Image.Image:
+    output = frame.copy().convert("RGBA")
+    source = frame.convert("RGBA")
+    source_pixels = source.load()
+    output_pixels = output.load()
+    for y in range(min(source.height, round(BASELINE_Y * 0.65) + 1)):
+        for x in range(source.width):
+            if source_pixels[x, y][3] == 0:
+                continue
+            if y == 0 or source_pixels[x, y - 1][3] == 0:
+                output_pixels[x, y] = RIMLIGHT_NIGHT
+    return output
+
+
+def register_source_cell(source_cell: Image.Image) -> Image.Image:
+    cleaned = clear_source_background(source_cell)
+    bbox = transparent_bbox(cleaned)
+    registered = Image.new("RGBA", (SOURCE_CELL, SOURCE_CELL), (0, 0, 0, 0))
+    if bbox is None:
+        return registered
+
+    cropped = cleaned.crop(bbox)
+    max_w = REGISTERED_SPRITE_WIDTH * SOURCE_DOWNSCALE
+    max_h = REGISTERED_SPRITE_HEIGHT * SOURCE_DOWNSCALE
+    scale = min(max_w / cropped.width, max_h / cropped.height)
+    scaled_w = max(SOURCE_DOWNSCALE, round(cropped.width * scale / SOURCE_DOWNSCALE) * SOURCE_DOWNSCALE)
+    scaled_h = max(SOURCE_DOWNSCALE, round(cropped.height * scale / SOURCE_DOWNSCALE) * SOURCE_DOWNSCALE)
+    resized = cropped.resize((scaled_w, scaled_h), Image.Resampling.NEAREST)
+    paste_x = round((CENTER_X * SOURCE_DOWNSCALE - scaled_w / 2) / SOURCE_DOWNSCALE) * SOURCE_DOWNSCALE
+    paste_y = BASELINE_Y * SOURCE_DOWNSCALE - scaled_h
+    registered.alpha_composite(resized, (paste_x, paste_y))
+    return registered
+
+
 def normalize_frame(source_cell: Image.Image, uniform: str) -> Image.Image:
+    if source_cell.size == (SOURCE_CELL, SOURCE_CELL):
+        # Registration is normalized on the 256px cell, then preserved through a true 4x downscale.
+        registered = register_source_cell(source_cell)
+        resized = registered.resize((FRAME, FRAME), Image.Resampling.NEAREST)
+        quantized = quantize_frame(resized, uniform)
+        return apply_selout(align_output_frame(quantized))
+
     bbox = transparent_bbox(source_cell)
     frame = Image.new("RGBA", (FRAME, FRAME), (0, 0, 0, 0))
     if bbox is None:
         return frame
 
-    cropped = source_cell.crop(bbox).convert("RGBA")
-    cropped_pixels = cropped.load()
-    for y in range(cropped.height):
-        for x in range(cropped.width):
-            if is_key_color(cropped_pixels[x, y]):
-                cropped_pixels[x, y] = (0, 0, 0, 0)
+    # Compatibility path for the checked-in pre-contract source sheet. New sources should
+    # always take the exact 256px path above; --strict-source-grid enforces that in CI.
+    cropped = clear_source_background(source_cell.crop(bbox))
 
-    max_w = 43
-    max_h = 42
-    scale = min(max_w / cropped.width, max_h / cropped.height)
+    scale = min(MAX_SPRITE_WIDTH / cropped.width, MAX_SPRITE_HEIGHT / cropped.height)
     new_size = (
         max(1, round(cropped.width * scale)),
         max(1, round(cropped.height * scale)),
@@ -385,11 +596,7 @@ def normalize_frame(source_cell: Image.Image, uniform: str) -> Image.Image:
     paste_y = BASELINE_Y - new_size[1]
     output.alpha_composite(resized, (paste_x, paste_y))
 
-    pixels = output.load()
-    for y in range(FRAME):
-        for x in range(FRAME):
-            pixels[x, y] = classify_pixel(pixels[x, y], uniform)
-    return output
+    return apply_selout(align_output_frame(quantize_frame(output, uniform)))
 
 
 def shift_frame(frame: Image.Image, dx: int = 0, dy: int = 0) -> Image.Image:
@@ -415,11 +622,28 @@ def detect_layout(source: Image.Image, requested: str) -> Tuple[str, int, int, M
         return ("v2", V2_COLS, V2_ROWS, V2_GRID, V2_ALIASES, V2_ANIMATIONS)
 
     width, height = source.size
+    if source.size == (V2_COLS * SOURCE_CELL, V2_ROWS * SOURCE_CELL):
+        return ("v2", V2_COLS, V2_ROWS, V2_GRID, V2_ALIASES, V2_ANIMATIONS)
+    if source.size == (LEGACY_COLS * SOURCE_CELL, LEGACY_ROWS * SOURCE_CELL):
+        return ("legacy", LEGACY_COLS, LEGACY_ROWS, POSE_GRID, LEGACY_ALIASES, LEGACY_ANIMATIONS)
+
+    ratio = width / height
+    if abs(ratio - LEGACY_COLS / LEGACY_ROWS) <= 0.04:
+        return ("legacy", LEGACY_COLS, LEGACY_ROWS, POSE_GRID, LEGACY_ALIASES, LEGACY_ANIMATIONS)
+    if abs(ratio - V2_COLS / V2_ROWS) <= 0.04:
+        return ("v2", V2_COLS, V2_ROWS, V2_GRID, V2_ALIASES, V2_ANIMATIONS)
+
     v2_cell_w = width / V2_COLS
     v2_cell_h = height / V2_ROWS
     if abs(v2_cell_w - v2_cell_h) / max(v2_cell_w, v2_cell_h) <= 0.06:
         return ("v2", V2_COLS, V2_ROWS, V2_GRID, V2_ALIASES, V2_ANIMATIONS)
     return ("legacy", LEGACY_COLS, LEGACY_ROWS, POSE_GRID, LEGACY_ALIASES, LEGACY_ANIMATIONS)
+
+
+def registration_baseline_exempt(pose: str) -> bool:
+    if pose in AIRBORNE_OR_LOW_POSES:
+        return True
+    return pose.startswith(("pitch_", "throw_", "run_", "catch_", "dive_", "slide_", "catcher_"))
 
 
 def validate_registration(frames: Mapping[str, Image.Image], strict: bool = False) -> List[str]:
@@ -437,17 +661,20 @@ def validate_registration(frames: Mapping[str, Image.Image], strict: bool = Fals
         baseline_delta = bottom - BASELINE_Y
         center_delta = center - CENTER_X
 
-        if pose not in AIRBORNE_OR_LOW_POSES and abs(baseline_delta) > 1:
+        if not registration_baseline_exempt(pose) and abs(baseline_delta) > 1:
             issues.append(f"{pose}: bbox bottom {bottom} is {baseline_delta:+.1f}px from baseline {BASELINE_Y}")
-        elif abs(baseline_delta) > 5:
+        elif abs(baseline_delta) > 7:
             issues.append(f"{pose}: bbox bottom {bottom} is far from baseline {BASELINE_Y}")
 
-        if abs(center_delta) > 3.5:
+        if abs(center_delta) > 4.5:
             issues.append(f"{pose}: bbox center {center:.1f} is {center_delta:+.1f}px from center {CENTER_X}")
         if left <= 0 or right >= FRAME or top <= 0 or bottom >= FRAME:
             issues.append(f"{pose}: opaque bbox {bbox} touches frame edge")
-        if width > 43 or height > 42:
-            issues.append(f"{pose}: opaque bbox {width}x{height} exceeds recommended 43x42 safe area")
+        if width > MAX_SPRITE_WIDTH or height > MAX_SPRITE_HEIGHT:
+            issues.append(
+                f"{pose}: opaque bbox {width}x{height} exceeds recommended "
+                f"{MAX_SPRITE_WIDTH}x{MAX_SPRITE_HEIGHT} safe area"
+            )
 
     if issues:
         print("registration validation:")
@@ -458,6 +685,173 @@ def validate_registration(frames: Mapping[str, Image.Image], strict: bool = Fals
 
     if strict and issues:
         raise SystemExit("registration validation failed")
+    return issues
+
+
+def rgb_distance(first: Tuple[int, int, int], second: Tuple[int, int, int]) -> float:
+    return sum((first[index] - second[index]) ** 2 for index in range(3)) ** 0.5
+
+
+def art_palette(uniform: str) -> set[Tuple[int, int, int]]:
+    jersey_shadow, jersey_base, jersey_highlight = jersey_tones(uniform)
+    colors = {
+        OUTLINE,
+        OUTLINE_SOFT,
+        SKIN_SHADOW,
+        SKIN,
+        SKIN_HIGHLIGHT,
+        CAP_SHADOW,
+        CAP,
+        CAP_HIGHLIGHT,
+        jersey_shadow,
+        jersey_base,
+        jersey_highlight,
+        PANTS_SHADOW,
+        PANTS,
+        PANTS_HIGHLIGHT,
+        BAT_SHADOW,
+        BAT,
+        BAT_HIGHLIGHT,
+        GLOVE,
+        GLOVE_HIGHLIGHT,
+        HIGHLIGHT,
+        RIMLIGHT_NIGHT,
+    }
+    return {color[:3] for color in colors}
+
+
+def three_tone_families(uniform: str) -> Mapping[str, Tuple[Tuple[int, int, int], ...]]:
+    jersey_shadow, jersey_base, jersey_highlight = jersey_tones(uniform)
+    return {
+        "skin": (SKIN_SHADOW[:3], SKIN[:3], SKIN_HIGHLIGHT[:3]),
+        "cap": (CAP_SHADOW[:3], CAP[:3], CAP_HIGHLIGHT[:3]),
+        "jersey": (jersey_shadow[:3], jersey_base[:3], jersey_highlight[:3]),
+        "pants": (PANTS_SHADOW[:3], PANTS[:3], PANTS_HIGHLIGHT[:3]),
+        "bat": (BAT_SHADOW[:3], BAT[:3], BAT_HIGHLIGHT[:3]),
+        "glove": (BAT_SHADOW[:3], GLOVE[:3], GLOVE_HIGHLIGHT[:3]),
+    }
+
+
+def boundary_rgb(frame: Image.Image) -> List[Tuple[int, int, int]]:
+    image = frame.convert("RGBA")
+    pixels = image.load()
+    result: List[Tuple[int, int, int]] = []
+    for y in range(image.height):
+        for x in range(image.width):
+            pixel = pixels[x, y]
+            if pixel[3] == 0:
+                continue
+            if any(
+                nx < 0
+                or ny < 0
+                or nx >= image.width
+                or ny >= image.height
+                or pixels[nx, ny][3] == 0
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1))
+            ):
+                result.append(pixel[:3])
+    return result
+
+
+def validate_night_rimlight(frames: Mapping[str, Image.Image], required: bool) -> List[str]:
+    issues: List[str] = []
+    rim = RIMLIGHT_NIGHT[:3]
+    rim_count = 0
+    invalid_count = 0
+    for frame in frames.values():
+        image = frame.convert("RGBA")
+        pixels = image.load()
+        for y in range(image.height):
+            for x in range(image.width):
+                if pixels[x, y][3] == 0 or pixels[x, y][:3] != rim:
+                    continue
+                rim_count += 1
+                above_is_opaque = y > 0 and pixels[x, y - 1][3] > 0
+                if above_is_opaque or y > round(BASELINE_Y * 0.65):
+                    invalid_count += 1
+    if required and rim_count == 0:
+        issues.append("night rimlight is required but no reserved rimlight pixels are present")
+    if rim_count and invalid_count / rim_count > 0.15:
+        issues.append(
+            f"night rimlight must be a 1px top-facing edge: {invalid_count}/{rim_count} pixels violate the rule"
+        )
+    return issues
+
+
+def validate_art_rules(
+    frames: Mapping[str, Image.Image],
+    uniform: str,
+    strict: bool = False,
+    require_night_rimlight: bool = False,
+) -> List[str]:
+    issues: List[str] = []
+    used_rgb: set[Tuple[int, int, int]] = set()
+    boundaries: List[Tuple[int, int, int]] = []
+    for frame in frames.values():
+        image = frame.convert("RGBA")
+        pixels = image.get_flattened_data() if hasattr(image, "get_flattened_data") else image.getdata()
+        used_rgb.update(pixel[:3] for pixel in pixels if pixel[3] > 0)
+        boundaries.extend(boundary_rgb(image))
+
+    if len(used_rgb) > MAX_OPAQUE_RGB_COLORS:
+        issues.append(f"palette has {len(used_rgb)} opaque RGB colors; maximum is {MAX_OPAQUE_RGB_COLORS}")
+
+    unexpected = sorted(used_rgb - art_palette(uniform))
+    if unexpected:
+        preview = ", ".join("#%02x%02x%02x" % color for color in unexpected[:8])
+        issues.append(f"palette contains {len(unexpected)} non-contract colors ({preview})")
+
+    if (0, 0, 0) in used_rgb:
+        issues.append("pure black is forbidden; use the reserved selout tones")
+
+    for name, reserved in RESERVED_RGB.items():
+        near_matches = [
+            color for color in used_rgb
+            if color != reserved and color not in art_palette(uniform) and rgb_distance(color, reserved) <= 18
+        ]
+        if near_matches:
+            issues.append(f"reserved color '{name}' has non-exact near matches: {near_matches[:4]}")
+
+    for required_name in ("outline", "selout", "team_primary", "team_shadow"):
+        if RESERVED_RGB[required_name] not in used_rgb:
+            issues.append(f"reserved color '{required_name}' is missing")
+
+    complete_families = {
+        name for name, tones in three_tone_families(uniform).items()
+        if all(tone in used_rgb for tone in tones)
+    }
+    for required_family in ("skin", "jersey"):
+        if required_family not in complete_families:
+            issues.append(f"{required_family} is missing base/shade/highlight 3-tone coverage")
+    if len(complete_families) < 3:
+        issues.append(
+            "fewer than three material families have complete base/shade/highlight coverage "
+            f"({', '.join(sorted(complete_families)) or 'none'})"
+        )
+
+    if boundaries:
+        selout_count = sum(color in SEL_OUTLINE_COLORS for color in boundaries)
+        coverage = selout_count / len(boundaries)
+        if coverage < 0.55:
+            issues.append(f"selout covers only {coverage:.1%} of opaque boundary pixels; minimum is 55%")
+    else:
+        issues.append("no opaque boundary pixels found")
+
+    issues.extend(validate_night_rimlight(frames, require_night_rimlight))
+
+    if issues:
+        print(f"art rule validation ({uniform}):")
+        for issue in issues:
+            print(f"  {'ERROR' if strict else 'WARN'} {issue}")
+    else:
+        family_text = ", ".join(sorted(complete_families))
+        print(
+            f"art rule validation ({uniform}): ok "
+            f"({len(used_rgb)} colors; 3-tone: {family_text}; selout: {coverage:.1%})"
+        )
+
+    if strict and issues:
+        raise SystemExit("art rule validation failed")
     return issues
 
 
@@ -509,14 +903,19 @@ def write_player_atlas(
     animations: Mapping[str, object],
     layout_name: str,
     strict_registration: bool,
+    strict_art: bool,
+    night: bool = False,
 ) -> None:
-    image_name = f"player-{uniform}.png"
+    variant = f"{uniform}-night" if night else uniform
+    image_name = f"player-{variant}.png"
     atlas = Image.new("RGBA", (sheet_cols * FRAME, sheet_rows * FRAME), (0, 0, 0, 0))
     frames: Dict[str, object] = {}
     validation_frames: Dict[str, Image.Image] = {}
 
     for pose, (col, row) in pose_grid.items():
         frame = normalize_frame(crop_source_cell(source, col, row, sheet_cols, sheet_rows), uniform)
+        if night:
+            frame = apply_night_rimlight(frame)
         x = col * FRAME
         y = row * FRAME
         atlas.alpha_composite(frame, (x, y))
@@ -528,9 +927,10 @@ def write_player_atlas(
             frames[alias] = frames[target]
 
     validate_registration(validation_frames, strict_registration)
+    validate_art_rules(validation_frames, uniform, strict_art, night)
 
     atlas.save(output_dir / image_name)
-    write_json(output_dir / f"player-{uniform}.json", image_name, atlas.size, frames, layout_name, animations)
+    write_json(output_dir / f"player-{variant}.json", image_name, atlas.size, frames, layout_name, animations)
 
 
 def build_legacy_normalized_frames(source: Image.Image, uniform: str) -> Dict[str, Image.Image]:
@@ -545,8 +945,11 @@ def write_synthesized_v2_atlas(
     output_dir: Path,
     uniform: str,
     strict_registration: bool,
+    strict_art: bool,
+    night: bool = False,
 ) -> None:
-    image_name = f"player-{uniform}.png"
+    variant = f"{uniform}-night" if night else uniform
+    image_name = f"player-{variant}.png"
     legacy_frames = build_legacy_normalized_frames(source, uniform)
     atlas = Image.new("RGBA", (V2_COLS * FRAME, V2_ROWS * FRAME), (0, 0, 0, 0))
     frames: Dict[str, object] = {}
@@ -560,6 +963,8 @@ def write_synthesized_v2_atlas(
         if base_name and base_name in legacy_frames:
             dx, dy = LEGACY_TO_V2_SHIFT.get(pose, (0, 0))
             frame = shift_frame(legacy_frames[base_name], dx, dy)
+            if night:
+                frame = apply_night_rimlight(frame)
         atlas.alpha_composite(frame, (x, y))
         frames[pose] = atlas_frame(x, y)
         if base_name:
@@ -570,9 +975,10 @@ def write_synthesized_v2_atlas(
             frames[alias] = frames[target]
 
     validate_registration(validation_frames, strict_registration)
+    validate_art_rules(validation_frames, uniform, strict_art, night)
 
     atlas.save(output_dir / image_name)
-    write_json(output_dir / f"player-{uniform}.json", image_name, atlas.size, frames, "v2", V2_ANIMATIONS)
+    write_json(output_dir / f"player-{variant}.json", image_name, atlas.size, frames, "v2", V2_ANIMATIONS)
 
 
 def write_props_atlas(output_dir: Path) -> None:
@@ -611,7 +1017,7 @@ def write_json(
         "frames": frames,
         "meta": {
             "app": "Codex Gamecast Sprite Pipeline",
-            "version": "2.0" if layout_name == "v2" else "1.1",
+            "version": "2.1" if layout_name == "v2" else "1.2",
             "image": image_name,
             "format": "RGBA8888",
             "size": {"w": size[0], "h": size[1]},
@@ -620,6 +1026,11 @@ def write_json(
             "layout": layout_name,
             "baselineY": BASELINE_Y,
             "centerX": CENTER_X,
+            "sourceCellSize": {"w": SOURCE_CELL, "h": SOURCE_CELL},
+            "integerDownscale": SOURCE_DOWNSCALE,
+            "safeOpaqueSize": {"w": MAX_SPRITE_WIDTH, "h": MAX_SPRITE_HEIGHT},
+            "artContract": "docs/gamecast-sprite-art-spec.md",
+            "lighting": "night" if "-night." in image_name else "day",
         },
     }
     if animations:
@@ -639,11 +1050,18 @@ def count_colors(paths: Iterable[Path]) -> Dict[str, int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", default=Path("assets/gamecast/source/player-sheet-imagegen.png"), type=Path, help="Imagegen source sprite sheet")
+    parser.add_argument(
+        "--source",
+        default=DEFAULT_SOURCE if DEFAULT_SOURCE.exists() else LEGACY_REFERENCE_SOURCE,
+        type=Path,
+        help="Imagegen source sprite sheet",
+    )
     parser.add_argument("--out", default=Path("assets/gamecast"), type=Path, help="Output asset directory")
     parser.add_argument("--layout", choices=("auto", "legacy", "v2"), default="auto", help="Source grid layout")
     parser.add_argument("--keep-legacy-output", action="store_true", help="When the source is legacy, emit the legacy atlas instead of synthesizing a v2 atlas")
     parser.add_argument("--strict-registration", action="store_true", help="Fail on registration warnings")
+    parser.add_argument("--strict-source-grid", action="store_true", help="Require an exact 256px-per-cell source sheet")
+    parser.add_argument("--strict-art", action="store_true", help="Fail 3-tone, selout, reserved-color, and palette checks")
     args = parser.parse_args()
 
     output_dir = args.out
@@ -654,22 +1072,47 @@ def main() -> None:
     source = Image.open(args.source).convert("RGBA")
     layout_name, sheet_cols, sheet_rows, pose_grid, aliases, animations = detect_layout(source, args.layout)
     print(f"layout: {layout_name} ({sheet_cols}x{sheet_rows})")
-    source_copy = source_dir / "player-sheet-imagegen.png"
+    validate_source_grid(source, sheet_cols, sheet_rows, args.strict_source_grid)
+    source_copy = source_dir / args.source.name
     if args.source.resolve() != source_copy.resolve():
         shutil.copyfile(args.source, source_copy)
 
     if layout_name == "legacy" and not args.keep_legacy_output:
         print("emitting: synthesized v2 atlas from legacy source")
-        write_synthesized_v2_atlas(source, output_dir, "home", args.strict_registration)
-        write_synthesized_v2_atlas(source, output_dir, "away", args.strict_registration)
+        for uniform in ("home", "away"):
+            for night in (False, True):
+                write_synthesized_v2_atlas(
+                    source,
+                    output_dir,
+                    uniform,
+                    args.strict_registration,
+                    args.strict_art,
+                    night,
+                )
     else:
-        write_player_atlas(source, output_dir, "home", sheet_cols, sheet_rows, pose_grid, aliases, animations, layout_name, args.strict_registration)
-        write_player_atlas(source, output_dir, "away", sheet_cols, sheet_rows, pose_grid, aliases, animations, layout_name, args.strict_registration)
+        for uniform in ("home", "away"):
+            for night in (False, True):
+                write_player_atlas(
+                    source,
+                    output_dir,
+                    uniform,
+                    sheet_cols,
+                    sheet_rows,
+                    pose_grid,
+                    aliases,
+                    animations,
+                    layout_name,
+                    args.strict_registration,
+                    args.strict_art,
+                    night,
+                )
     write_props_atlas(output_dir)
 
     counts = count_colors([
         output_dir / "player-home.png",
+        output_dir / "player-home-night.png",
         output_dir / "player-away.png",
+        output_dir / "player-away-night.png",
         output_dir / "props.png",
     ])
     for name, count in counts.items():

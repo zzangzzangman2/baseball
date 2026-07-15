@@ -1,6 +1,6 @@
 const PHASER_DESIGN_W = 400;
 const PHASER_DESIGN_H = 360;
-const PLAYER_FALLBACK_ATLAS_SIZE = 48;
+const PLAYER_FALLBACK_ATLAS_SIZE = 64;
 const PLAYER_MIN_RENDER_SCALE = 0.48;
 const PLAYER_MAX_RENDER_SCALE = 0.7;
 const spriteFrameRange = (prefix, count) => Array.from({ length: count }, (_, index) => `${prefix}_${String(index).padStart(2, "0")}`);
@@ -1218,7 +1218,7 @@ function gamecastPlayerRenderScale(runtime, sprite, role) {
 }
 
 const CENTER_ORIGIN_X = 0.5;
-const BASELINE_ORIGIN_Y = 45 / PLAYER_FALLBACK_ATLAS_SIZE;
+const BASELINE_ORIGIN_Y = 60 / PLAYER_FALLBACK_ATLAS_SIZE;
 
 function spriteFrameForPose(scene, textureKey, sprite, role) {
   if (role === "umpire") return "umpire";
@@ -1287,7 +1287,7 @@ function textureHasFrame(scene, textureKey, frame) {
   return Boolean(scene?.textures?.exists?.(textureKey) && scene.textures.getFrame(textureKey, frame));
 }
 
-function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
+export function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
   const normalized = normalizeSpriteHex(accentColor, "#d23b3b");
   const cacheKey = `${baseKey}-${normalized.slice(1).toLowerCase()}`;
   if (scene.textures.exists(cacheKey)) return cacheKey;
