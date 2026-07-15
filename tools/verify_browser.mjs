@@ -1308,7 +1308,7 @@ async function checkGamecastLab() {
   await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fps=1&holds=0&qa=lab-desktop-${Date.now()}` });
   await loadEvent;
   await waitForGamecastLabModal();
-  await delay(300);
+  await waitForGamecastFpsOverlay();
 
   const desktopProbe = await evaluateInBrowser(`
     (() => {
@@ -1589,20 +1589,25 @@ async function checkGamecastLab() {
   await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fullscreen=1&speed=4&qa=lab-fast-${Date.now()}` });
   await loadEvent;
   await waitForGamecastLabModal();
-  await delay(9000);
-  const fastProbe = await evaluateInBrowser(`
-    (() => {
-      const modal = document.querySelector("[data-gamecast-modal]");
-      const overlay = modal?.querySelector("[data-gamecast-pause-overlay]");
-      return {
-        feedCount: modal?.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")?.length ?? 0,
-        overlayVisible: Boolean(overlay?.classList.contains("is-visible")),
-        holdType: overlay?.dataset?.holdType ?? "",
-        activeSpeed: modal?.querySelector("[data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? "",
-        totalEvents: window.__labState?.lastGames?.[0]?.plateAppearanceEvents?.length ?? 0
-      };
-    })()
-  `);
+  const fastDeadline = Date.now() + 15000;
+  let fastProbe = null;
+  while (Date.now() < fastDeadline) {
+    fastProbe = await evaluateInBrowser(`
+      (() => {
+        const modal = document.querySelector("[data-gamecast-modal]");
+        const overlay = modal?.querySelector("[data-gamecast-pause-overlay]");
+        return {
+          feedCount: modal?.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")?.length ?? 0,
+          overlayVisible: Boolean(overlay?.classList.contains("is-visible")),
+          holdType: overlay?.dataset?.holdType ?? "",
+          activeSpeed: modal?.querySelector("[data-gamecast-speed].is-active")?.dataset?.gamecastSpeed ?? "",
+          totalEvents: window.__labState?.lastGames?.[0]?.plateAppearanceEvents?.length ?? 0
+        };
+      })()
+    `);
+    if (fastProbe.feedCount > 3) break;
+    await delay(120);
+  }
   assert(fastProbe.activeSpeed === "4", `x4 배속이 반영되지 않았습니다: ${JSON.stringify(fastProbe)}`, "src/gamecastLab.js");
   assert(!(fastProbe.overlayVisible && ["inning", "leverage"].includes(fastProbe.holdType)), `x4에서 자동 홀드가 멈췄습니다: ${JSON.stringify(fastProbe)}`, "src/ui.js");
   assert(fastProbe.feedCount > 3, `x4 진행 중 피드가 충분히 진행되지 않았습니다: ${JSON.stringify(fastProbe)}`, "src/ui.js");
@@ -1768,6 +1773,7 @@ async function checkGamecastLab() {
         anchorCount: Number(screen?.dataset?.gamecast2AnchorCount ?? 0),
         defenderCount: Number(screen?.dataset?.gamecast2DefenderCount ?? 0),
         playerCount: Number(screen?.dataset?.gamecast2PlayerCount ?? 0),
+        actors: motionFrame?.actors ?? [],
         keys,
         missing: required.filter((key) => !keys.includes(key)),
         missingDefenders: defenseRequired.filter((key) => !defenderKeys.includes(key)),
@@ -1776,6 +1782,8 @@ async function checkGamecastLab() {
         canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0),
         canvasWidth: Math.round(rect?.width ?? 0),
         canvasHeight: Math.round(rect?.height ?? 0),
+        canvasBufferW: Number(canvas?.width ?? 0),
+        canvasBufferH: Number(canvas?.height ?? 0),
         positionViolations: Number(screen?.dataset?.gamecast2PositionViolations ?? 0),
         motionViolations: Number(screen?.__gamecast2Frame?.positionGuard?.violations?.length ?? 0),
         motionViolationActors: screen?.__gamecast2Frame?.positionGuard?.violations ?? [],
@@ -1788,7 +1796,7 @@ async function checkGamecastLab() {
     })()
   `);
   assert(anchorProbe.engine === "v2", `v2 엔진이 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/ui.js");
-  assert(anchorProbe.playerAtlas === "64-day", `v2 64px day atlas가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.playerAtlas === "128-day", `v2 128px day atlas가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.timelineTemplate && anchorProbe.timelineTemplate !== "fallback", `v2 timeline template가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/timeline.js");
   assert(
     anchorProbe.scoreboardVisible &&
@@ -1829,7 +1837,8 @@ async function checkGamecastLab() {
   assert(anchorProbe.field === "field-gocheok-dome", `v2 필드 선택이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
   assert(anchorProbe.anchorCount >= 15 && anchorProbe.missing.length === 0, `v2 앵커가 부족합니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(anchorProbe.canvasPixelW === 960 && anchorProbe.canvasPixelH === 720, `v2 필드 해상도 계약이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
-  assert(anchorProbe.canvasWidth > 0 && anchorProbe.canvasHeight > 0, `v2 캔버스가 보이지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.canvasWidth >= 900 && anchorProbe.canvasHeight >= 675, `v2 데스크톱 캔버스가 고해상도로 표시되지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/styles.css");
+  assert(anchorProbe.canvasBufferW >= 960 && anchorProbe.canvasBufferH >= 720, `v2 내부 렌더 버퍼가 960x720 미만입니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.positionViolations === 0 && anchorProbe.motionViolations === 0, `v2 선수 좌표가 허용 구역 밖입니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.baseDirectionOk && anchorProbe.baseBagOk && anchorProbe.depthOk && anchorProbe.pitcherOk, `v2 앵커 배치가 어긋났습니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(
@@ -1839,6 +1848,18 @@ async function checkGamecastLab() {
       anchorProbe.hasBatter &&
       anchorProbe.outfieldScaleOk,
     `v2 R2 선수 배치가 부족합니다: ${JSON.stringify(anchorProbe)}`,
+    "src/gamecast2/scene.js"
+  );
+
+  const equipmentProbe = await waitForV2EquipmentDiagnostics();
+  assert(
+    equipmentProbe.catcherFrames.length > 0 && equipmentProbe.catcherFrames.every((frameName) => frameName.startsWith("catcher_")),
+    `포수 마스크 프레임이 경기 중 유지되지 않습니다: ${JSON.stringify(equipmentProbe)}`,
+    "src/gamecast2/scene.js"
+  );
+  assert(
+    equipmentProbe.stationaryRunnerFrames.length > 0 && equipmentProbe.stationaryRunnerFrames.every((frameName) => frameName === "idle"),
+    `베이스 주자가 배트 없는 idle 프레임을 사용하지 않습니다: ${JSON.stringify(equipmentProbe)}`,
     "src/gamecast2/scene.js"
   );
 
@@ -1869,7 +1890,7 @@ async function checkGamecastLab() {
     inlineV2Probe.engine === "v2" &&
       !inlineV2Probe.inModal &&
       !inlineV2Probe.largeScreen &&
-      inlineV2Probe.playerAtlas === "64-day" &&
+      inlineV2Probe.playerAtlas === "128-day" &&
       inlineV2Probe.timelineTemplate &&
       inlineV2Probe.timelineTemplate !== "fallback" &&
       inlineV2Probe.scoreboardVisible &&
@@ -1893,6 +1914,7 @@ async function checkGamecastLab() {
     `mobile canvas ${Math.round(mobileProbe.canvasWidth)}px`,
     `v2 anchors ${anchorProbe.anchorCount}, players ${anchorProbe.playerCount}`,
     `v2 atlas/timeline ${anchorProbe.playerAtlas}/${anchorProbe.timelineTemplate}`,
+    `equipment catcher ${equipmentProbe.catcherFrames.join("/")}, runner ${equipmentProbe.stationaryRunnerFrames.join("/")}`,
     `v2 fx camera<=${anchorProbe.cameraZoom.toFixed(3)}, particles ${anchorProbe.particleCount}, underlays ${anchorProbe.visibleAbilityUnderlays}`,
     `inline default ${inlineV2Probe.engine} ${inlineV2Probe.canvasPixelW}x${inlineV2Probe.canvasPixelH}`
   ].join(", ");
@@ -1909,7 +1931,7 @@ async function waitForInlineGamecastV2() {
           screen &&
           !screen.closest("[data-gamecast-modal]") &&
           screen.dataset.gamecastEngineCurrent === "v2" &&
-          screen.dataset.gamecast2PlayerAtlas?.startsWith("64-") &&
+          screen.dataset.gamecast2PlayerAtlas?.startsWith("128-") &&
           screen.dataset.gamecast2TimelineTemplate &&
           screen.dataset.gamecast2Scoreboard === "1" &&
           Number(canvas?.dataset?.pixelW ?? 0) === 960 &&
@@ -1932,7 +1954,7 @@ async function waitForModalGamecast2Diagnostics() {
         const frame = screen?.__gamecast2Frame ?? null;
         return Boolean(
           screen?.dataset?.gamecastEngineCurrent === "v2" &&
-          screen.dataset.gamecast2PlayerAtlas?.startsWith("64-") &&
+          screen.dataset.gamecast2PlayerAtlas?.startsWith("128-") &&
           screen.dataset.gamecast2TimelineTemplate &&
           screen.dataset.gamecast2TimelineTemplate !== "fallback" &&
           screen.dataset.gamecast2Scoreboard === "1" &&
@@ -1949,6 +1971,41 @@ async function waitForModalGamecast2Diagnostics() {
     await delay(120);
   }
   throw new VerificationError("v2 modal diagnostics timeout", "src/gamecast2/scene.js");
+}
+
+async function waitForV2EquipmentDiagnostics() {
+  await evaluateInBrowser(`document.querySelector("[data-gamecast-modal] [data-gamecast-speed='4']")?.click(); true`);
+  const deadline = Date.now() + 15000;
+  const catcherFrames = new Set();
+  const stationaryRunnerFrames = new Set();
+
+  while (Date.now() < deadline) {
+    const probe = await evaluateInBrowser(`
+      (() => {
+        const screen = document.querySelector("[data-gamecast-modal] [data-gamecast-screen]");
+        const actors = screen?.__gamecast2Frame?.actors ?? [];
+        return {
+          catcherFrames: actors
+            .filter((actor) => actor.role === "catcher")
+            .map((actor) => String(actor.atlasFrame ?? ""))
+            .filter(Boolean),
+          stationaryRunnerFrames: actors
+            .filter((actor) => actor.isTransient && actor.currentPose === "idle")
+            .map((actor) => String(actor.atlasFrame ?? ""))
+            .filter(Boolean)
+        };
+      })()
+    `);
+    for (const frameName of probe?.catcherFrames ?? []) catcherFrames.add(frameName);
+    for (const frameName of probe?.stationaryRunnerFrames ?? []) stationaryRunnerFrames.add(frameName);
+    if (catcherFrames.size > 0 && stationaryRunnerFrames.size > 0) break;
+    await delay(100);
+  }
+
+  return {
+    catcherFrames: [...catcherFrames].sort(),
+    stationaryRunnerFrames: [...stationaryRunnerFrames].sort()
+  };
 }
 
 async function waitForGamecastLabModal() {
@@ -1975,6 +2032,20 @@ async function waitForGamecastLabModal() {
   }
 
   throw new VerificationError(`게임캐스트 랩 대기 시간이 초과되었습니다.${lastError ? ` 마지막 오류: ${lastError}` : ""}`, "gamecast-lab.html");
+}
+
+async function waitForGamecastFpsOverlay() {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const ready = await evaluateInBrowser(`
+      /FPS\\s+\\d+/i.test(
+        document.querySelector("[data-gamecast-modal] [data-gamecast-fps]")?.textContent?.trim() ?? ""
+      )
+    `);
+    if (ready) return true;
+    await delay(100);
+  }
+  throw new VerificationError("게임캐스트 FPS 오버레이 갱신 대기 시간이 초과되었습니다.", "src/ui.js");
 }
 
 function checkBrowserConsoleErrors() {
@@ -2432,7 +2503,7 @@ async function waitForGamecastCanvasPaint() {
           }
           const engine = screen.dataset.gamecastEngineCurrent ?? "";
           const diagnosticsReady = engine !== "v2" || (
-            screen.dataset.gamecast2PlayerAtlas?.startsWith("64-") &&
+            screen.dataset.gamecast2PlayerAtlas?.startsWith("128-") &&
             screen.dataset.gamecast2Scoreboard === "1"
           );
           return { ready: diagnosticsReady && colors.size >= 6, engine, unique: colors.size };

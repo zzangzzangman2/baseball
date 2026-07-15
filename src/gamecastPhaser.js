@@ -1,6 +1,7 @@
 const PHASER_DESIGN_W = 400;
 const PHASER_DESIGN_H = 360;
-const PLAYER_FALLBACK_ATLAS_SIZE = 64;
+const PLAYER_FALLBACK_ATLAS_SIZE = 128;
+const PLAYER_ATLAS_RENDER_SCALE = 0.5;
 const PLAYER_MIN_RENDER_SCALE = 0.48;
 const PLAYER_MAX_RENDER_SCALE = 0.7;
 const spriteFrameRange = (prefix, count) => Array.from({ length: count }, (_, index) => `${prefix}_${String(index).padStart(2, "0")}`);
@@ -1196,8 +1197,8 @@ function drawSpritePlayer(scene, graphics, runtime, sprite, role) {
     .setPosition(Math.round(x * metrics.drawScaleX), Math.round(y * metrics.drawScaleY))
     .setOrigin(CENTER_ORIGIN_X, BASELINE_ORIGIN_Y)
     .setScale(
-      metrics.drawScaleX * renderScale * (facing < 0 ? -squashX : squashX),
-      metrics.drawScaleY * renderScale * squashY
+      metrics.drawScaleX * renderScale * PLAYER_ATLAS_RENDER_SCALE * (facing < 0 ? -squashX : squashX),
+      metrics.drawScaleY * renderScale * PLAYER_ATLAS_RENDER_SCALE * squashY
     )
     .setRotation(0);
   return true;
@@ -1218,7 +1219,7 @@ function gamecastPlayerRenderScale(runtime, sprite, role) {
 }
 
 const CENTER_ORIGIN_X = 0.5;
-const BASELINE_ORIGIN_Y = 60 / PLAYER_FALLBACK_ATLAS_SIZE;
+const BASELINE_ORIGIN_Y = 120 / PLAYER_FALLBACK_ATLAS_SIZE;
 
 function spriteFrameForPose(scene, textureKey, sprite, role) {
   if (role === "umpire") return "umpire";

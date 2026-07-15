@@ -1,24 +1,24 @@
 # Gamecast 스프라이트 아트 규격
 
-이 문서는 Gamecast 선수 아틀라스의 생성 원본, 64px 런타임 셀, 팔레트, 등록점, 애니메이션 밀도와 주·야간 변형을 고정한다. 기준 구현은 `tools/build_gamecast_sprites.py`와 `tools/build_gamecast_motion_v3.py`다.
+이 문서는 Gamecast 선수 아틀라스의 생성 원본, 128px 런타임 셀, 팔레트, 등록점, 애니메이션 밀도와 주·야간 변형을 고정한다. 기준 구현은 `tools/build_gamecast_sprites.py`와 `tools/build_gamecast_motion_v3.py`다.
 
 ## 1. 셀과 시트 계약
 
-- 런타임 프레임: **64×64px** RGBA.
-- 생성/정규화 셀: **256×256px**. 64px 출력은 nearest-neighbor **4배 정수 축소**만 사용한다.
-- 발바닥 baseline: `y=60`. 불투명 bbox의 하단은 파이썬/Pillow의 exclusive 좌표로 60이며, 마지막 불투명 픽셀은 `y=59`다.
-- 수평 중심: `x=32`.
-- 권장 불투명 bbox: 최대 58×56px. 모션 오프셋 여유를 위해 기준 포즈는 최대 54×54px 안에 등록한다.
+- 런타임 프레임: **128×128px** RGBA.
+- 생성/정규화 셀: **256×256px**. 128px 출력은 nearest-neighbor **2배 정수 축소**만 사용한다.
+- 발바닥 baseline: `y=120`. 불투명 bbox의 하단은 파이썬/Pillow의 exclusive 좌표로 120이며, 마지막 불투명 픽셀은 `y=119`다.
+- 수평 중심: `x=64`.
+- 권장 불투명 bbox: 최대 116×112px. 모션 오프셋 여유를 위해 기준 포즈는 최대 108×108px 안에 등록한다.
 - 출력 셀 가장자리는 투명해야 한다. 안티에일리어싱과 반투명 외곽선은 금지한다. 단, v3 스미어 트레일의 제어된 반투명도는 예외다.
 
-새 원본은 셀당 256px로 제작한다. 현재 기본 원본 `assets/gamecast/source/player-sheet-64-imagegen.png`은 생성기 고유 해상도인 1402×1122이므로, 빌더가 이를 5×4로 결정론적으로 분할하고 각 칸을 256×256 계약 셀로 정규화한다. 이후 단계는 항상 256→64 정수 축소다. 미래 원본을 정확한 5×4×256(1280×1024) 또는 v2 8×6×256(2048×1536)으로 납품하면 `--strict-source-grid`도 통과한다.
+새 원본은 셀당 256px로 제작한다. 현재 기본 원본 `assets/gamecast/source/player-sheet-64-imagegen.png`은 생성기 고유 해상도인 1402×1122이므로, 빌더가 이를 5×4로 결정론적으로 분할하고 각 칸을 256×256 계약 셀로 정규화한다. 이후 단계는 항상 256→128 정수 축소다. 미래 원본을 정확한 5×4×256(1280×1024) 또는 v2 8×6×256(2048×1536)으로 납품하면 `--strict-source-grid`도 통과한다.
 
 원본 배경은 투명 또는 키 컬러를 권장한다. 빌더는 다음 순서로 전처리한다.
 
 1. 셀 바깥 경계에 연결된 밝은 무채색 체크/코너 배경을 flood fill로 제거한다.
 2. 기존 마젠타 키 배경을 제거한다.
 3. 포즈 bbox를 256px 계약 셀의 `centerX=128`, `baselineY=240`에 맞춘다.
-4. 좌표와 크기를 4의 배수로 스냅한 뒤 64px로 4배 축소한다.
+4. 좌표와 크기를 2의 배수로 스냅한 뒤 128px로 2배 축소한다.
 
 레거시 포즈 입력은 5열×4행이며, v2 키 포즈 입력은 8열×6행이다. v3 출력은 프레임을 16열로 패킹한다. 런타임은 열·행을 추측하지 않고 JSON의 `frames` 좌표를 진실 원본으로 사용해야 한다.
 
@@ -82,11 +82,11 @@ v2 키 포즈는 타격, 투구, 주루, 송구, 포구, 다이브, 슬라이드
 - `player-home-night.png` + `player-home-night.json` (`lighting: night`)
 - `player-away-night.png` + `player-away-night.json` (`lighting: night`)
 
-네 JSON 모두 `frameSize: 64×64`, `baselineY: 60`, `centerX: 32`, `sourceCellSize: 256×256`, `integerDownscale: 4`를 기록한다. 야간 구장은 `*-night` 아틀라스를 선택하고, 그 외 구장은 주간 아틀라스를 선택한다.
+네 JSON 모두 `frameSize: 128×128`, `baselineY: 120`, `centerX: 64`, `sourceCellSize: 256×256`, `integerDownscale: 2`를 기록한다. 야간 구장은 `*-night` 아틀라스를 선택하고, 그 외 구장은 주간 아틀라스를 선택한다.
 
 ## 6. 그림자와 등록
 
-바닥 그림자는 아틀라스에 굽지 않는다. 런타임이 포즈와 깊이에 맞춰 별도로 그린다. 기본/주루 포즈는 짧은 타원, 다이브·슬라이드는 긴 타원, 점프·릴리스는 작고 옅은 타원을 사용한다. 그림자의 중심은 스프라이트의 `centerX=32`, 바닥은 `baselineY=60`을 기준으로 한다.
+바닥 그림자는 아틀라스에 굽지 않는다. 런타임이 포즈와 깊이에 맞춰 별도로 그린다. 기본/주루 포즈는 짧은 타원, 다이브·슬라이드는 긴 타원, 점프·릴리스는 작고 옅은 타원을 사용한다. 그림자의 중심은 스프라이트의 `centerX=64`, 바닥은 `baselineY=120`을 기준으로 한다.
 
 레지스트레이션 검사 항목은 빈 프레임, baseline 편차, 중심 편차, 셀 가장자리 접촉, 안전 bbox 초과다. 공중·낮은 포즈와 밀집 모션의 중간 프레임은 넓은 baseline 허용치를 쓰되 셀 클리핑은 허용하지 않는다.
 
@@ -104,4 +104,4 @@ python tools/build_gamecast_motion_v3.py --strict-registration --strict-art
 python tools/build_gamecast_sprites.py --strict-registration --strict-art
 ```
 
-정확한 256px 원본 시트까지 강제하는 CI/납품 검사는 `--strict-source-grid`를 추가한다. 현재 생성기 고유 해상도 원본은 이 검사에서 의도적으로 실패하며, 일반 빌드에서는 정규화 사실을 경고로 남긴다. `tools/verify_app.mjs`는 배포 아틀라스 네 벌의 64px 크기, 등록점, 주·야간 메타와 밀집 모션 하한을 다시 검사한다.
+정확한 256px 원본 시트까지 강제하는 CI/납품 검사는 `--strict-source-grid`를 추가한다. 현재 생성기 고유 해상도 원본은 이 검사에서 의도적으로 실패하며, 일반 빌드에서는 정규화 사실을 경고로 남긴다. `tools/verify_app.mjs`는 배포 아틀라스 네 벌의 128px 크기, 등록점, 주·야간 메타와 밀집 모션 하한을 다시 검사한다.

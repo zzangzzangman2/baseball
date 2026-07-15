@@ -13,6 +13,10 @@ const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
 const FIELD_EDGE_PADDING = 8;
 const GAMECAST2_CAMERA_MAX_ZOOM = 1.12;
 const PLAYER_ATLAS_ROOT = "./assets/gamecast";
+const PLAYER_ATLAS_FRAME_SIZE = 128;
+const PLAYER_ATLAS_BASELINE_Y = 120;
+const PLAYER_ATLAS_VISUAL_SCALE = 1.4;
+const PLAYER_ATLAS_RENDER_SCALE = PLAYER_ATLAS_VISUAL_SCALE * (64 / PLAYER_ATLAS_FRAME_SIZE);
 const PLAYER_ATLAS_KEYS = Object.freeze({
   home: "gamecast2-player-home",
   away: "gamecast2-player-away",
@@ -243,8 +247,8 @@ function calculateMetrics(runtime) {
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   const cssW = Math.round(runtime.width * cssScale);
   const cssH = Math.round(runtime.height * cssScale);
-  const bufferW = Math.round(cssW * dpr);
-  const bufferH = Math.round(cssH * dpr);
+  const bufferW = Math.max(runtime.width, Math.round(cssW * dpr));
+  const bufferH = Math.max(runtime.height, Math.round(cssH * dpr));
   return {
     cssScale,
     dpr,
@@ -386,9 +390,11 @@ function addStaticActor(scene, runtime, actor) {
   const initialFrame = initialTexture !== actor.texture
     ? gamecast2AtlasFrame(scene, initialTexture, actor, { pose: defaultPoseForActor(actor) }, defaultPoseForActor(actor), runtime, null)
     : undefined;
+  const usesAtlas = initialTexture !== actor.texture;
+  const atlasRenderScale = usesAtlas ? PLAYER_ATLAS_RENDER_SCALE : 1;
   const sprite = scene.add.image(actor.design.x * sx, actor.design.y * sy, initialTexture, initialFrame)
-    .setOrigin(0.5, 60 / 64)
-    .setScale(renderScale)
+    .setOrigin(0.5, usesAtlas ? PLAYER_ATLAS_BASELINE_Y / PLAYER_ATLAS_FRAME_SIZE : 60 / 64)
+    .setScale(renderScale * atlasRenderScale)
     .setDepth(Math.round(actor.design.y * 10));
   sprite.setDataEnabled?.();
   sprite.setData?.("gamecast2Role", actor.role);
@@ -403,9 +409,11 @@ function addStaticActor(scene, runtime, actor) {
     designX: actor.design.x,
     designY: actor.design.y,
     anchorScale: scale,
+    atlasRenderScale,
+    visualScale: usesAtlas ? PLAYER_ATLAS_VISUAL_SCALE : 1,
     baseX: actor.design.x * sx,
     baseY: actor.design.y * sy,
-    baseScale: renderScale,
+    baseScale: renderScale * atlasRenderScale,
     phase: actorPhase(actor.key),
     abilityHovered: false
   };
@@ -471,7 +479,9 @@ function updateStaticPlayerIdle(runtime, frame = null) {
     const renderX = position.x * runtime.metrics.drawScaleX;
     const renderY = position.y * runtime.metrics.drawScaleY;
     const designScale = Math.max(0.5, Number(position.scale ?? actor.anchorScale));
-    const renderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY) * designScale;
+    const renderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY)
+      * designScale
+      * Number(actor.atlasRenderScale ?? 1);
     const lean = Number(state.angle ?? (actor.role === "batter" ? Math.sin(idleT * 0.58) * 1.5 : 0));
     const facing = Number(state.facing ?? (actor.role === "batter" ? -1 : 1));
     const visible = state.visible !== false;
@@ -479,7 +489,7 @@ function updateStaticPlayerIdle(runtime, frame = null) {
       drawPoseLinkedShadow(scene.shadowGraphics, runtime, {
         x: renderX,
         y: renderY,
-        scale: designScale,
+        scale: designScale * Number(actor.visualScale ?? 1),
         pose: `${actor.role}-${state.shadowPose ?? pose}`,
         angle: lean
       });
@@ -625,6 +635,7 @@ function gamecast2AbilityForActor(event, actor) {
 }
 
 function defaultPoseForActor(actor) {
+  if (actor.isTransient) return "idle";
   if (actor.role === "batter") return "stance";
   if (actor.role === "catcher") return "idle";
   if (actor.role === "pitcher") return "idle";
@@ -821,7 +832,7 @@ function addTimelineBaseOccupants(actors, event, timeline, progress) {
     const position = timeline.points?.[anchorNames[index]];
     if (!position) continue;
     actors.set(key, {
-      pose: "stance",
+      pose: "idle",
       position: { ...position },
       facing: index === 2 ? 1 : -1,
       shadowPose: "idle",
@@ -1410,6 +1421,7 @@ function exposeMotionDebug(runtime, frame = null) {
       invariants: play.timeline.meta?.invariants ?? {}
     } : null,
     ratingTokens: runtime.gamecast2RatingTokens ?? [],
+    actors: (runtime.scene?.playerActors ?? []).map(publicActorSnapshot),
     scoreboard: runtime.scoreboardState ?? null,
     camera: runtime.gamecast2CameraState ?? { zoom: 1, active: false },
     particles: runtime.gamecast2ParticleState ?? { impact: 0, dust: 0, confetti: 0, total: 0, tonedDown: false }
@@ -1800,11 +1812,17 @@ function applyGamecast2ActorTexture(sprite, runtime, frame, actor, state, pose) 
   const textureKey = gamecast2AtlasTexture(scene, runtime, frame?.event, actor);
   if (!textureKey) {
     sprite.setTexture(textureForRole(actor.role, pose));
+    actor.atlasFrame = "procedural-fallback";
     return;
   }
   const frameName = gamecast2AtlasFrame(scene, textureKey, actor, state, pose, runtime, frame);
-  if (frameName && scene.textures.getFrame(textureKey, frameName)) sprite.setTexture(textureKey, frameName);
-  else sprite.setTexture(textureKey, "idle");
+  if (frameName && scene.textures.getFrame(textureKey, frameName)) {
+    sprite.setTexture(textureKey, frameName);
+    actor.atlasFrame = frameName;
+  } else {
+    sprite.setTexture(textureKey, "idle");
+    actor.atlasFrame = "idle";
+  }
 }
 
 function gamecast2AtlasFrame(scene, textureKey, actor, state, pose, runtime, frame) {
@@ -1823,6 +1841,7 @@ function gamecast2AtlasFrame(scene, textureKey, actor, state, pose, runtime, fra
   }
 
   const staticFrame = {
+    idle: actor.role === "catcher" ? "catcher_frame" : "idle",
     ready: "field",
     windup: "pitch_set",
     release: "pitch_release",
@@ -1831,7 +1850,7 @@ function gamecast2AtlasFrame(scene, textureKey, actor, state, pose, runtime, fra
     follow: "follow2",
     run1: "run1",
     run2: "run2",
-    throw: "throw_release",
+    throw: actor.role === "catcher" ? "catcher_frame" : "throw_release",
     catch: actor.role === "catcher" ? "catcher_frame" : "catch_squeeze",
     slide: "slide_hold",
     dive: "dive_slide"
@@ -1841,6 +1860,10 @@ function gamecast2AtlasFrame(scene, textureKey, actor, state, pose, runtime, fra
 
 function gamecast2AnimationForPose(actor, state, pose) {
   const explicit = String(state?.animationKey ?? "");
+  if (actor.role === "catcher") {
+    if (explicit === "catcher" || pose === "catch") return "catcher";
+    return "";
+  }
   if (explicit) return explicit;
   if (pose === "windup" || pose === "release") return "pitch";
   if (["load", "swing", "follow"].includes(pose)) return "swing";
@@ -1972,7 +1995,14 @@ function makePlayerTexture(scene, key, colors, pose) {
     drawLegs([20, 45, 10, 10], [34, 45, 10, 10]);
     drawTorso(32, 28, 26, 18);
     drawHead(32, 18, 1);
+    rect("trim", 23, 15, 18, 3);
+    rect("trim", 23, 18, 3, 12);
+    rect("trim", 38, 18, 3, 12);
+    rect("trim", 27, 22, 12, 2);
+    rect("trim", 29, 18, 2, 12);
+    rect("trim", 34, 18, 2, 12);
     rect("trim", 20, 31, 24, 5, 0.85);
+    rect("trim", 23, 36, 18, 11, 0.72);
     rect("glove", isCatch ? 42 : 40, isCatch ? 27 : 36, 10, 10);
     rect("skin", 17, 37, 5, 5);
   } else if (isBatter) {
@@ -2117,7 +2147,7 @@ function exposeSceneDebug(runtime) {
   runtime.screen.dataset.gamecast2DefenderCount = String(defenders.length);
   runtime.screen.dataset.gamecast2PlayerCount = String(actors.length);
   runtime.screen.dataset.gamecast2PlayerAtlas = hasGamecast2PlayerAtlases(runtime.scene)
-    ? `64-${String(runtime.field?.id ?? "").includes("night") ? "night" : "day"}`
+    ? `128-${String(runtime.field?.id ?? "").includes("night") ? "night" : "day"}`
     : "procedural-fallback";
   runtime.screen.__gamecast2Anchors = runtime.anchors;
   runtime.screen.__gamecast2Players = {
@@ -2133,9 +2163,12 @@ function publicActorSnapshot(actor) {
     role: actor.role,
     isDefender: actor.isDefender,
     isOutfielder: actor.isOutfielder,
+    isTransient: actor.isTransient,
     x: Math.round(actor.designX * 100) / 100,
     y: Math.round(actor.designY * 100) / 100,
-    scale: Math.round(actor.anchorScale * 100) / 100
+    scale: Math.round(actor.anchorScale * 100) / 100,
+    currentPose: String(actor.currentPose ?? ""),
+    atlasFrame: String(actor.atlasFrame ?? "")
   };
 }
 

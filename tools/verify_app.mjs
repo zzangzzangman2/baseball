@@ -1162,20 +1162,20 @@ function checkGamecastMotionAtlas() {
 
   assert(meta.layout === "v3", `게임캐스트 선수 아틀라스 layout=${meta.layout}; v3 필요`, GAMECAST_PLAYER_ATLAS_PATH);
   assert(fs.existsSync(imagePath), `아틀라스 이미지가 없습니다: ${relativePath(imagePath)}`, imagePath);
-  assert(safeInteger(meta.frameSize?.w) === 64 && safeInteger(meta.frameSize?.h) === 64, `프레임 크기는 64x64여야 합니다: ${JSON.stringify(meta.frameSize)}`, GAMECAST_PLAYER_ATLAS_PATH);
-  assert(safeInteger(meta.baselineY) === 60 && safeInteger(meta.centerX) === 32, `64px 등록점 메타가 잘못되었습니다: baseline=${meta.baselineY}, center=${meta.centerX}`, GAMECAST_PLAYER_ATLAS_PATH);
-  assert(safeInteger(meta.sourceCellSize?.w) === 256 && safeInteger(meta.sourceCellSize?.h) === 256 && safeInteger(meta.integerDownscale) === 4, `256px 소스 셀/4x 축소 메타가 잘못되었습니다: ${JSON.stringify(meta.sourceCellSize)}/${meta.integerDownscale}`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(safeInteger(meta.frameSize?.w) === 128 && safeInteger(meta.frameSize?.h) === 128, `프레임 크기는 128x128이어야 합니다: ${JSON.stringify(meta.frameSize)}`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(safeInteger(meta.baselineY) === 120 && safeInteger(meta.centerX) === 64, `128px 등록점 메타가 잘못되었습니다: baseline=${meta.baselineY}, center=${meta.centerX}`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(safeInteger(meta.sourceCellSize?.w) === 256 && safeInteger(meta.sourceCellSize?.h) === 256 && safeInteger(meta.integerDownscale) === 2, `256px 소스 셀/2x 축소 메타가 잘못되었습니다: ${JSON.stringify(meta.sourceCellSize)}/${meta.integerDownscale}`, GAMECAST_PLAYER_ATLAS_PATH);
   assert(safeInteger(meta.size?.w) >= safeInteger(meta.frameSize?.w) * 8, `아틀라스 폭이 너무 작습니다: ${JSON.stringify(meta.size)}`, GAMECAST_PLAYER_ATLAS_PATH);
 
   for (const [fileName, lighting] of GAMECAST_PLAYER_ATLAS_VARIANTS) {
     const atlasPath = path.join(path.dirname(GAMECAST_PLAYER_ATLAS_PATH), fileName);
-    assert(fs.existsSync(atlasPath), `64px 아틀라스 변형이 없습니다: ${fileName}`, atlasPath);
+    assert(fs.existsSync(atlasPath), `128px 아틀라스 변형이 없습니다: ${fileName}`, atlasPath);
     const variant = JSON.parse(fs.readFileSync(atlasPath, "utf8"));
     const variantMeta = variant.meta ?? {};
     const variantImage = path.join(path.dirname(atlasPath), String(variantMeta.image ?? fileName.replace(/\.json$/u, ".png")));
-    assert(fs.existsSync(variantImage), `64px 아틀라스 이미지가 없습니다: ${relativePath(variantImage)}`, variantImage);
-    assert(safeInteger(variantMeta.frameSize?.w) === 64 && safeInteger(variantMeta.frameSize?.h) === 64, `${fileName} 프레임이 64x64가 아닙니다.`, atlasPath);
-    assert(safeInteger(variantMeta.baselineY) === 60 && safeInteger(variantMeta.centerX) === 32, `${fileName} 등록점이 60/32가 아닙니다.`, atlasPath);
+    assert(fs.existsSync(variantImage), `128px 아틀라스 이미지가 없습니다: ${relativePath(variantImage)}`, variantImage);
+    assert(safeInteger(variantMeta.frameSize?.w) === 128 && safeInteger(variantMeta.frameSize?.h) === 128, `${fileName} 프레임이 128x128이 아닙니다.`, atlasPath);
+    assert(safeInteger(variantMeta.baselineY) === 120 && safeInteger(variantMeta.centerX) === 64, `${fileName} 등록점이 120/64가 아닙니다.`, atlasPath);
     assert(variantMeta.lighting === lighting, `${fileName} lighting=${variantMeta.lighting}; ${lighting} 필요`, atlasPath);
   }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build crisp 64px Gamecast sprite atlases from an imagegen source sheet."""
+"""Build crisp 128px Gamecast sprite atlases from an imagegen source sheet."""
 
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ from typing import Dict, Iterable, List, Mapping, Tuple
 from PIL import Image, ImageDraw
 
 
-FRAME = 64
-BASELINE_Y = 60
-CENTER_X = 32
+FRAME = 128
+BASELINE_Y = 120
+CENTER_X = 64
 SOURCE_CELL = 256
 SOURCE_DOWNSCALE = SOURCE_CELL // FRAME
-MAX_SPRITE_WIDTH = 58
-MAX_SPRITE_HEIGHT = 56
-REGISTERED_SPRITE_WIDTH = 54
-REGISTERED_SPRITE_HEIGHT = 54
+MAX_SPRITE_WIDTH = 116
+MAX_SPRITE_HEIGHT = 112
+REGISTERED_SPRITE_WIDTH = 108
+REGISTERED_SPRITE_HEIGHT = 108
 MAX_OPAQUE_RGB_COLORS = 32
 LEGACY_COLS = 5
 LEGACY_ROWS = 4
@@ -393,7 +393,7 @@ def validate_source_grid(source: Image.Image, sheet_cols: int, sheet_rows: int, 
     cell_h = source.height / sheet_rows
     issues = [
         f"source sheet {source.width}x{source.height} yields {cell_w:.2f}x{cell_h:.2f}px cells; "
-        f"the 64px contract requires {expected[0]}x{expected[1]} ({SOURCE_CELL}px per cell)"
+        f"the 128px contract requires {expected[0]}x{expected[1]} ({SOURCE_CELL}px per cell)"
     ]
     print("source grid validation:")
     for issue in issues:
@@ -570,7 +570,7 @@ def register_source_cell(source_cell: Image.Image) -> Image.Image:
 
 def normalize_frame(source_cell: Image.Image, uniform: str) -> Image.Image:
     if source_cell.size == (SOURCE_CELL, SOURCE_CELL):
-        # Registration is normalized on the 256px cell, then preserved through a true 4x downscale.
+        # Registration is normalized on the 256px cell, then preserved through a true 2x downscale.
         registered = register_source_cell(source_cell)
         resized = registered.resize((FRAME, FRAME), Image.Resampling.NEAREST)
         quantized = quantize_frame(resized, uniform)

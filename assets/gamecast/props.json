@@ -4,60 +4,60 @@
       "frame": {
         "x": 0,
         "y": 0,
-        "w": 64,
-        "h": 64
+        "w": 128,
+        "h": 128
       },
       "rotated": false,
       "trimmed": false,
       "spriteSourceSize": {
         "x": 0,
         "y": 0,
-        "w": 64,
-        "h": 64
+        "w": 128,
+        "h": 128
       },
       "sourceSize": {
-        "w": 64,
-        "h": 64
+        "w": 128,
+        "h": 128
       }
     },
     "ball2": {
       "frame": {
-        "x": 64,
+        "x": 128,
         "y": 0,
-        "w": 64,
-        "h": 64
+        "w": 128,
+        "h": 128
       },
       "rotated": false,
       "trimmed": false,
       "spriteSourceSize": {
         "x": 0,
         "y": 0,
-        "w": 64,
-        "h": 64
+        "w": 128,
+        "h": 128
       },
       "sourceSize": {
-        "w": 64,
-        "h": 64
+        "w": 128,
+        "h": 128
       }
     },
     "ball3": {
       "frame": {
-        "x": 128,
+        "x": 256,
         "y": 0,
-        "w": 64,
-        "h": 64
+        "w": 128,
+        "h": 128
       },
       "rotated": false,
       "trimmed": false,
       "spriteSourceSize": {
         "x": 0,
         "y": 0,
-        "w": 64,
-        "h": 64
+        "w": 128,
+        "h": 128
       },
       "sourceSize": {
-        "w": 64,
-        "h": 64
+        "w": 128,
+        "h": 128
       }
     }
   },
@@ -67,25 +67,25 @@
     "image": "props.png",
     "format": "RGBA8888",
     "size": {
-      "w": 192,
-      "h": 64
+      "w": 384,
+      "h": 128
     },
     "scale": "1",
     "frameSize": {
-      "w": 64,
-      "h": 64
+      "w": 128,
+      "h": 128
     },
     "layout": "legacy",
-    "baselineY": 60,
-    "centerX": 32,
+    "baselineY": 120,
+    "centerX": 64,
     "sourceCellSize": {
       "w": 256,
       "h": 256
     },
-    "integerDownscale": 4,
+    "integerDownscale": 2,
     "safeOpaqueSize": {
-      "w": 58,
-      "h": 56
+      "w": 116,
+      "h": 112
     },
     "artContract": "docs/gamecast-sprite-art-spec.md",
     "lighting": "day"

@@ -4002,7 +4002,7 @@ img {
   z-index: 80;
   display: grid;
   place-items: center;
-  padding: clamp(10px, 2.5vw, 24px);
+  padding: clamp(6px, 1.2vw, 16px);
   background:
     radial-gradient(circle at 50% 28%, rgba(143, 208, 180, 0.2), transparent 34%),
     linear-gradient(135deg, rgba(5, 10, 16, 0.78), rgba(29, 35, 45, 0.64));
@@ -4012,10 +4012,10 @@ img {
 .gamecast-broadcast-shell {
   display: grid;
   gap: 14px;
-  width: min(1240px, calc(100vw - 24px));
-  max-height: calc(100vh - 24px);
+  width: min(1480px, calc(100vw - 12px));
+  max-height: calc(100vh - 12px);
   min-width: 0;
-  padding: clamp(12px, 2vw, 18px);
+  padding: clamp(10px, 1.2vw, 16px);
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 8px;
@@ -4075,11 +4075,11 @@ img {
     "matchup screen"
     "now screen"
     "feed screen";
-  grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
+  grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
   align-content: start;
   align-items: start;
-  gap: 12px;
-  padding: clamp(10px, 1.5vw, 14px);
+  gap: 8px;
+  padding: clamp(8px, 1vw, 12px);
   border: 1px solid rgba(17, 27, 39, 0.12);
   background:
     linear-gradient(180deg, rgba(255, 254, 251, 0.84), rgba(232, 244, 238, 0.8)),
@@ -4112,7 +4112,7 @@ img {
 
 .gamecast-screen-large {
   grid-area: screen;
-  width: min(840px, 100%);
+  width: min(976px, 100%);
   min-width: 0;
   align-self: start;
   padding: 8px;
@@ -4173,7 +4173,7 @@ img {
   -webkit-overflow-scrolling: touch;
 }
 
-@media (max-width: 1100px) and (min-width: 861px) {
+@media (max-width: 1220px) and (min-width: 861px) {
   .gamecast-broadcast-shell {
     overflow: auto;
   }
@@ -4194,7 +4194,7 @@ img {
   }
 
   .gamecast-screen-large {
-    width: min(840px, 100%);
+    width: min(976px, 100%);
     justify-self: center;
   }
 
