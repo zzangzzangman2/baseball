@@ -62,7 +62,7 @@ from build_gamecast_sprites import (
 
 
 V3_COLS = 16
-NATIVE_DISPLAY_SIZE = 96
+NATIVE_DISPLAY_SIZE = 80
 MOTION_MINIMUM_FRAMES = {
     "swing": 10,
     "pitch": 8,
@@ -381,7 +381,7 @@ def make_catcher_back_frame(frame: Image.Image) -> Image.Image:
     draw.line(points(((-10, 34), (8, 51))), fill=CAP_SHADOW, width=3)
     draw.line(points(((8, 34), (-7, 51))), fill=CAP_SHADOW, width=3)
     draw.line(points(((-7, 33), (5, 33))), fill=jersey_highlight, width=1)
-    # A tiny block number makes the rear-facing torso legible even at native 96px.
+    # A tiny block number makes the rear-facing torso legible even at native 80px.
     draw.line(points(((-2, 39), (3, 39), (3, 43), (-2, 47), (3, 47))), fill=PANTS, width=2)
     return output
 
@@ -395,7 +395,7 @@ def prepare_v3_base_frames(base: Mapping[str, Image.Image]) -> Dict[str, Image.I
 
 
 def make_native_display_frame(frame: Image.Image) -> Image.Image:
-    """Pre-rasterize a 128px pose to its final 96px on-field pixel grid."""
+    """Pre-rasterize a 128px pose to its final 80px on-field pixel grid."""
     resized = frame.convert("RGBA").resize(
         (NATIVE_DISPLAY_SIZE, NATIVE_DISPLAY_SIZE),
         Image.Resampling.NEAREST,
@@ -404,7 +404,7 @@ def make_native_display_frame(frame: Image.Image) -> Image.Image:
     paste_x = CENTER_X - round(CENTER_X * NATIVE_DISPLAY_SIZE / FRAME)
     paste_y = BASELINE_Y - round(BASELINE_Y * NATIVE_DISPLAY_SIZE / FRAME)
     output.alpha_composite(resized, (paste_x, paste_y))
-    # Nearest 128->96 pre-rasterization can skip a one-pixel source boundary.
+    # Nearest 128->80 pre-rasterization can skip a one-pixel source boundary.
     # Re-close the silhouette on the final display grid so skin/equipment never
     # leaks directly into dirt or turf at runtime.
     return apply_selout(output)

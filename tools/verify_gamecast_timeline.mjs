@@ -76,6 +76,7 @@ const BASE_EVENT = Object.freeze({
 
 export function verifyGamecastTimeline() {
   verifyAtlasContract();
+  verifyFieldAnchorContract();
 
   const cases = timelineCases();
   const compiled = cases.map(({ name, event }) => ({
@@ -101,6 +102,23 @@ export function verifyGamecastTimeline() {
   verifyPurity(cases[3].event);
 
   return `${compiled.length}개 플레이, ${GAMECAST2_TIMELINE_TEMPLATES.length * DEFENSE_POSITIONS.length}개 수비 조합, atlas anim ${GAMECAST2_ATLAS_ANIMATION_KEYS.length}키`;
+}
+
+function verifyFieldAnchorContract() {
+  for (const anchorPath of FIELD_ANCHOR_PATHS) {
+    const payload = JSON.parse(fs.readFileSync(anchorPath, "utf8"));
+    const first = payload.anchors?.first;
+    const third = payload.anchors?.third;
+    assert(first && third, `${path.basename(anchorPath)}: first/third base anchors are missing.`);
+    assert(Math.abs(Number(first.y) - Number(third.y)) <= 1, `${path.basename(anchorPath)}: first/third base depth is asymmetric.`);
+    if (payload.fieldId === "field-gocheok-dome") {
+      assert.deepEqual(
+        { first: [Number(first.x), Number(first.y)], third: [Number(third.x), Number(third.y)] },
+        { first: [724, 445], third: [236, 445] },
+        "Gocheok first/third anchors no longer match the visible base-bag centers."
+      );
+    }
+  }
 }
 
 function verifyAtlasContract() {
@@ -437,6 +455,7 @@ function verifyThrowTargetSemantics(name, event, timeline) {
       batterRun && firstBaseOutThrow && firstBaseOutThrow.endT <= batterRun.endT,
       `${name}: first-base force arrives after the retired batter-runner.`
     );
+    verifyFirstBaseReceiverSet(name, timeline, firstBaseOutThrow);
   }
 
   if (fieldingTarget === "second") {
@@ -462,6 +481,37 @@ function verifyThrowTargetSemantics(name, event, timeline) {
       );
     }
   }
+}
+
+function verifyFirstBaseReceiverSet(name, timeline, throwBall) {
+  const receive = timeline.tracks.fielders.find((cue) => {
+    const end = Number(cue.endT ?? cue.t);
+    return cue.anim === "catch"
+      && cue.at === "first"
+      && cue.t <= throwBall.endT + 0.000001
+      && end >= throwBall.endT - 0.000001;
+  });
+  assert(receive, `${name}: first-base throw has no receiver planted at first.`);
+
+  const cover = timeline.tracks.fielders.find((cue) => (
+    cue.who === receive.who
+    && cue.assignment === "receiver"
+    && cue.path?.at(-1) === "first"
+    && Number(cue.endT ?? cue.t) <= receive.t + 0.000001
+  ));
+  assert(cover, `${name}: first-base receiver never runs all the way to first.`);
+  assert.equal(cover.arrivesAt, "first", `${name}: first-base cover lacks an explicit baseline arrival contract.`);
+
+  const coverPoint = timeline.points?.[cover.path.at(-1)];
+  const receivePoint = timeline.points?.[receive.at];
+  const first = timeline.points?.first;
+  assert.deepEqual(coverPoint, first, `${name}: receiver feet do not finish on the first-base anchor.`);
+  assert.deepEqual(receivePoint, first, `${name}: catch pose is not rooted on the first-base anchor.`);
+
+  const arrivalLeadT = Number(throwBall.endT) - Number(cover.endT ?? cover.t);
+  const settleT = Number(receive.t) - Number(cover.endT ?? cover.t);
+  assert(arrivalLeadT >= 0.119999, `${name}: first-base receiver arrives only ${arrivalLeadT.toFixed(3)}T before the ball.`);
+  assert(settleT >= 0.059999, `${name}: first-base receiver has no visible foot-plant interval before the catch.`);
 }
 
 function leadRunnerDestination(timeline) {

@@ -6,7 +6,7 @@
 
 - 런타임 프레임: **128×128px** RGBA.
 - 생성/정규화 셀: **256×256px**. 128px 출력은 nearest-neighbor **2배 정수 축소**만 사용한다.
-- v3 경기 표시 래스터: 128px 프레임을 `centerX=64`, `baselineY=120`에 고정한 채 **96×96px**로 nearest-neighbor 사전 래스터화한다. 런타임은 이 래스터에 정수 배율만 적용하며 다시 축소하지 않는다.
+- v3 경기 표시 래스터: 128px 프레임을 `centerX=64`, `baselineY=120`에 고정한 채 **80×80px**로 nearest-neighbor 사전 래스터화한다. 런타임은 이 래스터에 정수 배율만 적용하며 다시 축소하지 않는다.
 - 발바닥 baseline: `y=120`. 불투명 bbox의 하단은 파이썬/Pillow의 exclusive 좌표로 120이며, 마지막 불투명 픽셀은 `y=119`다.
 - 수평 중심: `x=64`.
 - 권장 불투명 bbox: 최대 116×112px. 모션 오프셋 여유를 위해 기준 포즈는 최대 108×108px 안에 등록한다.
@@ -73,7 +73,7 @@ v2 키 포즈는 타격, 투구, 주루, 송구, 포구, 다이브, 슬라이드
 | `#b23a48` | 런타임 팀색 교체용 shadow/양말 |
 | `#9dd7ff` | 야간 전용 상단 림라이트 |
 
-순수 검정 `#000000`은 금지한다. 불투명 실루엣 경계는 진한 남색 `#1c2336` 또는 `#30384e`의 1px selout으로 닫는다. 96px 네이티브 래스터 뒤에도 selout을 다시 닫아 흙·잔디가 피부나 장비와 직접 맞닿지 않게 한다. 피부, 원정 유니폼, 배트·글러브 팔레트는 세 구장 플레이 영역 표본과 최소 44 RGB 거리로 분리한다. 빌더는 외곽 경계의 selout 비율, 필드색 거리, 순수 검정, 예약색 근사치, 비허용 팔레트색을 검사한다. 팀색 교체 코드는 `#d23b3b`과 `#b23a48`만 대상으로 삼는다.
+순수 검정 `#000000`은 금지한다. 불투명 실루엣 경계는 진한 남색 `#1c2336` 또는 `#30384e`의 1px selout으로 닫는다. 80px 네이티브 래스터 뒤에도 selout을 다시 닫아 흙·잔디가 피부나 장비와 직접 맞닿지 않게 한다. 피부, 원정 유니폼, 배트·글러브 팔레트는 세 구장 플레이 영역 표본과 최소 44 RGB 거리로 분리한다. 빌더는 외곽 경계의 selout 비율, 필드색 거리, 순수 검정, 예약색 근사치, 비허용 팔레트색을 검사한다. 팀색 교체 코드는 `#d23b3b`과 `#b23a48`만 대상으로 삼는다.
 
 ## 5. 야간 림라이트와 변형 이름
 
@@ -86,7 +86,7 @@ v2 키 포즈는 타격, 투구, 주루, 송구, 포구, 다이브, 슬라이드
 - `player-home-night.png` + `player-home-night.json` (`lighting: night`)
 - `player-away-night.png` + `player-away-night.json` (`lighting: night`)
 
-네 JSON 모두 `frameSize: 128×128`, `baselineY: 120`, `centerX: 64`, `sourceCellSize: 256×256`, `integerDownscale: 2`, `nativeDisplaySize: 96×96`, `nativeRenderScale: 1`을 기록한다. 야간 구장은 `*-night` 아틀라스를 선택하고, 그 외 구장은 주간 아틀라스를 선택한다.
+네 JSON 모두 `frameSize: 128×128`, `baselineY: 120`, `centerX: 64`, `sourceCellSize: 256×256`, `integerDownscale: 2`, `nativeDisplaySize: 80×80`, `nativeRenderScale: 1`을 기록한다. 야간 구장은 `*-night` 아틀라스를 선택하고, 그 외 구장은 주간 아틀라스를 선택한다.
 
 ## 6. 그림자와 등록
 

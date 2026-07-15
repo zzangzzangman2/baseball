@@ -76,9 +76,9 @@ FIELD_MARKERS: Dict[str, Dict[str, Tuple[int, int]]] = {
     },
     "field-gocheok-dome": {
         "home": (480, 632),
-        "first": (724, 414),
+        "first": (724, 445),
         "second": (480, 363),
-        "third": (236, 414),
+        "third": (236, 445),
         "mound": (480, 460),
         "P": (480, 467),
         "C": (480, 660),

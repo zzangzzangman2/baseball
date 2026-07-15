@@ -1783,7 +1783,7 @@ async function checkGamecastLab() {
           Number.isInteger(Number(actor.renderY)) &&
           Number(actor.renderAngle) === 0 &&
           (!actor.usesAtlas || (
-            Number(actor.nativeDisplaySize) === 96 &&
+            Number(actor.nativeDisplaySize) === 80 &&
             Number.isInteger(Number(actor.renderScale)) &&
             Number.isInteger(Number(actor.renderX) - 64 * Math.abs(Number(actor.renderScale))) &&
             Number.isInteger(Number(actor.renderY) - 120 * Number(actor.renderScale))
@@ -1820,7 +1820,7 @@ async function checkGamecastLab() {
   `);
   assert(anchorProbe.engine === "v2", `v2 엔진이 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/ui.js");
   assert(anchorProbe.playerAtlas === "128-day", `v2 128px day atlas가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
-  assert(anchorProbe.nativeDisplaySize === 96, `v2 native display atlas가 96px가 아닙니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.nativeDisplaySize === 80, `v2 native display atlas가 80px가 아닙니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.timelineTemplate && anchorProbe.timelineTemplate !== "fallback", `v2 timeline template가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/timeline.js");
   assert(
     anchorProbe.scoreboardVisible &&

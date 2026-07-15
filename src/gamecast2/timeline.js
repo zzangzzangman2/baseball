@@ -544,15 +544,24 @@ function addThrowReceiver(context, {
   if (!selected || !context.points[selected] || !context.points[to]) return null;
   const shiftedStart = defensiveShiftPointName(selected);
   const from = context.points[shiftedStart] ? shiftedStart : selected;
-  const arrivalT = roundTime(Math.max(moveStartT + 0.08, throwEndT - 0.05));
+  // A force at first must read as the covering fielder planting a foot on the
+  // bag, not as a runner who is still drifting toward it while the ball lands.
+  // Give first-base coverage a visible set interval before the catch motion;
+  // heldTimelineCue keeps the completed run exactly on the target meanwhile.
+  const firstBaseForce = to === "first";
+  const arrivalLeadT = firstBaseForce ? 0.12 : 0.05;
+  const catchLeadT = firstBaseForce ? 0.055 : 0.05;
+  const arrivalT = roundTime(Math.max(moveStartT + 0.08, throwEndT - arrivalLeadT));
+  const receiveT = roundTime(Math.max(arrivalT, throwEndT - catchLeadT));
   context.tracks.fielders.push(cue(moveStartT, arrivalT, {
     who: selected,
     anim: ANIM.run,
     path: [from, to],
+    arrivesAt: to,
     phase: `${phasePrefix}cover-${to}`,
     assignment: "receiver"
   }));
-  context.tracks.fielders.push(cue(arrivalT, Math.min(0.97, throwEndT + 0.04), {
+  context.tracks.fielders.push(cue(receiveT, Math.min(0.97, throwEndT + 0.04), {
     who: selected,
     anim: ANIM.catch,
     at: to,

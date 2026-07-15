@@ -3541,8 +3541,8 @@
     "integerDownscale": 2,
     "registrationScaleMode": "sheet-common",
     "nativeDisplaySize": {
-      "w": 96,
-      "h": 96
+      "w": 80,
+      "h": 80
     },
     "nativeRenderScale": 1,
     "safeOpaqueSize": {

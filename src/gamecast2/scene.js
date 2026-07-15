@@ -14,8 +14,8 @@ const FIELD_EDGE_PADDING = 8;
 const PLAYER_ATLAS_ROOT = "./assets/gamecast";
 const PLAYER_ATLAS_FRAME_SIZE = 128;
 const PLAYER_ATLAS_BASELINE_Y = 120;
-const PLAYER_ATLAS_NATIVE_DISPLAY_SIZE = 96;
-const PLAYER_ATLAS_VISUAL_SCALE = 1.4;
+const PLAYER_ATLAS_NATIVE_DISPLAY_SIZE = 80;
+const PLAYER_ATLAS_VISUAL_SCALE = 7 / 6;
 const PLAYER_SCALE_CENTER = 0.9;
 const PLAYER_SCALE_COMPRESSION = 0.25;
 const PLAYER_SCALE_MIN = 0.86;
@@ -498,7 +498,7 @@ function updateStaticPlayerIdle(runtime, frame = null) {
     const sourceDesignScale = depthScaleForY(position.y);
     const designScale = normalizePlayerVisualScale(sourceDesignScale);
     const rawRenderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY) * designScale;
-    // Atlas art is pre-rasterized to a native 96px display cell. Keeping its
+    // Atlas art is pre-rasterized to a native 80px display cell. Keeping its
     // runtime transform integer makes every final atlas dot cover whole backing
     // pixels; perspective remains in position and the separately drawn shadow.
     const renderScale = actor.usesAtlas
@@ -826,7 +826,13 @@ function buildTimelineVisualPlay(runtime, event, progress, timeline) {
   let movingDefenseCount = 0;
   for (const [key, cues] of fieldersByKey) {
     if (!key || !runtime.anchors?.anchors?.[key]) continue;
-    const cue = heldTimelineCue(cues, progress, timeline.resultAt);
+    const finalCue = cues.reduce((latest, entry) => (
+      !latest || Number(entry.t ?? 0) > Number(latest.t ?? 0) ? entry : latest
+    ), null);
+    // Keep a final receiver planted through the result card. Other defenders
+    // may reset normally, avoiding a held throw/run pose after the play ends.
+    const holdUntil = finalCue?.assignment === "receiver" ? 1 : timeline.resultAt;
+    const cue = heldTimelineCue(cues, progress, holdUntil);
     if (!cue) continue;
     const state = timelineActorState(cue, timeline, progress, "fielder");
     actors.set(key, state);
@@ -1443,12 +1449,34 @@ function exposeMotionDebug(runtime, frame = null) {
   const actorSnapshots = (runtime.scene?.playerActors ?? []).map(publicActorSnapshot);
   const renderScales = actorSnapshots.map((actor) => Number(actor.renderScale)).filter(Number.isFinite);
   const renderScaleSpread = renderScales.length > 0 ? Math.max(...renderScales) - Math.min(...renderScales) : 0;
+  const fielding = play.timeline?.meta?.fielding ?? null;
+  const finalReceiverCue = (play.timeline?.tracks?.fielders ?? [])
+    .filter((cue) => cue.assignment === "receiver")
+    .reduce((latest, cue) => (
+      !latest || Number(cue.t ?? 0) > Number(latest.t ?? 0) ? cue : latest
+    ), null);
+  const receiverKey = String(finalReceiverCue?.who ?? fielding?.receiver ?? "");
+  const receiverTargetKey = String(
+    finalReceiverCue?.at
+      ?? finalReceiverCue?.arrivesAt
+      ?? finalReceiverCue?.path?.at(-1)
+      ?? fielding?.throwTarget
+      ?? ""
+  );
+  const receiver = actorSnapshots.find((actor) => actor.key === receiverKey) ?? null;
+  const receiverTarget = play.timeline?.points?.[receiverTargetKey] ?? null;
+  const receiverDistance = receiver && receiverTarget
+    ? Math.hypot(Number(receiver.x) - Number(receiverTarget.x), Number(receiver.y) - Number(receiverTarget.y))
+    : -1;
   runtime.screen.dataset.gamecast2MovingDefenseCount = String(play.movingDefenseCount ?? 0);
   runtime.screen.dataset.gamecast2BallVisible = ballVisible ? "1" : "0";
   runtime.screen.dataset.gamecast2PositionViolations = String(positionGuard.violations.length);
   runtime.screen.dataset.gamecast2RenderScaleSpread = renderScaleSpread.toFixed(4);
   runtime.screen.dataset.gamecastAbilityUnderlays = String(runtime.gamecast2RatingTokens?.length ?? 0);
   runtime.screen.dataset.gamecast2TimelineTemplate = String(play.timeline?.template ?? "fallback");
+  runtime.screen.dataset.gamecast2FieldingReceiver = receiverKey;
+  runtime.screen.dataset.gamecast2FieldingTarget = receiverTargetKey;
+  runtime.screen.dataset.gamecast2ReceiverDistance = receiverDistance < 0 ? "-1" : receiverDistance.toFixed(3);
   runtime.screen.__gamecast2Frame = {
     eventId: String(frame?.event?.id ?? ""),
     outcome: String(frame?.event?.outcome ?? ""),
