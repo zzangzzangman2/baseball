@@ -8,10 +8,36 @@ import {
   GAMECAST2_ATLAS_ANIMATION_KEYS,
   GAMECAST2_TIMELINE_TEMPLATES
 } from "../src/gamecast2/timeline.js";
+import { gamecast2TimelineCueFacing } from "../src/gamecast2/scene.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const ROOT_DIR = path.resolve(path.dirname(__filename), "..");
-const ATLAS_PATH = path.join(ROOT_DIR, "assets", "gamecast", "player-home.json");
+const ATLAS_PATHS = [
+  "player-home.json",
+  "player-home-night.json",
+  "player-away.json",
+  "player-away-night.json"
+].map((name) => path.join(ROOT_DIR, "assets", "gamecast", name));
+const FIELD_ANCHOR_PATHS = [
+  "field-jamsil-day.anchors.json",
+  "field-jamsil-night.anchors.json",
+  "field-gocheok-dome.anchors.json"
+].map((name) => path.join(ROOT_DIR, "assets", "gamecast2", name));
+const DEFENSE_POSITIONS = Object.freeze(["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]);
+const OUTFIELD_POSITIONS = new Set(["LF", "CF", "RF"]);
+// Keep aligned with src/gamecast2/scene.js. This catches timeline endpoints
+// that would otherwise be silently clamped to a different visible location.
+const DEFENDER_MOVE_ZONES = Object.freeze({
+  P: { x: 300, yTop: 110, yBottom: 220 },
+  C: { x: 30, yTop: 42, yBottom: 12 },
+  "1B": { x: 54, yTop: 42, yBottom: 45 },
+  "2B": { x: 132, yTop: 80, yBottom: 52 },
+  "3B": { x: 54, yTop: 42, yBottom: 45 },
+  SS: { x: 184, yTop: 80, yBottom: 52 },
+  LF: { x: 96, yTop: 58, yBottom: 74 },
+  CF: { x: 116, yTop: 62, yBottom: 84 },
+  RF: { x: 96, yTop: 58, yBottom: 74 }
+});
 
 const ANCHORS = deepFreeze({
   home: { x: 480, y: 617, scale: 1.01 },
@@ -70,15 +96,29 @@ export function verifyGamecastTimeline() {
   verifyFielderPositionMatrix();
   verifyPurity(cases[3].event);
 
-  return `${compiled.length}개 플레이, ${GAMECAST2_TIMELINE_TEMPLATES.length}개 템플릿, atlas anim ${GAMECAST2_ATLAS_ANIMATION_KEYS.length}키`;
+  return `${compiled.length}개 플레이, ${GAMECAST2_TIMELINE_TEMPLATES.length * DEFENSE_POSITIONS.length}개 수비 조합, atlas anim ${GAMECAST2_ATLAS_ANIMATION_KEYS.length}키`;
 }
 
 function verifyAtlasContract() {
-  const atlas = JSON.parse(fs.readFileSync(ATLAS_PATH, "utf8"));
-  assert.equal(atlas.meta?.registrationScaleMode, "sheet-common", "선수 포즈가 시트 공통 배율로 등록되지 않았습니다.");
-  const available = new Set(Object.keys(atlas.animations ?? {}));
-  const missing = GAMECAST2_ATLAS_ANIMATION_KEYS.filter((key) => !available.has(key));
-  assert.deepEqual(missing, [], `타임라인 atlas 계약 키 누락: ${missing.join(", ")}`);
+  const forbiddenThrowSources = new Set(["stance", "swing", "follow", "miss", "take"]);
+  for (const atlasPath of ATLAS_PATHS) {
+    const atlas = JSON.parse(fs.readFileSync(atlasPath, "utf8"));
+    const label = path.basename(atlasPath);
+    assert.equal(atlas.meta?.registrationScaleMode, "sheet-common", `${label}: sheet-common registration is missing.`);
+    const available = new Set(Object.keys(atlas.animations ?? {}));
+    const missing = GAMECAST2_ATLAS_ANIMATION_KEYS.filter((key) => !available.has(key));
+    assert.deepEqual(missing, [], `${label}: missing timeline atlas keys: ${missing.join(", ")}`);
+
+    const throwFrames = atlas.animations?.throw?.frames ?? [];
+    assert(throwFrames.length >= 3, `${label}: throw animation has too few frames.`);
+    assert(throwFrames.every((frameName) => String(frameName).startsWith("throw_")), `${label}: throw animation references a foreign frame.`);
+    const throwSources = atlas.meta?.motionSourcePoses?.throw ?? [];
+    assert.equal(throwSources.length, 3, `${label}: throw equipment source contract is missing.`);
+    assert(
+      throwSources.every((pose) => !forbiddenThrowSources.has(String(pose))),
+      `${label}: batting pose drives a fielding throw: ${throwSources.join(", ")}`
+    );
+  }
 }
 
 function verifyTimelineContract({ name, timeline }) {
@@ -239,11 +279,59 @@ function verifyDefensiveRotation(compiled) {
 }
 
 function verifyFielderPositionMatrix() {
-  const positions = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
-  const plays = [
-    ["single", { outcome: "single", battedBallType: "lineDrive" }],
-    ["double", { outcome: "double", battedBallType: "lineDrive" }],
-    ["triple", { outcome: "triple", battedBallType: "flyBall" }],
+  const plays = matrixPlayCases();
+  let matrixCount = 0;
+  for (const [playName, overrides] of plays) {
+    for (const fieldingPosition of DEFENSE_POSITIONS) {
+      matrixCount += 1;
+      const timeline = compilePlayTimeline(
+        { ...BASE_EVENT, ...overrides, sequence: matrixCount, fieldingPosition },
+        { anchors: ANCHORS }
+      );
+      const label = `${playName}-${fieldingPosition}`;
+      verifyTimelineContract({ name: label, timeline });
+      verifyThrowChains(label, timeline);
+      verifyMovementCoverage(label, playName, timeline);
+      verifyDefenderEndpoints(label, timeline, ANCHORS);
+      if (playName === "double-play" && fieldingPosition === "1B") {
+        const firstReceiver = timeline.tracks.fielders.find((cue) => cue.phase === "relay-receive-first");
+        assert.equal(firstReceiver?.who, "P", "1B double-play ball must end with the pitcher covering first.");
+      }
+    }
+  }
+  assert.equal(
+    matrixCount,
+    GAMECAST2_TIMELINE_TEMPLATES.length * DEFENSE_POSITIONS.length,
+    "The verifier did not cover the complete 12x9 play/position matrix."
+  );
+
+  for (const anchorPath of FIELD_ANCHOR_PATHS) {
+    const payload = JSON.parse(fs.readFileSync(anchorPath, "utf8"));
+    const anchors = payload.anchors ?? payload;
+    for (const [playName, overrides] of plays) {
+      for (const fieldingPosition of DEFENSE_POSITIONS) {
+        const label = `${path.basename(anchorPath)}-${playName}-${fieldingPosition}`;
+        const timeline = compilePlayTimeline(
+          { ...BASE_EVENT, ...overrides, fieldingPosition },
+          { anchors }
+        );
+        verifyFielderCueIntervals(label, timeline);
+        verifyThrowChains(label, timeline);
+        verifyDefenderEndpoints(label, timeline, anchors);
+      }
+    }
+  }
+}
+
+function matrixPlayCases() {
+  return [
+    ["strikeout", { outcome: "strikeout", outsAfter: 1 }],
+    ["walk", { outcome: "walk", basesAfter: [true, false, false], baseRunnerIdsAfter: ["batter", "", ""] }],
+    ["hit-by-pitch", { outcome: "HBP", basesAfter: [true, false, false], baseRunnerIdsAfter: ["batter", "", ""] }],
+    ["single", { outcome: "single", battedBallType: "lineDrive", basesAfter: [true, false, false], baseRunnerIdsAfter: ["batter", "", ""] }],
+    ["double", { outcome: "double", battedBallType: "lineDrive", basesAfter: [false, true, false], baseRunnerIdsAfter: ["", "batter", ""] }],
+    ["triple", { outcome: "triple", battedBallType: "flyBall", basesAfter: [false, false, true], baseRunnerIdsAfter: ["", "", "batter"] }],
+    ["home-run", { outcome: "homeRun", battedBallType: "flyBall", runs: 1, scoredRunners: [{ id: "batter" }] }],
     ["infield-out", { outcome: "out", battedBallType: "groundBall", outsAfter: 1 }],
     ["outfield-out", { outcome: "out", battedBallType: "flyBall", outsAfter: 1 }],
     ["double-play", {
@@ -254,21 +342,83 @@ function verifyFielderPositionMatrix() {
       basesBefore: [true, false, false],
       baseRunnerIdsBefore: ["r1", "", ""]
     }],
-    ["error", { outcome: "error", battedBallType: "groundBall" }]
+    ["error", { outcome: "error", battedBallType: "groundBall", basesAfter: [true, false, false], baseRunnerIdsAfter: ["batter", "", ""] }],
+    ["steal", {
+      type: "stolenBase",
+      outcome: "stolenBase",
+      success: true,
+      runnerId: "r1",
+      basesBefore: [true, false, false],
+      baseRunnerIdsBefore: ["r1", "", ""],
+      basesAfter: [false, true, false],
+      baseRunnerIdsAfter: ["", "r1", ""]
+    }]
   ];
+}
 
-  for (const [playName, overrides] of plays) {
-    for (const fieldingPosition of positions) {
-      const timeline = compilePlayTimeline(
-        { ...BASE_EVENT, ...overrides, fieldingPosition },
-        { anchors: ANCHORS }
-      );
-      verifyFielderCueIntervals(`${playName}-${fieldingPosition}`, timeline);
-      if (playName === "double-play" && fieldingPosition === "1B") {
-        const firstReceiver = timeline.tracks.fielders.find((cue) => cue.phase === "relay-receive-first");
-        assert.equal(firstReceiver?.who, "P", "1루수 병살 타구에서 투수가 최종 1루 커버를 맡지 않습니다.");
-      }
-    }
+function verifyThrowChains(name, timeline) {
+  const actorThrows = [...timeline.tracks.fielders, ...timeline.tracks.catcher]
+    .filter((cue) => cue.anim === "throw" || String(cue.phase ?? "").includes("throw"));
+  for (const cue of actorThrows) {
+    assert.equal(cue.anim, "throw", `${name}: ${cue.who ?? "C"} throw cue uses '${cue.anim}' instead of throw.`);
+    verifyCueFacing(name, cue, timeline.points, "thrower");
+  }
+
+  const ballThrows = timeline.tracks.ball.filter((cue) => ["fielding-throw", "relay-throw", "steal-throw"].includes(cue.phase));
+  for (const ball of ballThrows) {
+    const from = ball.path?.[0];
+    const target = ball.path?.at(-1);
+    const thrower = actorThrows.find((cue) => {
+      const cueFrom = cue.at === "C" ? "home" : cue.at;
+      const end = Number(cue.endT ?? cue.t);
+      return cueFrom === from && cue.toward === target && cue.t <= ball.t + 0.000001 && end >= ball.t - 0.000001;
+    });
+    assert(thrower, `${name}: ${ball.phase} ball departs without a matching throw release cue.`);
+
+    const receiver = timeline.tracks.fielders.find((cue) => {
+      const end = Number(cue.endT ?? cue.t);
+      return cue.anim === "catch" && cue.at === target && cue.t <= ball.endT + 0.000001 && end >= ball.endT - 0.000001;
+    });
+    assert(receiver, `${name}: ${target} receiver does not cover the ${ball.phase} arrival.`);
+    assert(receiver.toward, `${name}: ${target} receiver has no incoming-throw facing point.`);
+    verifyCueFacing(name, receiver, timeline.points, "receiver");
+  }
+}
+
+function verifyCueFacing(name, cue, points, role) {
+  if (!cue.at || !cue.toward || !points?.[cue.at] || !points?.[cue.toward]) return;
+  const deltaX = Number(points[cue.toward].x) - Number(points[cue.at].x);
+  const expected = Math.abs(deltaX) < 0.01 ? 1 : deltaX > 0 ? 1 : -1;
+  const actual = gamecast2TimelineCueFacing(cue, points, 0.5, "fielder");
+  assert.equal(actual, expected, `${name}: ${role} faces away from '${cue.toward}'.`);
+}
+
+function verifyMovementCoverage(name, playName, timeline) {
+  const movers = new Set(timeline.tracks.fielders.filter((cue) => (cue.path?.length ?? 0) > 1).map((cue) => cue.who));
+  if (["single", "double", "triple", "infield-out", "outfield-out", "double-play", "error"].includes(playName)) {
+    assert(movers.size >= 7, `${name}: chained defense moves only ${movers.size} players.`);
+  }
+  if (playName === "home-run") {
+    const chaser = timeline.tracks.fielders.find((cue) => cue.phase === "warning-track");
+    assert(chaser && OUTFIELD_POSITIONS.has(chaser.who), `${name}: a non-outfielder chases the home-run ball to the wall.`);
+  }
+}
+
+function verifyDefenderEndpoints(name, timeline, anchors) {
+  for (const cue of timeline.tracks.fielders) {
+    assert(DEFENSE_POSITIONS.includes(cue.who), `${name}: unknown defender '${cue.who}'.`);
+    const destinationName = cue.at ?? cue.path?.at(-1);
+    const destination = timeline.points?.[destinationName];
+    const origin = anchors?.[cue.who];
+    const zone = DEFENDER_MOVE_ZONES[cue.who];
+    if (!destination || !origin || !zone) continue;
+    const dx = Number(destination.x) - Number(origin.x);
+    const dy = Number(destination.y) - Number(origin.y);
+    assert(
+      dx >= -zone.x - 0.000001 && dx <= zone.x + 0.000001 &&
+        dy >= -zone.yTop - 0.000001 && dy <= zone.yBottom + 0.000001,
+      `${name}: ${cue.who} ${cue.phase} endpoint is clamped by the scene (dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}).`
+    );
   }
 }
 

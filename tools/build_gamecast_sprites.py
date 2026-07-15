@@ -270,7 +270,9 @@ LEGACY_TO_V2_BASE = {
     "walk2": "idle",
     "throw_plant": "field",
     "throw_release": "pitch",
-    "throw_follow": "follow",
+    # A fielding throw must never inherit the batting follow-through: that pose
+    # carries a bat and made infielders appear to throw while holding one.
+    "throw_follow": "pitch",
     "field": "field",
     "catch_track": "field",
     "catch_reach": "catch",

@@ -1165,6 +1165,7 @@ function checkGamecastMotionAtlas() {
   assert(safeInteger(meta.frameSize?.w) === 128 && safeInteger(meta.frameSize?.h) === 128, `프레임 크기는 128x128이어야 합니다: ${JSON.stringify(meta.frameSize)}`, GAMECAST_PLAYER_ATLAS_PATH);
   assert(safeInteger(meta.baselineY) === 120 && safeInteger(meta.centerX) === 64, `128px 등록점 메타가 잘못되었습니다: baseline=${meta.baselineY}, center=${meta.centerX}`, GAMECAST_PLAYER_ATLAS_PATH);
   assert(safeInteger(meta.sourceCellSize?.w) === 256 && safeInteger(meta.sourceCellSize?.h) === 256 && safeInteger(meta.integerDownscale) === 2, `256px 소스 셀/2x 축소 메타가 잘못되었습니다: ${JSON.stringify(meta.sourceCellSize)}/${meta.integerDownscale}`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(safeInteger(meta.nativeDisplaySize?.w) === 96 && safeInteger(meta.nativeDisplaySize?.h) === 96 && safeInteger(meta.nativeRenderScale) === 1, `native display 메타가 96px/1x가 아닙니다: ${JSON.stringify(meta.nativeDisplaySize)}/${meta.nativeRenderScale}`, GAMECAST_PLAYER_ATLAS_PATH);
   assert(safeInteger(meta.size?.w) >= safeInteger(meta.frameSize?.w) * 8, `아틀라스 폭이 너무 작습니다: ${JSON.stringify(meta.size)}`, GAMECAST_PLAYER_ATLAS_PATH);
 
   for (const [fileName, lighting] of GAMECAST_PLAYER_ATLAS_VARIANTS) {
@@ -1176,6 +1177,7 @@ function checkGamecastMotionAtlas() {
     assert(fs.existsSync(variantImage), `128px 아틀라스 이미지가 없습니다: ${relativePath(variantImage)}`, variantImage);
     assert(safeInteger(variantMeta.frameSize?.w) === 128 && safeInteger(variantMeta.frameSize?.h) === 128, `${fileName} 프레임이 128x128이 아닙니다.`, atlasPath);
     assert(safeInteger(variantMeta.baselineY) === 120 && safeInteger(variantMeta.centerX) === 64, `${fileName} 등록점이 120/64가 아닙니다.`, atlasPath);
+    assert(safeInteger(variantMeta.nativeDisplaySize?.w) === 96 && safeInteger(variantMeta.nativeDisplaySize?.h) === 96 && safeInteger(variantMeta.nativeRenderScale) === 1, `${fileName} native display가 96px/1x가 아닙니다.`, atlasPath);
     assert(variantMeta.lighting === lighting, `${fileName} lighting=${variantMeta.lighting}; ${lighting} 필요`, atlasPath);
   }
 

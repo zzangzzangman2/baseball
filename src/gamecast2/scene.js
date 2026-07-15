@@ -14,8 +14,8 @@ const FIELD_EDGE_PADDING = 8;
 const PLAYER_ATLAS_ROOT = "./assets/gamecast";
 const PLAYER_ATLAS_FRAME_SIZE = 128;
 const PLAYER_ATLAS_BASELINE_Y = 120;
+const PLAYER_ATLAS_NATIVE_DISPLAY_SIZE = 96;
 const PLAYER_ATLAS_VISUAL_SCALE = 1.4;
-const PLAYER_ATLAS_RENDER_SCALE = 0.875;
 const PLAYER_SCALE_CENTER = 0.9;
 const PLAYER_SCALE_COMPRESSION = 0.25;
 const PLAYER_SCALE_MIN = 0.86;
@@ -51,9 +51,9 @@ const PIXEL_GLYPHS = {
 const DEFENDER_MOVE_ZONES = {
   P: { x: 300, yTop: 110, yBottom: 220 },
   C: { x: 30, yTop: 42, yBottom: 12 },
-  "1B": { x: 54, yTop: 42, yBottom: 44 },
+  "1B": { x: 54, yTop: 42, yBottom: 45 },
   "2B": { x: 132, yTop: 80, yBottom: 52 },
-  "3B": { x: 54, yTop: 42, yBottom: 44 },
+  "3B": { x: 54, yTop: 42, yBottom: 45 },
   SS: { x: 184, yTop: 80, yBottom: 52 },
   LF: { x: 96, yTop: 58, yBottom: 74 },
   CF: { x: 116, yTop: 62, yBottom: 84 },
@@ -222,6 +222,7 @@ export function mountGamecast2(options) {
       runtime.screen.removeAttribute("data-gamecast2-visible-ability-underlays");
       runtime.screen.removeAttribute("data-gamecast2-timeline-template");
       runtime.screen.removeAttribute("data-gamecast2-player-atlas");
+      runtime.screen.removeAttribute("data-gamecast2-native-display-size");
       delete runtime.screen.__gamecast2Anchors;
       delete runtime.screen.__gamecast2Players;
       delete runtime.screen.__gamecast2Frame;
@@ -246,14 +247,20 @@ function calculateMetrics(runtime) {
     : 0;
   const availableW = Math.max(1, Math.floor((rect.width || runtime.width) - horizontalInset));
   const availableH = Math.max(1, Math.floor((rect.height || runtime.height) - verticalInset));
-  const cssScale = Math.max(0.35, Math.min(availableW / runtime.width, availableH / runtime.height));
+  const targetCssScale = Math.max(0.35, Math.min(availableW / runtime.width, availableH / runtime.height));
   const dpr = Math.max(1, window.devicePixelRatio || 1);
-  const cssW = Math.round(runtime.width * cssScale);
-  const cssH = Math.round(runtime.height * cssScale);
-  // Match the backing buffer to its displayed size. Keeping a hidden 960x720
-  // minimum made the browser resample the complete pixel scene on narrow views.
-  const bufferW = Math.max(1, Math.round(cssW * dpr));
-  const bufferH = Math.max(1, Math.round(cssH * dpr));
+  // An 8x6 backing unit preserves the 4:3 field aspect and guarantees an even
+  // camera viewport. CSS is derived back from that buffer so one backing pixel
+  // maps to one physical device pixel without a second fractional resample.
+  const backingUnit = Math.max(1, Math.floor(Math.min(
+    runtime.width * targetCssScale * dpr / 8,
+    runtime.height * targetCssScale * dpr / 6
+  )));
+  const bufferW = backingUnit * 8;
+  const bufferH = backingUnit * 6;
+  const cssW = bufferW / dpr;
+  const cssH = bufferH / dpr;
+  const cssScale = cssW / runtime.width;
   return {
     cssScale,
     dpr,
@@ -397,10 +404,11 @@ function addStaticActor(scene, runtime, actor) {
     ? gamecast2AtlasFrame(scene, initialTexture, actor, { pose: defaultPoseForActor(actor) }, defaultPoseForActor(actor), runtime, null)
     : undefined;
   const usesAtlas = initialTexture !== actor.texture;
-  const atlasRenderScale = usesAtlas ? PLAYER_ATLAS_RENDER_SCALE : 1;
+  const atlasRenderScale = usesAtlas ? nativeAtlasRenderScale(runtime) : 1;
+  const initialRenderScale = usesAtlas ? atlasRenderScale : renderScale;
   const sprite = scene.add.image(actor.design.x * sx, actor.design.y * sy, initialTexture, initialFrame)
     .setOrigin(0.5, usesAtlas ? PLAYER_ATLAS_BASELINE_Y / PLAYER_ATLAS_FRAME_SIZE : 60 / 64)
-    .setScale(renderScale * atlasRenderScale)
+    .setScale(initialRenderScale)
     .setDepth(Math.round(actor.design.y * 10));
   sprite.setDataEnabled?.();
   sprite.setData?.("gamecast2Role", actor.role);
@@ -412,6 +420,7 @@ function addStaticActor(scene, runtime, actor) {
     isDefender: Boolean(actor.isDefender),
     isOutfielder: OUTFIELD_ANCHORS.has(actor.fieldingKey),
     isTransient: Boolean(actor.isTransient),
+    usesAtlas,
     designX: actor.design.x,
     designY: actor.design.y,
     anchorScale,
@@ -419,7 +428,7 @@ function addStaticActor(scene, runtime, actor) {
     visualScale: usesAtlas ? PLAYER_ATLAS_VISUAL_SCALE : 1,
     baseX: actor.design.x * sx,
     baseY: actor.design.y * sy,
-    baseScale: renderScale * atlasRenderScale,
+    baseScale: initialRenderScale,
     phase: actorPhase(actor.key),
     abilityHovered: false
   };
@@ -488,10 +497,13 @@ function updateStaticPlayerIdle(runtime, frame = null) {
     const renderY = position.y * runtime.metrics.drawScaleY;
     const sourceDesignScale = depthScaleForY(position.y);
     const designScale = normalizePlayerVisualScale(sourceDesignScale);
-    const rawRenderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY)
-      * designScale
-      * Number(actor.atlasRenderScale ?? 1);
-    const renderScale = Math.max(1 / 32, Math.round(rawRenderScale * 32) / 32);
+    const rawRenderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY) * designScale;
+    // Atlas art is pre-rasterized to a native 96px display cell. Keeping its
+    // runtime transform integer makes every final atlas dot cover whole backing
+    // pixels; perspective remains in position and the separately drawn shadow.
+    const renderScale = actor.usesAtlas
+      ? nativeAtlasRenderScale(runtime)
+      : Math.max(1 / 8, Math.round(rawRenderScale * 8) / 8);
     const requestedLean = Number(state.angle ?? 0);
     const shadowAngle = Math.round(requestedLean / 5) * 5;
     // The authored atlas already carries each pose's lean. Rotating the bitmap
@@ -914,7 +926,7 @@ function timelineActorState(sample, timeline, progress, role) {
     pose,
     position,
     angle: timelineCueAngle(cue, timeline.points, localT),
-    facing: timelineCueFacing(cue, timeline.points, localT, role),
+    facing: gamecast2TimelineCueFacing(cue, timeline.points, localT, role),
     shadowPose: animation === "slide" || animation === "dive" ? animation : animation === "run" ? "run" : pose,
     animationKey: animation,
     animationT: localT,
@@ -964,9 +976,15 @@ function timelineCueAngle(cue, points, localT) {
   return clampNumber((to.x - from.x) * 0.08, -8, 8);
 }
 
-function timelineCueFacing(cue, points, localT, role) {
+export function gamecast2TimelineCueFacing(cue, points, localT = 0, role = "") {
   const route = (cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
-  if (route.length < 2) return role === "batter" ? -1 : 1;
+  if (route.length < 2) {
+    if (cue.at && cue.toward && points?.[cue.at] && points?.[cue.toward]) {
+      const delta = Number(points[cue.toward].x) - Number(points[cue.at].x);
+      return Math.abs(delta) < 0.01 ? 1 : delta >= 0 ? 1 : -1;
+    }
+    return role === "batter" ? -1 : 1;
+  }
   const from = pointAlongTimelineRoute(route, Math.max(0, localT - 0.025));
   const to = pointAlongTimelineRoute(route, Math.min(1, localT + 0.025));
   const delta = to.x - from.x;
@@ -1696,6 +1714,10 @@ function normalizePlayerVisualScale(value) {
   );
 }
 
+function nativeAtlasRenderScale(runtime) {
+  return Math.max(1, Math.round(Number(runtime?.metrics?.dpr ?? 1)));
+}
+
 function depthScaleForY(y) {
   return clampNumber(0.56 + Number(y ?? GAMECAST2_DESIGN_H / 2) / GAMECAST2_DESIGN_H * 0.52, 0.62, 1.04);
 }
@@ -1898,6 +1920,9 @@ function gamecast2AtlasFrame(scene, textureKey, actor, state, pose, runtime, fra
 function gamecast2AnimationForPose(actor, state, pose) {
   const explicit = String(state?.animationKey ?? "");
   if (actor.role === "catcher") {
+    // Keep the mask and chest protector visible during catcher throws. The
+    // catcher family supplies the equipment-safe motion frames.
+    if (explicit === "throw" || pose === "throw") return "catcher";
     if (explicit === "catcher" || pose === "catch") return "catcher";
     return "";
   }
@@ -2186,6 +2211,7 @@ function exposeSceneDebug(runtime) {
   runtime.screen.dataset.gamecast2PlayerAtlas = hasGamecast2PlayerAtlases(runtime.scene)
     ? `128-${String(runtime.field?.id ?? "").includes("night") ? "night" : "day"}`
     : "procedural-fallback";
+  runtime.screen.dataset.gamecast2NativeDisplaySize = String(PLAYER_ATLAS_NATIVE_DISPLAY_SIZE);
   runtime.screen.__gamecast2Anchors = runtime.anchors;
   runtime.screen.__gamecast2Players = {
     defenders: defenders.map(publicActorSnapshot),
@@ -2205,6 +2231,8 @@ function publicActorSnapshot(actor) {
     y: Math.round(Number(actor.currentDesignY ?? actor.designY) * 100) / 100,
     scale: Math.round(Number(actor.currentDesignScale ?? normalizePlayerVisualScale(depthScaleForY(actor.designY))) * 1000) / 1000,
     anchorScale: Math.round(actor.anchorScale * 100) / 100,
+    usesAtlas: Boolean(actor.usesAtlas),
+    nativeDisplaySize: actor.usesAtlas ? PLAYER_ATLAS_NATIVE_DISPLAY_SIZE : 0,
     renderX: Math.round(Number(actor.currentRenderX ?? 0) * 100) / 100,
     renderY: Math.round(Number(actor.currentRenderY ?? 0) * 100) / 100,
     renderScale: Math.round(Number(actor.currentRenderScale ?? 0) * 10000) / 10000,

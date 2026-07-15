@@ -10,11 +10,14 @@ import shutil
 from pathlib import Path
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from build_gamecast_sprites import (
     FRAME,
     BASELINE_Y,
+    CAP,
+    CAP_HIGHLIGHT,
+    CAP_SHADOW,
     CENTER_X,
     DEFAULT_SOURCE,
     SOURCE_REFERENCE,
@@ -25,6 +28,19 @@ from build_gamecast_sprites import (
     LEGACY_ROWS,
     MAX_SPRITE_HEIGHT,
     MAX_SPRITE_WIDTH,
+    OUTLINE,
+    OUTLINE_SOFT,
+    PANTS,
+    PANTS_SHADOW,
+    JERSEY_AWAY,
+    JERSEY_AWAY_HIGHLIGHT,
+    JERSEY_AWAY_SHADOW,
+    JERSEY_HOME,
+    JERSEY_HOME_HIGHLIGHT,
+    JERSEY_HOME_SHADOW,
+    SKIN,
+    SKIN_HIGHLIGHT,
+    SKIN_SHADOW,
     SOURCE_CELL,
     SOURCE_DOWNSCALE,
     V2_GRID,
@@ -32,6 +48,7 @@ from build_gamecast_sprites import (
     atlas_frame,
     build_legacy_normalized_frames,
     count_colors,
+    opaque_bbox,
     shift_frame,
     validate_animation_metadata,
     validate_art_rules,
@@ -44,6 +61,7 @@ from build_gamecast_sprites import (
 
 
 V3_COLS = 16
+NATIVE_DISPLAY_SIZE = 96
 MOTION_MINIMUM_FRAMES = {
     "swing": 10,
     "pitch": 8,
@@ -240,6 +258,174 @@ def build_v2_base_frames(source: Image.Image, uniform: str, strict_art: bool = F
     return frames
 
 
+def catcher_face_core_bounds(frame: Image.Image) -> Tuple[int, int, int, int] | None:
+    bbox = opaque_bbox(frame)
+    if bbox is None:
+        return None
+    left, top, right, _bottom = bbox
+    return (max(left, left + 18), top + 4, min(right, left + 45), min(frame.height, top + 32))
+
+
+def catcher_face_core_skin_count(frame: Image.Image) -> int:
+    bounds = catcher_face_core_bounds(frame)
+    if bounds is None:
+        return 0
+    left, top, right, bottom = bounds
+    skin_colors = {SKIN[:3], SKIN_SHADOW[:3], SKIN_HIGHLIGHT[:3]}
+    pixels = frame.convert("RGBA").load()
+    return sum(
+        pixels[x, y][3] > 0 and pixels[x, y][:3] in skin_colors
+        for y in range(top, bottom)
+        for x in range(left, right)
+    )
+
+
+def catcher_front_cage_light_count(frame: Image.Image) -> int:
+    """Count the pale face-cage grid that identifies the old front-facing source."""
+    bbox = opaque_bbox(frame)
+    if bbox is None:
+        return 0
+    left, top, _right, _bottom = bbox
+    cage_colors = {
+        JERSEY_HOME[:3],
+        JERSEY_HOME_SHADOW[:3],
+        JERSEY_HOME_HIGHLIGHT[:3],
+        JERSEY_AWAY[:3],
+        JERSEY_AWAY_SHADOW[:3],
+        JERSEY_AWAY_HIGHLIGHT[:3],
+    }
+    pixels = frame.convert("RGBA").load()
+    return sum(
+        pixels[x, y][3] > 0 and pixels[x, y][:3] in cage_colors
+        for y in range(top + 4, min(frame.height, top + 22))
+        for x in range(left + 18, min(frame.width, left + 45))
+    )
+
+
+def make_catcher_back_frame(frame: Image.Image) -> Image.Image:
+    """Redraw the catcher as an unmistakable rear view facing the mound.
+
+    The source catcher is a front view. Merely hiding its skin leaves the face-cage
+    grid intact and still reads as a catcher looking toward the camera. Keep the
+    authored arms, mitt, and crouched legs, but replace the head and central torso
+    with a compact rear helmet, harness, and jersey back.
+    """
+    output = frame.copy().convert("RGBA")
+    bbox = opaque_bbox(output)
+    if bbox is None:
+        return output
+    left, top, right, _bottom = bbox
+    center_x = round((left + right - 1) / 2)
+    draw = ImageDraw.Draw(output)
+
+    # Remove the complete front-facing head/cage, not just its skin pixels.
+    head_left = max(0, left + 8)
+    head_right = min(output.width - 1, left + 51)
+    head_bottom = min(output.height - 1, top + 34)
+    draw.rectangle((head_left, top, head_right, head_bottom), fill=(0, 0, 0, 0))
+
+    def points(relative: Sequence[Tuple[int, int]]) -> list[Tuple[int, int]]:
+        return [(center_x + dx, top + dy) for dx, dy in relative]
+
+    # Rear helmet silhouette. The dark lower pad and crossed red harness replace
+    # the white face-cage grid that made the old sprite look backwards.
+    draw.polygon(
+        points(((-6, 0), (7, 1), (15, 6), (19, 14), (18, 23), (13, 30),
+                (5, 34), (-8, 33), (-16, 28), (-20, 20), (-20, 12), (-15, 5))),
+        fill=OUTLINE,
+    )
+    draw.polygon(
+        points(((-5, 3), (6, 3), (13, 7), (16, 13), (15, 19), (10, 22),
+                (4, 20), (-4, 19), (-10, 22), (-16, 18), (-16, 11), (-11, 6))),
+        fill=CAP,
+    )
+    draw.polygon(
+        points(((-11, 6), (-4, 3), (5, 4), (11, 7), (8, 10), (-2, 8), (-11, 12))),
+        fill=CAP_HIGHLIGHT,
+    )
+    draw.polygon(
+        points(((-16, 18), (-9, 20), (-3, 18), (4, 19), (10, 22), (15, 19),
+                (14, 27), (8, 31), (-6, 30), (-13, 26))),
+        fill=PANTS_SHADOW,
+    )
+    # Back-of-mask rails and straps: side rails plus an X/vertical harness, never
+    # a face-like grid across the center.
+    draw.line(points(((-16, 13), (-17, 24), (-11, 29))), fill=OUTLINE_SOFT, width=2)
+    draw.line(points(((15, 13), (16, 24), (11, 29))), fill=OUTLINE_SOFT, width=2)
+    draw.line(points(((-11, 20), (10, 30))), fill=CAP_SHADOW, width=3)
+    draw.line(points(((10, 20), (-9, 30))), fill=CAP_SHADOW, width=3)
+    draw.line(points(((0, 18), (0, 32))), fill=CAP, width=2)
+
+    # Replace the front chest protector with the jersey back and its thin rear
+    # harness. Preserve the source arms/mitt at the sides and crouched feet below.
+    flattened = output.get_flattened_data() if hasattr(output, "get_flattened_data") else output.getdata()
+    colors = {pixel[:3] for pixel in flattened if pixel[3] > 0}
+    away = any(color in colors for color in (JERSEY_AWAY[:3], JERSEY_AWAY_SHADOW[:3]))
+    jersey = JERSEY_AWAY if away else JERSEY_HOME
+    jersey_shadow = JERSEY_AWAY_SHADOW if away else JERSEY_HOME_SHADOW
+    jersey_highlight = JERSEY_AWAY_HIGHLIGHT if away else JERSEY_HOME_HIGHLIGHT
+    torso = points(((-13, 29), (10, 29), (17, 38), (15, 51), (8, 59),
+                    (-8, 58), (-17, 49), (-19, 39)))
+    draw.polygon(torso, fill=OUTLINE)
+    draw.polygon(
+        points(((-11, 32), (8, 32), (13, 39), (11, 49), (6, 55),
+                (-6, 54), (-13, 47), (-15, 39))),
+        fill=jersey_shadow,
+    )
+    draw.polygon(
+        points(((-8, 33), (6, 33), (10, 40), (8, 49), (4, 53),
+                (-4, 52), (-10, 46), (-11, 39))),
+        fill=jersey,
+    )
+    draw.line(points(((-10, 34), (8, 51))), fill=CAP_SHADOW, width=3)
+    draw.line(points(((8, 34), (-7, 51))), fill=CAP_SHADOW, width=3)
+    draw.line(points(((-7, 33), (5, 33))), fill=jersey_highlight, width=1)
+    # A tiny block number makes the rear-facing torso legible even at native 96px.
+    draw.line(points(((-2, 39), (3, 39), (3, 43), (-2, 47), (3, 47))), fill=PANTS, width=2)
+    return output
+
+
+def prepare_v3_base_frames(base: Mapping[str, Image.Image]) -> Dict[str, Image.Image]:
+    prepared = dict(base)
+    for pose in ("catcher_frame", "catcher_block"):
+        if pose in prepared:
+            prepared[pose] = make_catcher_back_frame(prepared[pose])
+    return prepared
+
+
+def make_native_display_frame(frame: Image.Image) -> Image.Image:
+    """Pre-rasterize a 128px pose to its final 96px on-field pixel grid."""
+    resized = frame.convert("RGBA").resize(
+        (NATIVE_DISPLAY_SIZE, NATIVE_DISPLAY_SIZE),
+        Image.Resampling.NEAREST,
+    )
+    output = Image.new("RGBA", (FRAME, FRAME), (0, 0, 0, 0))
+    paste_x = CENTER_X - round(CENTER_X * NATIVE_DISPLAY_SIZE / FRAME)
+    paste_y = BASELINE_Y - round(BASELINE_Y * NATIVE_DISPLAY_SIZE / FRAME)
+    output.alpha_composite(resized, (paste_x, paste_y))
+    return output
+
+
+def validate_catcher_back_frames(frames: Mapping[str, Image.Image]) -> None:
+    skin_issues = {
+        name: catcher_face_core_skin_count(frame)
+        for name, frame in frames.items()
+        if name.startswith("catcher_") and catcher_face_core_skin_count(frame) > 0
+    }
+    cage_issues = {
+        name: catcher_front_cage_light_count(frame)
+        for name, frame in frames.items()
+        if name.startswith("catcher_") and catcher_front_cage_light_count(frame) > 0
+    }
+    if skin_issues or cage_issues:
+        details = ", ".join(
+            [*(f"{name}=skin:{count}px" for name, count in sorted(skin_issues.items())),
+             *(f"{name}=front-cage:{count}px" for name, count in sorted(cage_issues.items()))]
+        )
+        raise SystemExit(f"catcher back-facing contract failed: {details}")
+    print("catcher back-facing validation: ok (no face skin/front cage grid)")
+
+
 def frame_for(base: Mapping[str, Image.Image], pose: str) -> Image.Image:
     if pose in base:
         return base[pose]
@@ -295,6 +481,14 @@ def write_v3_json(
     animations: Mapping[str, object],
 ) -> None:
     validate_animation_metadata(frames, animations)
+    throw_source_poses = [LEGACY_TO_V2_BASE[key] for key in ("throw_plant", "throw_release", "throw_follow")]
+    forbidden_throw_sources = {"stance", "swing", "follow", "miss", "take"}
+    invalid_throw_sources = [pose for pose in throw_source_poses if pose in forbidden_throw_sources]
+    if invalid_throw_sources:
+        raise SystemExit(
+            "throw equipment contract failed; batting poses cannot drive a fielding throw: "
+            + ", ".join(invalid_throw_sources)
+        )
     payload = {
         "frames": frames,
         "animations": animations,
@@ -312,9 +506,13 @@ def write_v3_json(
             "sourceCellSize": {"w": SOURCE_CELL, "h": SOURCE_CELL},
             "integerDownscale": SOURCE_DOWNSCALE,
             "registrationScaleMode": "sheet-common",
+            "nativeDisplaySize": {"w": NATIVE_DISPLAY_SIZE, "h": NATIVE_DISPLAY_SIZE},
+            "nativeRenderScale": 1,
             "safeOpaqueSize": {"w": MAX_SPRITE_WIDTH, "h": MAX_SPRITE_HEIGHT},
             "minimumFrames": MOTION_MINIMUM_FRAMES,
             "artContract": "docs/gamecast-sprite-art-spec.md",
+            "motionSourcePoses": {"throw": throw_source_poses},
+            "catcherView": "back-facing",
             "lighting": "night" if "-night." in image_name else "day",
         },
     }
@@ -331,12 +529,14 @@ def write_v3_atlas(
 ) -> None:
     variant = f"{uniform}-night" if night else uniform
     image_name = f"player-{variant}.png"
-    base = build_v2_base_frames(source, uniform, strict_art)
+    base = prepare_v3_base_frames(build_v2_base_frames(source, uniform, strict_art))
     dense_frames: Dict[str, Image.Image] = {}
     for name, spec in V3_ANIMATIONS.items():
         dense_frames.update(build_animation_frames(base, name, spec))
     for pose in STATIC_POSES:
         dense_frames[pose] = frame_for(base, pose)
+    validate_catcher_back_frames(dense_frames)
+    dense_frames = {name: make_native_display_frame(frame) for name, frame in dense_frames.items()}
     if night:
         dense_frames = {name: apply_night_rimlight(frame) for name, frame in dense_frames.items()}
 

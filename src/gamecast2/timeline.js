@@ -272,6 +272,7 @@ function buildDoublePlay(context) {
     primary: relay,
     receiver: primary === "1B" ? "P" : "",
     to: "first",
+    throwFrom: "second",
     moveStartT: 0.46,
     throwEndT: 0.72,
     phasePrefix: "relay-"
@@ -289,9 +290,12 @@ function buildHomeRun(context) {
   }));
   context.tracks.sfx.push(cue(0.22, null, { id: "bat-crack" }));
 
-  const fielderKey = selectFielderKey({ ...context.event, battedBallType: "flyBall" }, context.points);
   const wallPoint = homeRunWallPoint(context.event, context.points);
-  context.points.wallTrack = interpolatePoint(context.points[fielderKey], wallPoint, 0.72);
+  const fielderKey = selectHomeRunFielderKey(context.points, wallPoint);
+  // Keep the warning-track chase inside the authored outfielder movement zone.
+  // A larger interpolation was clamped by the scene, so the timeline endpoint
+  // and the position the viewer actually saw did not agree.
+  context.points.wallTrack = interpolatePoint(context.points[fielderKey], wallPoint, 0.36);
   context.points.homeRunExit = extendFromPoint(context.points.home, wallPoint, 1.08);
 
   context.tracks.ball.push(cue(0.22, 0.59, {
@@ -360,6 +364,7 @@ function buildSteal(context) {
     who: receiver,
     anim: ANIM.catch,
     at: "second",
+    toward: "home",
     phase: success ? "late-tag" : "tag"
   }));
 
@@ -429,6 +434,7 @@ function addDefensiveRotation(context, {
     primary,
     receiver,
     to: throwTarget,
+    throwFrom: landing,
     moveStartT: Math.max(0.235, Math.min(0.31, landingT - 0.1)),
     throwEndT
   });
@@ -441,7 +447,7 @@ function addDefensiveSupport(context, { primary, receiver, landing, landingT, fi
   const moveEndT = Math.min(fieldEndT + 0.015, landingT + 0.055);
   for (const key of DEFENDERS) {
     if (key === primary || key === receiver || !context.points[key]) continue;
-    const amount = OUTFIELDERS.includes(key) ? 0.075 : ["P", "C"].includes(key) ? 0.08 : 0.12;
+    const amount = OUTFIELDERS.includes(key) ? 0.075 : ["P", "C"].includes(key) ? 0.08 : 0.11;
     const pointName = defensiveShiftPointName(key);
     context.points[pointName] = interpolatePoint(context.points[key], target, amount);
     if (pointDistance(context.points[key], context.points[pointName]) < 4) continue;
@@ -459,6 +465,7 @@ function addThrowReceiver(context, {
   primary,
   receiver = "",
   to,
+  throwFrom = "",
   moveStartT,
   throwEndT,
   phasePrefix = ""
@@ -479,6 +486,7 @@ function addThrowReceiver(context, {
     who: selected,
     anim: ANIM.catch,
     at: to,
+    toward: throwFrom || undefined,
     phase: `${phasePrefix}receive-${to}`,
     assignment: "receiver"
   }));
@@ -707,6 +715,13 @@ function normalizeFielderKey(value) {
 function selectRelayFielder(points, primary) {
   const candidates = primary === "2B" ? ["SS", "2B", "second"] : ["2B", "SS", "second"];
   return firstAvailableAnchor(points, candidates);
+}
+
+function selectHomeRunFielderKey(points, wallPoint) {
+  return [...OUTFIELDERS]
+    .filter((key) => points[key])
+    .sort((a, b) => pointDistance(points[a], wallPoint) - pointDistance(points[b], wallPoint))[0]
+    ?? firstAvailableAnchor(points, OUTFIELDERS);
 }
 
 function selectThrowReceiver(points, primary, target) {

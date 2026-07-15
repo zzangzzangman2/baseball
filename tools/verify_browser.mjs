@@ -1745,6 +1745,7 @@ async function checkGamecastLab() {
       const anchors = screen?.__gamecast2Anchors?.anchors ?? {};
       const players = screen?.__gamecast2Players ?? { defenders: [], actors: [] };
       const rect = canvas?.getBoundingClientRect();
+      const scanlineStyle = screen ? getComputedStyle(screen, "::after") : null;
       const keys = Object.keys(anchors).sort();
       const required = ["home", "first", "second", "third", "mound", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "leftPole", "rightPole", "scoreboardTl"];
       const defenseRequired = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
@@ -1761,6 +1762,7 @@ async function checkGamecastLab() {
         engine: screen?.dataset?.gamecastEngineCurrent ?? "",
         field: screen?.dataset?.gamecast2Field ?? "",
         playerAtlas: screen?.dataset?.gamecast2PlayerAtlas ?? "",
+        nativeDisplaySize: Number(screen?.dataset?.gamecast2NativeDisplaySize ?? 0),
         timelineTemplate: screen?.dataset?.gamecast2TimelineTemplate ?? "",
         scoreboardVisible: screen?.dataset?.gamecast2Scoreboard === "1",
         scoreboardState: motionFrame?.scoreboard ?? null,
@@ -1780,7 +1782,12 @@ async function checkGamecastLab() {
           Number.isInteger(Number(actor.renderX)) &&
           Number.isInteger(Number(actor.renderY)) &&
           Number(actor.renderAngle) === 0 &&
-          Math.abs(Number(actor.renderScale) * 32 - Math.round(Number(actor.renderScale) * 32)) < 0.0001
+          (!actor.usesAtlas || (
+            Number(actor.nativeDisplaySize) === 96 &&
+            Number.isInteger(Number(actor.renderScale)) &&
+            Number.isInteger(Number(actor.renderX) - 64 * Math.abs(Number(actor.renderScale))) &&
+            Number.isInteger(Number(actor.renderY) - 120 * Number(actor.renderScale))
+          ))
         ),
         actorRenderScaleSpread: actorRenderScales.length > 0
           ? Math.max(...actorRenderScales) - Math.min(...actorRenderScales)
@@ -1791,11 +1798,15 @@ async function checkGamecastLab() {
         hasBatter: (players.actors ?? []).some((actor) => actor.role === "batter"),
         canvasPixelW: Number(canvas?.dataset?.pixelW ?? 0),
         canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0),
-        canvasWidth: Math.round(rect?.width ?? 0),
-        canvasHeight: Math.round(rect?.height ?? 0),
+        canvasWidth: Number(rect?.width ?? 0),
+        canvasHeight: Number(rect?.height ?? 0),
         canvasBufferW: Number(canvas?.width ?? 0),
         canvasBufferH: Number(canvas?.height ?? 0),
         devicePixelRatio: Number(window.devicePixelRatio || 1),
+        backingGridOk: Number(canvas?.width ?? 0) % 8 === 0 &&
+          Number(canvas?.height ?? 0) % 6 === 0 &&
+          Number(canvas?.width ?? 0) * 3 === Number(canvas?.height ?? 0) * 4,
+        scanlineOverlayDisabled: !scanlineStyle || scanlineStyle.display === "none" || scanlineStyle.opacity === "0",
         positionViolations: Number(screen?.dataset?.gamecast2PositionViolations ?? 0),
         motionViolations: Number(screen?.__gamecast2Frame?.positionGuard?.violations?.length ?? 0),
         motionViolationActors: screen?.__gamecast2Frame?.positionGuard?.violations ?? [],
@@ -1809,6 +1820,7 @@ async function checkGamecastLab() {
   `);
   assert(anchorProbe.engine === "v2", `v2 엔진이 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/ui.js");
   assert(anchorProbe.playerAtlas === "128-day", `v2 128px day atlas가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.nativeDisplaySize === 96, `v2 native display atlas가 96px가 아닙니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.timelineTemplate && anchorProbe.timelineTemplate !== "fallback", `v2 timeline template가 활성화되지 않았습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/timeline.js");
   assert(
     anchorProbe.scoreboardVisible &&
@@ -1847,13 +1859,15 @@ async function checkGamecastLab() {
   assert(anchorProbe.canvasPixelW === 960 && anchorProbe.canvasPixelH === 720, `v2 필드 해상도 계약이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.canvasWidth >= 900 && anchorProbe.canvasHeight >= 675, `v2 데스크톱 캔버스가 고해상도로 표시되지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/styles.css");
   assert(
-    Math.abs(anchorProbe.canvasBufferW - anchorProbe.canvasWidth * anchorProbe.devicePixelRatio) <= 1 &&
-      Math.abs(anchorProbe.canvasBufferH - anchorProbe.canvasHeight * anchorProbe.devicePixelRatio) <= 1,
+    Math.abs(anchorProbe.canvasBufferW - anchorProbe.canvasWidth * anchorProbe.devicePixelRatio) <= 0.51 &&
+      Math.abs(anchorProbe.canvasBufferH - anchorProbe.canvasHeight * anchorProbe.devicePixelRatio) <= 0.51 &&
+      anchorProbe.backingGridOk,
     `v2 backing buffer와 CSS 표시 크기가 다릅니다: ${JSON.stringify(anchorProbe)}`,
     "src/gamecast2/scene.js"
   );
   assert(anchorProbe.actorPixelGridOk, `v2 선수가 정수 픽셀 그리드에 맞지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
-  assert(anchorProbe.actorRenderScaleSpread <= 0.07, `v2 선수 크기 편차가 큽니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.actorRenderScaleSpread === 0, `v2 선수 runtime 크기가 동일하지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.scanlineOverlayDisabled, `v2 캔버스 위 scanline overlay가 남아 있습니다: ${JSON.stringify(anchorProbe)}`, "src/styles.css");
   assert(anchorProbe.positionViolations === 0 && anchorProbe.motionViolations === 0, `v2 선수 좌표가 허용 구역 밖입니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.baseDirectionOk && anchorProbe.baseBagOk && anchorProbe.depthOk && anchorProbe.pitcherOk, `v2 앵커 배치가 어긋났습니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(

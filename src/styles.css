@@ -3546,6 +3546,10 @@ img {
   aspect-ratio: 4 / 3;
 }
 
+.gamecast-screen.is-v2::after {
+  display: none;
+}
+
 .gamecast-screen.is-canvas .gamecast-dom-overlay {
   display: none;
 }

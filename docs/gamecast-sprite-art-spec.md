@@ -6,6 +6,7 @@
 
 - 런타임 프레임: **128×128px** RGBA.
 - 생성/정규화 셀: **256×256px**. 128px 출력은 nearest-neighbor **2배 정수 축소**만 사용한다.
+- v3 경기 표시 래스터: 128px 프레임을 `centerX=64`, `baselineY=120`에 고정한 채 **96×96px**로 nearest-neighbor 사전 래스터화한다. 런타임은 이 래스터에 정수 배율만 적용하며 다시 축소하지 않는다.
 - 발바닥 baseline: `y=120`. 불투명 bbox의 하단은 파이썬/Pillow의 exclusive 좌표로 120이며, 마지막 불투명 픽셀은 `y=119`다.
 - 수평 중심: `x=64`.
 - 권장 불투명 bbox: 최대 116×112px. 모션 오프셋 여유를 위해 기준 포즈는 최대 108×108px 안에 등록한다.
@@ -39,6 +40,8 @@ v2 키 포즈는 타격, 투구, 주루, 송구, 포구, 다이브, 슬라이드
 | dive | 3 | 10 |
 | slide | 2 | 8 |
 | catcher | 2 | 8 |
+
+`throw` 모션은 `field`/`pitch` 계열 장비 안전 포즈만 사용할 수 있으며, 배트가 포함된 `stance`/`swing`/`follow` 포즈를 참조하면 빌드를 실패시킨다. `catcher` 모션은 투수 쪽을 보는 후면 헬멧과 등 보호끈을 사용하고, 얼굴 피부나 앞면 철망 격자가 남아 있으면 빌드를 실패시킨다.
 
 투구 키 순서는 반드시 `pitch_release` 뒤에 하나 이상의 `pitch_follow*` 키를 둔다. 현재는 `pitch_follow1`, `pitch_follow2` 두 장을 사용한다. 빌더는 프레임 수, duration 수, 프레임 존재 여부와 릴리스 이후 팔로스루를 빌드 시점에 검사한다.
 
@@ -83,7 +86,7 @@ v2 키 포즈는 타격, 투구, 주루, 송구, 포구, 다이브, 슬라이드
 - `player-home-night.png` + `player-home-night.json` (`lighting: night`)
 - `player-away-night.png` + `player-away-night.json` (`lighting: night`)
 
-네 JSON 모두 `frameSize: 128×128`, `baselineY: 120`, `centerX: 64`, `sourceCellSize: 256×256`, `integerDownscale: 2`를 기록한다. 야간 구장은 `*-night` 아틀라스를 선택하고, 그 외 구장은 주간 아틀라스를 선택한다.
+네 JSON 모두 `frameSize: 128×128`, `baselineY: 120`, `centerX: 64`, `sourceCellSize: 256×256`, `integerDownscale: 2`, `nativeDisplaySize: 96×96`, `nativeRenderScale: 1`을 기록한다. 야간 구장은 `*-night` 아틀라스를 선택하고, 그 외 구장은 주간 아틀라스를 선택한다.
 
 ## 6. 그림자와 등록
 

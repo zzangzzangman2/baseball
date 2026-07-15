@@ -3540,6 +3540,11 @@
     },
     "integerDownscale": 2,
     "registrationScaleMode": "sheet-common",
+    "nativeDisplaySize": {
+      "w": 96,
+      "h": 96
+    },
+    "nativeRenderScale": 1,
     "safeOpaqueSize": {
       "w": 116,
       "h": 112
@@ -3555,6 +3560,14 @@
       "catcher": 2
     },
     "artContract": "docs/gamecast-sprite-art-spec.md",
+    "motionSourcePoses": {
+      "throw": [
+        "field",
+        "pitch",
+        "pitch"
+      ]
+    },
+    "catcherView": "back-facing",
     "lighting": "night"
   }
 }
