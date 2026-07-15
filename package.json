@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
+    "build:gamecast-motion": "python tools/build_gamecast_motion_v3.py",
     "verify": "node tools/verify_app.mjs",
+    "verify:electron": "node tools/verify_browser.mjs",
     "verify:browser": "node tools/verify_browser.mjs",
     "verify:balance": "node tools/verify_balance.mjs",
     "package": "electron-builder --win --x64",
@@ -27,6 +29,7 @@
       "src/**/*",
       "assets/**/*",
       "electron-main.cjs",
+      "electron-preload.cjs",
       "package.json"
     ],
     "win": {

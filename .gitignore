@@ -8,3 +8,9 @@ out/
 *.tmp
 *.bak
 kbo-gm-*.json
+reports/ui-tour-*.png
+reports/gamecast-burst*/
+reports/gamecast-anchors*/
+reports/motion-v3-preview/
+reports/motion-samples/
+__pycache__/

@@ -44,6 +44,25 @@ body {
   color: var(--ink);
 }
 
+.is-electron body {
+  background-color: #07100e;
+  overscroll-behavior: none;
+  user-select: none;
+}
+
+.is-electron input,
+.is-electron textarea,
+.is-electron [contenteditable="true"],
+.is-electron .mailbox-body-content,
+.is-electron table {
+  user-select: text;
+}
+
+.is-electron .app-shell {
+  width: min(1540px, 100%);
+  padding: 18px;
+}
+
 button,
 select,
 input {
@@ -1331,6 +1350,25 @@ img {
   min-width: 0;
   line-height: 1.28;
   overflow-wrap: anywhere;
+}
+
+.decision-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 340;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(24, 22, 30, 0.58);
+}
+
+.decision-overlay-shell {
+  width: min(720px, 100%);
+  max-height: min(80vh, 640px);
+  overflow-y: auto;
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(16, 14, 22, 0.45);
 }
 
 .decision-mail-panel {
@@ -3735,29 +3773,29 @@ img {
   left: var(--label-x, 50%);
   top: var(--label-y, 50%);
   z-index: 2;
-  max-width: min(132px, 78%);
-  padding: 4px 7px 5px;
+  max-width: min(120px, 74%);
+  padding: 3px 6px 4px;
   overflow: hidden;
   border: 1px solid rgba(35, 32, 42, 0.72);
   border-radius: 999px;
   background: rgba(255, 254, 251, 0.92);
   box-shadow: 0 2px 0 rgba(35, 32, 42, 0.24), 0 6px 12px rgba(35, 32, 42, 0.14);
   color: #2f2b34;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 950;
   line-height: 1;
   opacity: 0;
   pointer-events: none;
   text-align: center;
   text-overflow: ellipsis;
-  transform: translate(-50%, -112%);
+  transform: translate(-50%, -122%);
   transition: opacity 70ms linear, transform 90ms ease;
   white-space: nowrap;
 }
 
 .gamecast-player-label.is-visible {
   opacity: var(--label-opacity, 1);
-  transform: translate(-50%, -124%);
+  transform: translate(-50%, -138%);
 }
 
 .gamecast-player-label.is-scoring {
@@ -4088,10 +4126,10 @@ img {
 }
 
 .gamecast-screen-large .gamecast-player-label {
-  max-width: min(178px, 82%);
-  padding: 5px 9px 6px;
+  max-width: min(160px, 78%);
+  padding: 4px 8px 5px;
   border-width: 2px;
-  font-size: 0.92rem;
+  font-size: 0.84rem;
   box-shadow: 0 3px 0 rgba(35, 32, 42, 0.24), 0 10px 18px rgba(35, 32, 42, 0.16);
 }
 
@@ -6923,8 +6961,8 @@ body {
 }
 
 .topbar .manager-chip {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: transparent;
+  background: transparent;
 }
 
 .topbar .team-picker select {
@@ -7194,8 +7232,13 @@ body {
 }
 
 .clubhouse-dashboard.is-mail-first {
-  grid-template-columns: minmax(260px, 0.42fr) minmax(560px, 1fr);
+  grid-template-columns: minmax(250px, 0.32fr) minmax(700px, 1fr);
+  gap: 16px;
   align-items: start;
+}
+
+.clubhouse-dashboard.is-mail-first.is-mail-only {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .clubhouse-main-rail,
@@ -7399,11 +7442,15 @@ body {
 }
 
 .clubhouse-dashboard.is-mail-first .clubhouse-side-rail .news-inbox-panel {
-  min-height: 620px;
+  min-height: 680px;
 }
 
 .clubhouse-dashboard.is-mail-first .clubhouse-side-rail .mailbox-grid {
-  grid-template-columns: minmax(230px, 0.82fr) minmax(0, 1.18fr);
+  grid-template-columns: minmax(300px, 0.78fr) minmax(390px, 1.22fr);
+}
+
+.clubhouse-dashboard.is-mail-first.is-mail-only .clubhouse-side-rail .mailbox-grid {
+  grid-template-columns: minmax(360px, 0.62fr) minmax(0, 1.38fr);
 }
 
 .simulation-progress-panel {
@@ -7412,8 +7459,12 @@ body {
   gap: 10px 16px;
   padding: 14px 16px;
   border-left-width: 0;
-  background: #fffefa;
-  box-shadow: 0 12px 26px rgba(35, 38, 38, 0.08);
+  border-color: rgba(190, 174, 232, 0.22);
+  background:
+    linear-gradient(135deg, rgba(12, 17, 31, 0.98), rgba(22, 24, 42, 0.98) 58%, color-mix(in srgb, var(--team-color, #8a38ff), #10172a 80%)),
+    #0c111f;
+  color: #f5efff;
+  box-shadow: 0 18px 44px rgba(2, 4, 10, 0.3);
 }
 
 .simulation-progress-head {
@@ -7423,7 +7474,7 @@ body {
 
 .simulation-progress-head strong {
   justify-self: start;
-  color: color-mix(in srgb, var(--team-color, #2f343a), #2f343a 44%);
+  color: #ffffff;
   font-size: 1.22rem;
 }
 
@@ -7446,9 +7497,10 @@ body {
   min-height: 34px;
   padding: 0 9px;
   border: 0;
-  border-left: 1px solid #e5ded5;
+  border-left: 1px solid rgba(190, 174, 232, 0.16);
   border-radius: 0;
   background: transparent;
+  color: rgba(245, 239, 255, 0.72);
 }
 
 .simulation-progress-steps li:first-child {
@@ -7459,7 +7511,8 @@ body {
   width: 22px;
   height: 22px;
   flex: 0 0 22px;
-  background: #eee9df;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(245, 239, 255, 0.78);
 }
 
 .simulation-progress-steps li.is-active,
@@ -7473,7 +7526,7 @@ body {
 }
 
 .simulation-progress-steps b {
-  color: #565c58;
+  color: rgba(245, 239, 255, 0.76);
   font-size: 0.76rem;
   line-height: 1.22;
 }
@@ -7485,8 +7538,9 @@ body {
 
 .simulation-change-list li {
   padding: 8px 9px;
-  border-color: #e5ded5;
-  background: #f8f9f6;
+  border-color: rgba(190, 174, 232, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(245, 239, 255, 0.82);
   font-size: 0.76rem;
 }
 
@@ -8132,6 +8186,7 @@ body {
 .interview-question strong {
   color: #242a2e;
   font-size: 0.91rem;
+  font-weight: 950;
   line-height: 1.24;
 }
 
@@ -8611,9 +8666,10 @@ body {
 }
 
 .manager-chip {
-  border-color: rgba(255, 255, 255, 0.12);
-  border-left: 3px solid color-mix(in srgb, var(--team-color, #b54764), #ffffff 10%);
-  background: rgba(255, 255, 255, 0.065);
+  border: 0;
+  border-left: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .manager-chip strong {
@@ -8639,8 +8695,7 @@ body {
 .draft-panel,
 .secondary-draft-panel,
 .player-detail-panel,
-.operations-bar,
-.simulation-progress-panel {
+.operations-bar {
   border-color: rgba(214, 205, 188, 0.82);
   background:
     linear-gradient(180deg, rgba(255, 253, 247, 0.98), rgba(240, 233, 220, 0.96)),
@@ -8951,6 +9006,10 @@ input {
 }
 
 .start-diamond {
+  width: 112px;
+  justify-self: center;
+  margin-top: 0;
+  margin-bottom: 12px;
   border-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 14%);
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.025));
@@ -9124,10 +9183,11 @@ input {
 .appointment-ceremony-banner,
 .appointment-media-strip span,
 .interview-question label {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  background:
+    linear-gradient(135deg, rgba(23, 28, 44, 0.98), rgba(32, 37, 58, 0.96));
   color: #fff8ec;
-  box-shadow: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 .appointment-press-badge span,
@@ -9136,10 +9196,23 @@ input {
   color: #fff;
 }
 
-.appointment-club-lockup small,
-.appointment-title-block .mini-label,
+.appointment-ceremony-banner {
+  background:
+    linear-gradient(135deg, rgba(24, 29, 48, 0.98), rgba(34, 38, 58, 0.96));
+}
+
 .interview-question legend span {
-  color: color-mix(in srgb, var(--team-color, #c6a268), #ffffff 56%);
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  background: #fff8ec;
+  color: #2b1722;
+  font-weight: 950;
+  box-shadow: 0 8px 18px rgba(2, 4, 10, 0.2);
+}
+
+.appointment-club-lockup small,
+.appointment-title-block .mini-label {
+  color: #ff8eb5;
+  font-weight: 950;
 }
 
 .appointment-club-lockup strong,
@@ -9152,19 +9225,33 @@ input {
 
 .appointment-title-block p,
 .appointment-ceremony-banner p,
-.appointment-media-strip small,
+.appointment-media-strip small {
+  color: #dfe7f1;
+}
+
 .interview-question small {
-  color: rgba(245, 239, 255, 0.68);
+  color: #e7eef8;
 }
 
 .interview-question {
-  background: rgba(255, 255, 255, 0.035);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.interview-question label:hover {
+  border-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 22%);
+  background:
+    linear-gradient(135deg, rgba(29, 35, 56, 0.99), rgba(40, 45, 67, 0.98));
 }
 
 .interview-question label:has(input:checked) {
   border-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 16%);
   border-left-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 6%);
-  background: color-mix(in srgb, var(--team-color, #b54764), rgba(255, 255, 255, 0.1) 82%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--team-color, #b54764), #331827 42%), rgba(43, 29, 48, 0.98));
+  box-shadow:
+    inset 4px 0 0 color-mix(in srgb, var(--team-color, #b54764), #ffffff 18%),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .interview-question label:has(input:checked) strong,
@@ -9598,6 +9685,13 @@ input {
   color: var(--mail-ink);
 }
 
+.news-inbox-panel .mini-label,
+.simulation-progress-panel .mini-label {
+  color: color-mix(in srgb, var(--team-color, #ff4f91), #ff6fa6 42%);
+  font-weight: 980;
+  text-shadow: 0 0 18px color-mix(in srgb, var(--team-color, #ff4f91), transparent 68%);
+}
+
 .news-inbox-panel .news-inbox-head p,
 .news-inbox-panel .mailbox-body p,
 .news-inbox-panel .mailbox-body small {
@@ -9630,7 +9724,7 @@ input {
 }
 
 .news-inbox-panel .mailbox-filter-row {
-  padding: 0 16px 14px;
+  padding: 0 20px 16px;
   border-bottom: 1px solid var(--mail-line);
 }
 
@@ -9661,25 +9755,32 @@ input {
 }
 
 .news-inbox-panel .mailbox-grid {
-  grid-template-columns: minmax(300px, 0.86fr) minmax(0, 1.44fr);
-  min-height: 620px;
+  grid-template-columns: minmax(320px, 0.84fr) minmax(0, 1.36fr);
+  min-height: 680px;
   border-top: 0;
 }
 
 .news-inbox-panel .mailbox-list {
-  max-height: 720px;
+  max-height: 780px;
   border-right: 1px solid var(--mail-line);
   background: rgba(6, 10, 20, 0.66);
 }
 
 .news-inbox-panel .mail-list-item {
   display: grid;
-  gap: 7px;
-  padding: 14px 16px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  gap: 9px;
+  min-height: 104px;
+  padding: 16px 18px;
+  border: 0;
   border-bottom: 1px solid var(--mail-line);
+  border-radius: 0;
   background: transparent;
   color: var(--mail-ink);
   text-align: left;
+  align-items: start;
+  overflow: hidden;
 }
 
 .news-inbox-panel .mail-list-item:hover,
@@ -9693,21 +9794,44 @@ input {
 }
 
 .news-inbox-panel .mail-list-item strong {
+  display: block;
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
   color: rgba(255, 255, 255, 0.94);
-  line-height: 1.35;
+  font-size: 0.98rem;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
 }
 
 .news-inbox-panel .mail-list-item small {
+  display: block;
+  grid-column: 1;
+  grid-row: 3;
+  min-width: 0;
   color: rgba(245, 239, 255, 0.58);
+  line-height: 1.35;
 }
 
 .news-inbox-panel .mail-list-meta {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
+  display: flex;
+  grid-column: 1;
+  grid-row: 1;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   align-items: center;
+  align-self: start;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: rgba(245, 239, 255, 0.7);
   font-size: 0.78rem;
+  line-height: 1.25;
 }
 
 .news-inbox-panel .mail-list-meta em,
@@ -9718,32 +9842,34 @@ input {
   font-style: normal;
 }
 
-.mail-source-icon,
-.news-inbox-panel .unread-dot {
-  width: 18px;
-  height: 18px;
-  display: inline-grid;
-  place-items: center;
+.news-inbox-panel .mail-list-meta em {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.news-inbox-panel .mail-list-meta time {
   flex: 0 0 auto;
+}
+
+.mail-read-marker {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
   border-radius: 50%;
+  background: rgba(245, 239, 255, 0.26);
 }
 
-.mail-source-icon {
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  background: rgba(255, 255, 255, 0.075);
-  color: rgba(245, 239, 255, 0.76);
-  font-size: 0.68rem;
-  font-weight: 900;
-}
-
-.news-inbox-panel .unread-dot {
-  background: color-mix(in srgb, var(--team-color, #9d4dff), #ffffff 20%);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--team-color, #9d4dff), transparent 72%);
+.mail-read-marker.is-unread {
+  width: 11px;
+  height: 11px;
+  flex-basis: 11px;
+  background: color-mix(in srgb, var(--team-color, #ff4f91), #ffffff 18%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--team-color, #ff4f91), transparent 74%);
 }
 
 .news-inbox-panel .mailbox-body {
-  min-height: 620px;
-  padding: 24px;
+  min-height: 680px;
+  padding: clamp(22px, 2.2vw, 34px);
   border-left: 0;
   background:
     linear-gradient(180deg, rgba(24, 29, 48, 0.96), rgba(13, 17, 31, 0.98)),
@@ -9753,7 +9879,14 @@ input {
 
 .news-inbox-panel .mailbox-body h3 {
   color: #ffffff;
-  font-size: clamp(1.35rem, 2.2vw, 2rem);
+  font-size: clamp(1.28rem, 1.9vw, 1.8rem);
+  line-height: 1.18;
+  word-break: keep-all;
+}
+
+.news-inbox-panel .mailbox-body p {
+  font-size: 0.98rem;
+  line-height: 1.72;
 }
 
 .mail-detail-meta {
@@ -9774,8 +9907,8 @@ input {
 
 .mailbox-body-content {
   display: grid;
-  gap: 11px;
-  max-width: 72ch;
+  gap: 13px;
+  max-width: 76ch;
 }
 
 .news-inbox-panel .mail-link-row .button-soft,
@@ -9807,6 +9940,12 @@ input {
     grid-template-columns: 1fr;
   }
 
+  .news-inbox-panel .mailbox-grid,
+  .clubhouse-dashboard.is-mail-first .clubhouse-side-rail .mailbox-grid,
+  .clubhouse-dashboard.is-mail-first.is-mail-only .clubhouse-side-rail .mailbox-grid {
+    grid-template-columns: 1fr;
+  }
+
   .mailbox-list {
     max-height: 360px;
     border-right: 0;
@@ -9830,5 +9969,445 @@ input {
 
   .mailbox-filter-row {
     padding: 0 12px 10px;
+  }
+}
+
+/* Front Office Unified Dark Surface */
+.app-shell {
+  --panel: #151b24;
+  --panel-tint: #1e2531;
+  --ink: #fff8ec;
+  --muted: rgba(245, 239, 255, 0.74);
+  --line: rgba(190, 174, 232, 0.2);
+  --line-cool: rgba(185, 217, 247, 0.18);
+}
+
+.app-shell .team-picker select,
+.app-shell input,
+.app-shell select,
+.app-shell textarea {
+  border-color: rgba(255, 255, 255, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.045)),
+    #171c26;
+  color: #fff8ec;
+}
+
+.app-shell select option {
+  background: #151b24;
+  color: #fff8ec;
+}
+
+.app-shell .button-soft,
+.app-shell .mini-action,
+.app-shell .game-plan-chip {
+  border-color: rgba(255, 255, 255, 0.16);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.095), rgba(255, 255, 255, 0.045)),
+    #1a202a;
+  color: #fff8ec;
+}
+
+.app-shell :is(
+  .panel,
+  .metric-card,
+  .next-game-panel,
+  .narrative-memory-panel,
+  .lineup-manager-panel,
+  .front-office-panel,
+  .command-panel,
+  .trade-ledger-panel,
+  .free-agency-panel,
+  .postseason-panel,
+  .draft-panel,
+  .secondary-draft-panel,
+  .player-detail-panel,
+  .operations-bar,
+  .schedule-calendar-panel,
+  .stats-panel,
+  .team-panel
+) {
+  border-color: rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(135deg, rgba(18, 23, 32, 0.99), rgba(27, 31, 43, 0.98) 58%, color-mix(in srgb, var(--team-color, #b54764), #141923 86%)),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 38px);
+  color: #fff8ec;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+}
+
+.app-shell :is(.panel-head, .lineup-section-head, .schedule-calendar-head, .player-detail-card-head) {
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+
+.app-shell :is(
+  .panel-head h2,
+  .lineup-section-head h3,
+  .schedule-calendar-head h2,
+  .player-detail-card-head h3,
+  .next-game-panel h3,
+  .lineup-manager-panel h2,
+  .player-detail-identity h2,
+  .front-office-panel h2,
+  .command-panel h2,
+  .trade-ledger-panel h2,
+  .free-agency-panel h2,
+  .postseason-panel h2,
+  .draft-panel h2,
+  .secondary-draft-panel h2
+) {
+  color: #fff8ec;
+}
+
+.app-shell :is(
+  .panel p,
+  .panel small,
+  .headline p,
+  .next-game-panel p,
+  .next-game-panel small,
+  .schedule-calendar-panel small,
+  .player-detail-panel small,
+  .player-detail-panel dd,
+  .front-office-panel small,
+  .command-panel small,
+  .trade-ledger-panel small,
+  .free-agency-panel small,
+  .postseason-panel small,
+  .draft-panel small,
+  .secondary-draft-panel small
+) {
+  color: rgba(245, 239, 255, 0.72);
+}
+
+.app-shell :is(
+  .player-list li,
+  .front-office-list li,
+  .game-card,
+  .news-item,
+  .lineup-slot,
+  .pitching-slot,
+  .lineup-balance-card,
+  .lineup-risk-card,
+  .proposal-card,
+  .fa-card,
+  .foreign-card,
+  .draft-card,
+  .protection-card,
+  .series-card,
+  .schedule-day,
+  .schedule-result,
+  .lineup-command-card,
+  .player-detail-facts dd,
+  .player-detail-card,
+  .player-attribute,
+  .player-stat-grid article,
+  .contract-row,
+  .trade-asset-pill,
+  .market-asset-pill,
+  .free-agency-summary span,
+  .trade-command-actions,
+  .decision-choice,
+  .mail-decision-box
+) {
+  border-color: rgba(255, 255, 255, 0.13);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.04)),
+    #19202a;
+  color: #fff8ec;
+}
+
+.app-shell :is(
+  .player-list li strong,
+  .front-office-list li strong,
+  .game-card strong,
+  .news-item strong,
+  .lineup-slot strong,
+  .pitching-slot strong,
+  .lineup-balance-card strong,
+  .lineup-risk-card strong,
+  .proposal-card strong,
+  .fa-card strong,
+  .foreign-card strong,
+  .draft-card strong,
+  .protection-card strong,
+  .series-card strong,
+  .schedule-day strong,
+  .player-detail-facts strong,
+  .player-detail-card strong,
+  .player-attribute strong,
+  .player-stat-grid strong
+) {
+  color: #fff8ec;
+}
+
+.app-shell :is(
+  .player-list li small,
+  .front-office-list li small,
+  .game-card small,
+  .news-item p,
+  .news-item small,
+  .lineup-slot small,
+  .pitching-slot small,
+  .lineup-balance-card small,
+  .lineup-risk-card small,
+  .proposal-card p,
+  .proposal-card small,
+  .fa-card p,
+  .fa-card small,
+  .foreign-card p,
+  .foreign-card small,
+  .draft-card small,
+  .protection-card small,
+  .series-card small,
+  .schedule-day small,
+  .player-detail-facts dd,
+  .player-detail-card small,
+  .player-attribute span,
+  .player-stat-grid span
+) {
+  color: rgba(245, 239, 255, 0.7);
+}
+
+.app-shell :is(.schedule-month-chip, .schedule-team-chip, .schedule-result, .pill, .tag, .badge) {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff8ec;
+}
+
+.app-shell .mini-label,
+.app-shell .eyebrow {
+  color: #ff8eb5;
+  font-weight: 950;
+}
+
+.app-shell .topbar .eyebrow {
+  color: #ff8eb5;
+}
+
+.app-shell .standings-table th,
+.app-shell .standings-table td {
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+  color: rgba(245, 239, 255, 0.78);
+}
+
+.app-shell .standings-table .team-cell strong {
+  color: #fff8ec;
+}
+
+.app-shell .news-inbox-panel.mailbox-panel {
+  color: var(--mail-ink);
+}
+
+.app-shell :is(
+  .lineup-order-board,
+  .lineup-command-board,
+  .lineup-bench-board,
+  .lineup-pitching-board,
+  .player-detail-facts div,
+  .player-attribute-group,
+  .player-overview-card,
+  .player-personality-card,
+  .player-bio-card,
+  .player-stat-card,
+  .next-game-team
+) {
+  border-color: rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035)),
+    #1a202a;
+  color: #fff8ec;
+}
+
+.app-shell :is(.lineup-order-board, .lineup-command-board, .lineup-bench-board, .lineup-pitching-board) {
+  padding: 12px;
+}
+
+.app-shell .next-game-team.is-user {
+  border-color: color-mix(in srgb, var(--team-color, #b54764), #ffffff 22%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--team-color, #b54764), #171c26 76%), rgba(255, 255, 255, 0.055)),
+    #1a202a;
+}
+
+.app-shell .next-game-team span,
+.app-shell .next-game-matchup > b {
+  color: #fff8ec;
+}
+
+.app-shell .lineup-order {
+  background: color-mix(in srgb, var(--team-color, #b54764), #fff8ec 78%);
+  color: color-mix(in srgb, var(--team-color, #b54764), #181d24 32%);
+}
+
+.app-shell .lineup-player-picker > span,
+.app-shell .lineup-mini-bar b,
+.app-shell .lineup-section-head small,
+.app-shell .lineup-balance-card span,
+.app-shell .lineup-risk-card span,
+.app-shell .player-detail-facts dt,
+.app-shell .player-attribute-group h3 {
+  color: rgba(245, 239, 255, 0.72);
+}
+
+.app-shell .player-detail-facts dd,
+.app-shell .player-attribute strong {
+  color: #fff8ec;
+}
+
+.app-shell .player-attribute span {
+  color: rgba(245, 239, 255, 0.76);
+}
+
+.app-shell .player-attribute i,
+.app-shell .lineup-mini-bar i {
+  background:
+    linear-gradient(90deg, currentColor var(--meter), rgba(255, 255, 255, 0.12) var(--meter));
+}
+
+.app-shell .player-rating-badge,
+.app-shell .player-detail-identity .pill,
+.app-shell .player-position-badge {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff8ec;
+}
+
+.app-shell :is(
+  .personality-trait-grid span,
+  .trade-command-card,
+  .trade-ledger-item,
+  .trade-ledger-badge,
+  .trade-asset-pill,
+  .proposal-meta div,
+  .trade-proposal-package,
+  .market-ledger-item,
+  .market-asset-pill,
+  .foreign-scout-card,
+  .fa-offer-item
+) {
+  border-color: rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04)),
+    #1b222c;
+  color: #fff8ec;
+}
+
+.app-shell .personality-trait-grid :is(b, em),
+.app-shell .player-personality-summary small,
+.app-shell :is(.trade-ledger-item small, .trade-command-actions small, .trade-result-note, .market-ledger-item small, .fa-offer-item small, .proposal-meta dt) {
+  color: rgba(245, 239, 255, 0.72);
+}
+
+.app-shell .personality-trait-grid i {
+  background: color-mix(in srgb, var(--team-color, #b54764), #ffffff 18%);
+}
+
+.app-shell .player-personality-summary strong,
+.app-shell :is(.trade-ledger-item strong, .trade-command-card strong, .market-ledger-item strong, .fa-offer-item strong, .proposal-meta dd) {
+  color: #fff8ec;
+}
+
+/* Text QA pass: keep Korean words intact and add room in dense FM-style panels. */
+.start-shell :is(h1, h2, h3, p, strong, small, span, button, label),
+.app-shell :is(h1, h2, h3, p, strong, small, span, button, label, li, td, th, dd, dt) {
+  overflow-wrap: break-word;
+  word-break: keep-all;
+}
+
+.start-copy h1 {
+  line-height: 0.96;
+}
+
+.start-hero.is-team-select .start-copy h1,
+.start-hero.is-manager-step .start-copy h1,
+.start-hero.is-appointment-step .start-copy h1 {
+  line-height: 1.1;
+}
+
+.start-copy p,
+.start-team-card :is(strong, small),
+.start-club-plate :is(strong, small),
+.appointment-title-block :is(h2, p),
+.appointment-ceremony-banner :is(strong, p),
+.appointment-option :is(strong, small),
+.manager-style-card :is(strong, small) {
+  line-height: 1.38;
+}
+
+.nav-item {
+  gap: 4px;
+  line-height: 1.32;
+}
+
+.nav-item span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.nav-item small {
+  line-height: 1.32;
+}
+
+.nav-badge {
+  margin-left: 2px;
+}
+
+.simulation-progress-steps li,
+.simulation-change-list li {
+  padding: 9px 10px;
+  line-height: 1.35;
+}
+
+.simulation-progress-steps b,
+.simulation-progress-note,
+.next-game-copy p,
+.next-game-actions small,
+.trade-command-actions small,
+.trade-result-note,
+.market-ledger-item :is(strong, small),
+.market-result-note,
+.fa-offer-item :is(strong, small) {
+  line-height: 1.42;
+}
+
+.news-inbox-panel .mailbox-list {
+  scroll-padding-block: 18px;
+}
+
+.news-inbox-panel .mail-list-item {
+  min-height: 112px;
+  padding: 17px 20px;
+}
+
+.news-inbox-panel .mail-list-item strong {
+  line-height: 1.46;
+}
+
+.news-inbox-panel .mail-list-meta {
+  gap: 7px 10px;
+  line-height: 1.34;
+}
+
+.news-inbox-panel .mail-list-meta em {
+  flex-basis: 128px;
+}
+
+.mailbox-body :is(h3, p),
+.mail-decision-box,
+.mailbox-body-content {
+  word-break: keep-all;
+}
+
+@media (max-width: 700px) {
+  .start-copy h1,
+  .start-hero.is-team-select .start-copy h1,
+  .start-hero.is-manager-step .start-copy h1,
+  .start-hero.is-appointment-step .start-copy h1 {
+    line-height: 1.12;
+  }
+
+  .nav-item {
+    padding-block: 11px;
   }
 }

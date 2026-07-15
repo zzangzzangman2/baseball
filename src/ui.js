@@ -93,6 +93,7 @@ const MANAGER_STYLES = [
   { value: "player", label: "선수단 신뢰", description: "컨디션과 분위기를 살핀다" },
   { value: "win-now", label: "승부수", description: "즉시 전력과 과감한 결정을 선호한다" }
 ];
+const DEFAULT_MANAGER_NAME = "박민준";
 
 const INAUGURAL_QUESTIONS = [
   {
@@ -154,6 +155,24 @@ const UI_MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const GAMECAST_PIXEL_W = 400;
 const GAMECAST_PIXEL_H = 360;
+const GAMECAST_FIELDER_MOVE_ZONES = {
+  P: { x: 3, yTop: 2, yBottom: 3 },
+  C: { x: 4, yTop: 3, yBottom: 2 },
+  "1B": { x: 16, yTop: 13, yBottom: 14 },
+  "2B": { x: 17, yTop: 14, yBottom: 13 },
+  "3B": { x: 16, yTop: 13, yBottom: 14 },
+  SS: { x: 17, yTop: 14, yBottom: 13 },
+  LF: { x: 26, yTop: 18, yBottom: 20 },
+  CF: { x: 31, yTop: 20, yBottom: 21 },
+  RF: { x: 26, yTop: 18, yBottom: 20 }
+};
+const GAMECAST_ABILITY_TIERS = [
+  { key: "S", min: 140, color: "#ffd166" },
+  { key: "A", min: 132, color: "#c084fc" },
+  { key: "B", min: 125, color: "#38bdf8" },
+  { key: "C", min: 118, color: "#e2e8f0" },
+  { key: "D", min: 0, color: "#64748b" }
+];
 const GAMECAST_CANVAS_ID = "gamecast-pixel-canvas";
 const GAMECAST_PLAYBACK_COUNT = 8;
 const GAMECAST_WATCH_PA_MS = 2600;
@@ -291,8 +310,8 @@ function render(root, state) {
           </div>
           <div class="topbar-controls topbar-identity">
             <label class="team-picker">
-              <span>구단 선택</span>
-              <select data-action="select-team" ${state.teams.length ? "" : "disabled"}>
+              <span>구단 고정</span>
+              <select data-action="select-team" disabled aria-disabled="true">
                 ${renderTeamOptions(state)}
               </select>
             </label>
@@ -331,11 +350,14 @@ function render(root, state) {
           gmDesk
         })}
       </section>
+      ${renderBlockingDecisionOverlay(state)}
     </main>
   `;
 
   if (!isAdvancing) initGamecastPixelScreen(root, state);
   bindActions(root, state);
+  bindGlobalShortcuts(root, state);
+  syncMailboxUnreadStart(root, state);
 }
 
 function cleanupActiveGamecastPixelScreen() {
@@ -344,13 +366,74 @@ function cleanupActiveGamecastPixelScreen() {
   cleanupGamecastPixelScreen = null;
 }
 
+function bindGlobalShortcuts(root, state) {
+  root.__kboShortcutState = state;
+  if (root.__kboShortcutBound) return;
+  const onKeyDown = (event) => {
+    const activeState = root.__kboShortcutState;
+    if (!shouldHandleGlobalSpace(event, root, activeState)) return;
+    const unreadMailButton = getNextUnreadMailButton(root, activeState);
+    if (unreadMailButton) {
+      event.preventDefault();
+      unreadMailButton.dataset.autoReadFromSpace = "true";
+      unreadMailButton.click();
+      return;
+    }
+    const continueButton = root.querySelector("[data-action='continue']:not(:disabled)");
+    if (!continueButton) return;
+    event.preventDefault();
+    continueButton.click();
+  };
+  document.addEventListener("keydown", onKeyDown);
+  root.__kboShortcutBound = true;
+  root.__kboShortcutCleanup = () => document.removeEventListener("keydown", onKeyDown);
+}
+
+function shouldHandleGlobalSpace(event, root, state) {
+  if (event.code !== "Space" || event.repeat) return false;
+  if ((state?.ui?.screen ?? "game") !== "game") return false;
+  if (state?.ui?.isAdvancing) return false;
+  const target = event.target;
+  if (target?.closest?.("input, select, textarea, [contenteditable='true'], [role='dialog'], [data-gamecast-modal]")) {
+    return false;
+  }
+  if (target?.closest?.("button, a") && !target.closest("[data-main-news-inbox]")) return false;
+  if (root.querySelector("[data-gamecast-modal]") || root.querySelector("[data-gamecast-screen]")) return false;
+  return Boolean(root.querySelector("[data-action='continue']:not(:disabled)"));
+}
+
+function getNextUnreadMailButton(root, state) {
+  const activeTab = normalizeActiveTab(state?.ui?.activeTab);
+  if (activeTab !== "clubhouse" && activeTab !== "news") return null;
+  const unreadButtons = [...root.querySelectorAll("[data-main-news-inbox] [data-action='open-mail'].is-unread")];
+  return unreadButtons.at(-1) ?? null;
+}
+
+function syncMailboxUnreadStart(root, state) {
+  const activeTab = normalizeActiveTab(state?.ui?.activeTab);
+  if (activeTab !== "clubhouse" && activeTab !== "news") return;
+  const list = root.querySelector("[data-main-news-inbox] .mailbox-list");
+  if (!list) return;
+  const unreadButtons = [...list.querySelectorAll("[data-action='open-mail'].is-unread")];
+  const selectedTarget = list.querySelector("[data-action='open-mail'].is-selected");
+  const target = state?.ui?.selectedMailManual && selectedTarget
+    ? selectedTarget
+    : unreadButtons.at(-1) ?? selectedTarget;
+  if (!target) return;
+  requestAnimationFrame(() => {
+    const listRect = list.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    list.scrollTop = Math.max(0, list.scrollTop + targetRect.bottom - listRect.bottom + 10);
+  });
+}
+
 function renderSidebarNav(activeTab, state) {
   const mailbox = getMailboxSummary(state);
   return `
     <nav class="nav-list" aria-label="Dashboard sections">
       ${DASHBOARD_TABS.map((tab) => `
         <button class="nav-item ${tab.id === activeTab ? "is-active" : ""}" data-action="switch-tab" data-tab-id="${escapeAttribute(tab.id)}" type="button">
-          <span>${escapeHtml(tab.label)}${tab.id === "news" && mailbox.unread > 0 ? ` <b class="nav-badge">${formatNumber(mailbox.unread)}</b>` : ""}</span>
+          <span>${escapeHtml(tab.label)}${tab.id === "news" && mailbox.unread > 0 ? ` <b class="nav-badge">${mailbox.unread > 99 ? "99+" : formatNumber(mailbox.unread)}</b>` : ""}</span>
           <small>${escapeHtml(tab.detail)}</small>
         </button>
       `).join("")}
@@ -462,10 +545,7 @@ function renderActiveTabContent(activeTab, context) {
   }
 
   return renderTabSurface("clubhouse", "클럽하우스", `
-    <section class="clubhouse-dashboard is-mail-first" aria-label="클럽하우스 메인 브리핑">
-      <div class="clubhouse-main-rail">
-        ${renderTodayDeskPanel(state, selectedTeam, selectedRank, nextGame)}
-      </div>
+    <section class="clubhouse-dashboard is-mail-first is-mail-only" aria-label="클럽하우스 메인 브리핑">
       <aside class="clubhouse-side-rail" aria-label="받은편지함">
         ${renderNewsInboxPanel(state, selectedTeam, manager)}
       </aside>
@@ -1537,9 +1617,12 @@ function renderNewsInboxPanel(state, selectedTeam, manager) {
   const allItems = buildNewsInboxItems(state, selectedTeam, manager);
   const fallbackItems = filterNewsInboxItems(allItems, filter);
   const selectedId = state?.ui?.selectedMailId;
-  const selected = fallbackItems.find((item) => String(item.id) === String(selectedId)) ??
+  const selectedManually = state?.ui?.selectedMailManual === true;
+  const unreadItems = fallbackItems.filter((item) => !item.read);
+  const selectedById = fallbackItems.find((item) => String(item.id) === String(selectedId));
+  const selected = (unreadItems.length > 0 && selectedById?.read && !selectedManually ? null : selectedById) ??
+    unreadItems.at(-1) ??
     fallbackItems.find((item) => item.decision?.status === "open") ??
-    fallbackItems.find((item) => !item.read) ??
     fallbackItems[0] ??
     buildFallbackAssistantBriefing(state, selectedTeam, manager);
   const counts = buildNewsInboxCounts(allItems);
@@ -1569,7 +1652,7 @@ function renderNewsInboxPanel(state, selectedTeam, manager) {
       </div>
       <div class="mailbox-grid">
         <div class="mailbox-list" aria-label="통합 소식 목록">
-          ${fallbackItems.slice(0, 42).map((item) => renderMailListItem(item, selected)).join("")}
+          ${fallbackItems.map((item) => renderMailListItem(item, selected)).join("")}
         </div>
         ${renderMailBody(selected)}
       </div>
@@ -1592,15 +1675,36 @@ function buildNewsInboxItems(state, selectedTeam, manager) {
   ].map((item, index) => normalizeInboxFeedItem(item, state, "briefing", index));
   const merged = [...mailboxItems, ...logItems, ...newsItems, ...eventItems, ...fallbacks];
   const seen = new Set();
-  return merged
+  const uniqueItems = merged
     .filter((item) => {
-      const key = `${item.id ?? ""}|${item.date ?? ""}|${item.category ?? ""}|${item.headline ?? item.text ?? ""}`;
+      const key = inboxContentDedupeKey(item);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
-    .sort(compareInboxFeedItems)
-    .slice(0, 80);
+    .sort(compareInboxFeedItems);
+  return limitNewsInboxItems(uniqueItems);
+}
+
+function limitNewsInboxItems(items) {
+  const limit = 80;
+  if (items.length <= limit) return items;
+  const unreadMail = items.filter((item) => item.feedSource === "mail" && !item.read);
+  if (unreadMail.length >= limit) return unreadMail.slice(-limit);
+  const otherItems = items.filter((item) => !(item.feedSource === "mail" && !item.read));
+  return [...otherItems.slice(0, limit - unreadMail.length), ...unreadMail];
+}
+
+function inboxContentDedupeKey(item) {
+  const source = normalizeInboxDedupeText(item.from?.role ?? item.source ?? item.feedSource ?? "");
+  const headline = normalizeInboxDedupeText(item.headline ?? item.title ?? item.text ?? "");
+  const decision = normalizeInboxDedupeText(item.decision?.id ?? "");
+  if (decision) return `decision|${decision}`;
+  return `${source}|${headline}`;
+}
+
+function normalizeInboxDedupeText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function normalizeInboxFeedItem(item, state, feedSource, index = 0) {
@@ -1679,11 +1783,22 @@ function buildNewsInboxCounts(items) {
 }
 
 function compareInboxFeedItems(a, b) {
-  const dateDiff = String(b.date ?? "").localeCompare(String(a.date ?? ""));
-  if (dateDiff !== 0) return dateDiff;
-  const priority = (item) => item.decision?.status === "open" ? 0 : item.feedSource === "mail" && !item.read ? 1 : item.feedSource === "mail" ? 2 : item.feedSource === "log" ? 3 : 4;
+  const priority = (item) => {
+    if (item.decision?.status === "open") return 0;
+    if (item.feedSource === "mail" && item.read) return 1;
+    if (item.feedSource === "log") return 2;
+    if (item.feedSource === "news" || item.feedSource === "event" || item.feedSource === "briefing") return 3;
+    if (item.feedSource === "mail" && !item.read) return 4;
+    return 3;
+  };
   const priorityDiff = priority(a) - priority(b);
   if (priorityDiff !== 0) return priorityDiff;
+  const aUnread = a.feedSource === "mail" && !a.read;
+  const bUnread = b.feedSource === "mail" && !b.read;
+  const dateDiff = aUnread && bUnread
+    ? String(a.date ?? "").localeCompare(String(b.date ?? ""))
+    : String(b.date ?? "").localeCompare(String(a.date ?? ""));
+  if (dateDiff !== 0) return dateDiff;
   return String(a.headline ?? "").localeCompare(String(b.headline ?? ""));
 }
 
@@ -1718,7 +1833,7 @@ function renderMailListItem(item, selected) {
   return `
     <button class="news-inbox-item mail-list-item ${type ? `is-${escapeAttribute(type)}` : ""} is-feed-${escapeAttribute(item.feedSource ?? "mail")} ${isSelected ? "is-selected" : ""} ${!item.read ? "is-unread" : ""}" data-action="open-mail" data-mail-id="${escapeAttribute(item.id)}" data-news-type="${escapeAttribute(item.type)}" type="button">
       <span class="mail-list-meta">
-        ${!item.read ? `<i class="unread-dot" aria-hidden="true"></i>` : `<i class="mail-source-icon" aria-hidden="true">${escapeHtml(feedLabel.slice(0, 1))}</i>`}
+        <i class="mail-read-marker ${!item.read ? "is-unread" : "is-read"}" aria-hidden="true"></i>
         <em>${escapeHtml(item.from?.role ?? item.source ?? item.tag ?? feedLabel)}</em>
         <time>${escapeHtml(item.date ?? "")}</time>
       </span>
@@ -1818,6 +1933,18 @@ function renderPreseasonMediaCard(item) {
       <p>${escapeHtml(item.body || item.text)}</p>
       <small>${escapeHtml(item.date ?? "")}</small>
     </article>
+  `;
+}
+
+function renderBlockingDecisionOverlay(state) {
+  const decision = state?.pendingMailDecision;
+  if (!decision || decision.status !== "open" || !decision.blocking) return "";
+  return `
+    <div class="decision-overlay-backdrop" data-blocking-decision-overlay role="dialog" aria-modal="true" aria-label="진행 전 결재">
+      <div class="decision-overlay-shell">
+        ${renderPendingMailDecisionPanel(state)}
+      </div>
+    </div>
   `;
 }
 
@@ -2055,7 +2182,7 @@ function renderManagerSetupStage(state, selectedTeam) {
       <form class="manager-form" data-manager-form>
         <label>
           <span>감독 이름</span>
-          <input name="managerName" type="text" maxlength="12" autocomplete="name" value="${escapeAttribute(manager.name === "임시 감독" ? "" : manager.name)}" placeholder="예: 김민준" required>
+          <input name="managerName" type="text" maxlength="12" autocomplete="name" value="${escapeAttribute(manager.name === "임시 감독" ? "" : manager.name)}" placeholder="예: ${escapeAttribute(DEFAULT_MANAGER_NAME)}">
         </label>
         <label>
           <span>나이</span>
@@ -2249,7 +2376,7 @@ function bindOnboardingActions(root, state) {
   root.querySelector("[data-manager-form]")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const form = event.currentTarget;
-    const name = String(form.elements.managerName?.value ?? "").trim();
+    const name = String(form.elements.managerName?.value ?? "").trim() || DEFAULT_MANAGER_NAME;
     const age = Number(form.elements.managerAge?.value ?? 0);
     const style = String(form.elements.managerStyle?.value ?? "balanced");
 
@@ -2899,11 +3026,16 @@ function bindActions(root, state) {
   root.querySelectorAll("[data-action='open-mail']").forEach((button) => {
     button.addEventListener("click", () => {
       const mailId = button.dataset.mailId || "";
+      const autoReadFromSpace = button.dataset.autoReadFromSpace === "true";
+      delete button.dataset.autoReadFromSpace;
       if (mailId) markMailRead(state, mailId);
+      const hasUnreadAfter = getMailboxSummary(state).unread > 0;
+      const activeTab = normalizeActiveTab(state.ui?.activeTab);
       state.ui = {
         ...(state.ui ?? {}),
-        selectedMailId: mailId,
-        activeTab: "news"
+        selectedMailId: autoReadFromSpace && hasUnreadAfter ? "" : mailId,
+        selectedMailManual: !(autoReadFromSpace && hasUnreadAfter),
+        activeTab: activeTab === "clubhouse" || activeTab === "news" ? activeTab : "news"
       };
       render(root, state);
       setStatus(root, "항목을 열었습니다.");
@@ -2915,6 +3047,8 @@ function bindActions(root, state) {
       state.ui = {
         ...(state.ui ?? {}),
         mailFilter: normalizeMailFilter(button.dataset.mailFilter),
+        selectedMailId: "",
+        selectedMailManual: false,
         activeTab: "news"
       };
       render(root, state);
@@ -3615,10 +3749,11 @@ async function runContinueAdvance(root, state) {
   const after = captureSimulationSnapshot(state);
   const changes = buildSimulationChangeNotes(before, after, state, result.days || 0);
   state.ui = {
-    ...(state.ui ?? {}),
-    isAdvancing: false,
-    activeTab: "clubhouse",
-    simulationProgress: {
+      ...(state.ui ?? {}),
+      isAdvancing: false,
+      activeTab: "clubhouse",
+      selectedMailId: "",
+      simulationProgress: {
       id: progressId,
       status: "complete",
       kicker: modeLabel,
@@ -3669,10 +3804,11 @@ async function runCalendarAdvance(root, state, days = 1) {
   const after = captureSimulationSnapshot(state);
   const changes = buildSimulationChangeNotes(before, after, state, days);
   state.ui = {
-    ...(state.ui ?? {}),
-    isAdvancing: false,
-    activeTab: "clubhouse",
-    simulationProgress: {
+      ...(state.ui ?? {}),
+      isAdvancing: false,
+      activeTab: "clubhouse",
+      selectedMailId: "",
+      simulationProgress: {
       id: progressId,
       status: "complete",
       kicker: modeLabel,
@@ -5534,6 +5670,7 @@ function buildGamecastSequence(game, state) {
   const tail = mode === "watch" ? chrono : chrono.slice(-GAMECAST_PLAYBACK_COUNT);
   const tailSet = new Set(tail);
   const homeTeam = normalizeGameTeam(game?.homeTeamId, state);
+  const gamecastContext = normalizeGamecastContext(game, state);
   let startAway = 0;
   let startHome = 0;
 
@@ -5561,7 +5698,7 @@ function buildGamecastSequence(game, state) {
     stepMode: Boolean(state.ui?.gamecastStepMode),
     holdsEnabled: state.settings?.gamecastHolds !== false && state.ui?.gamecastHolds !== false,
     soundEnabled: state.ui?.gamecastSound !== false && gamecastSoundEnabled,
-    events: tail.map((event) => normalizeGamecastEvent(event, state))
+    events: tail.map((event) => normalizeGamecastEvent(event, state, gamecastContext))
   };
 }
 
@@ -5697,7 +5834,7 @@ function sortGamecastEvents(events) {
   );
 }
 
-function normalizeGamecastEvent(event, state) {
+function normalizeGamecastEvent(event, state, gamecastContext = null) {
   const side = event?.side === "home" ? "home" : "away";
   const runs = Number(event?.runs ?? 0);
   const outsBefore = Number(event?.outsBefore ?? 0);
@@ -5708,6 +5845,16 @@ function normalizeGamecastEvent(event, state) {
   const inning = Number(event?.inning ?? 1);
   const offenseTeam = normalizeGameTeam(event?.offenseTeamId, state);
   const defenseTeam = normalizeGameTeam(event?.defenseTeamId, state);
+  const hitterId = String(event?.hitterId ?? event?.batterId ?? "");
+  const pitcherId = String(event?.pitcherId ?? "");
+  const defenderId = String(event?.defenderId ?? "");
+  const hitterProfile = resolveGamecastPlayerProfile(gamecastContext, hitterId, event?.hitterName, state, offenseTeam);
+  const pitcherProfile = resolveGamecastPlayerProfile(gamecastContext, pitcherId, event?.pitcherName, state, defenseTeam);
+  const defenderProfile = resolveGamecastPlayerProfile(gamecastContext, defenderId, event?.defenderName, state, defenseTeam);
+  const defenseProfilesByPosition = resolveGamecastDefenseProfiles(gamecastContext, defenseTeam, state);
+  const fieldingPosition = resolveGamecastDefenderFieldingKey(defenderId, defenseProfilesByPosition, event?.fieldingPosition);
+  const baseRunnerProfilesBefore = resolveGamecastBaseRunnerProfiles(event?.baseRunnerIdsBefore, gamecastContext, state, offenseTeam);
+  const baseRunnerProfilesAfter = resolveGamecastBaseRunnerProfiles(event?.baseRunnerIdsAfter, gamecastContext, state, offenseTeam);
   const teamColor = normalizeHexColor(getTeamColor(offenseTeam), side === "home" ? "#c64b74" : "#315288");
   const defenseColor = normalizeHexColor(getTeamColor(defenseTeam), side === "home" ? "#315288" : "#c64b74");
   const teamJerseyColor = side === "home" ? "#fbfbf7" : "#8d8a82";
@@ -5724,11 +5871,27 @@ function normalizeGamecastEvent(event, state) {
     offenseTeamId: event?.offenseTeamId ?? "",
     defenseTeamId: event?.defenseTeamId ?? "",
     offenseLabel: eventTeamLabel(event, state),
+    hitterId,
     hitterName: String(event?.hitterName ?? "타자"),
+    pitcherId,
     pitcherName: String(event?.pitcherName ?? "투수"),
+    defenderId,
     defenderName: String(event?.defenderName ?? ""),
+    hitterProfile,
+    pitcherProfile,
+    defenderProfile,
+    baseRunnerProfilesBefore,
+    baseRunnerProfilesAfter,
+    defenseProfilesByPosition,
+    hitterAbility: gamecastAbilityVisual(hitterProfile),
+    pitcherAbility: gamecastAbilityVisual(pitcherProfile),
+    defenderAbility: gamecastAbilityVisual(defenderProfile),
+    defenseAbilityByPosition: Object.fromEntries(
+      Object.entries(defenseProfilesByPosition).map(([key, profile]) => [key, gamecastAbilityVisual(profile)])
+    ),
     battedBallType: String(event?.battedBallType ?? ""),
-    fieldingPosition: String(event?.fieldingPosition ?? ""),
+    fieldingPosition,
+    recordedFieldingPosition: String(event?.fieldingPosition ?? ""),
     doublePlay: Boolean(event?.doublePlay),
     reachedOnError: Boolean(event?.reachedOnError),
     ballparkName: String(event?.ballparkName ?? ""),
@@ -5746,13 +5909,153 @@ function normalizeGamecastEvent(event, state) {
     teamJerseyColor,
     teamJerseyShadow,
     teamAccentColor: mixHexColors(teamColor, "#23202a", 0.08),
-    hitterUniformNumber: gamecastUniformNumber(event?.hitterName, event?.hitterId ?? event?.batterId),
+    hitterUniformNumber: gamecastProfileUniformNumber(hitterProfile, event?.hitterName, hitterId),
     defenseColor,
     defenseJerseyColor,
     defenseJerseyShadow,
     defenseAccentColor: mixHexColors(defenseColor, "#23202a", 0.08),
     teamTrailColor: mixHexColors(teamColor, "#fffefb", 0.42)
   };
+}
+
+function normalizeGamecastContext(game, state) {
+  const raw = game?.gamecast && typeof game.gamecast === "object" ? game.gamecast : {};
+  const playersById = raw.playersById && typeof raw.playersById === "object" ? { ...raw.playersById } : {};
+  const defenseByTeamId = raw.defenseByTeamId && typeof raw.defenseByTeamId === "object" ? { ...raw.defenseByTeamId } : {};
+  for (const teamId of [game?.awayTeamId, game?.homeTeamId]) {
+    const key = String(teamId ?? "");
+    if (!key || defenseByTeamId[key]) continue;
+    const team = normalizeGameTeam(key, state);
+    defenseByTeamId[key] = buildFallbackGamecastDefenseMap(team);
+  }
+  return { playersById, defenseByTeamId };
+}
+
+function resolveGamecastPlayerProfile(context, playerId, playerName, state, preferredTeam = null) {
+  const id = String(playerId ?? "");
+  const name = String(playerName ?? "").trim();
+  const registry = context?.playersById ?? {};
+  if (id && registry[id]) return registry[id];
+  if (name) {
+    const registered = Object.values(registry).find((profile) => String(profile?.name ?? "") === name);
+    if (registered) return registered;
+  }
+  const teams = [
+    ...(preferredTeam?.roster ? [preferredTeam] : []),
+    ...(state?.teams ?? []).filter((team) => String(team.id) !== String(preferredTeam?.id ?? ""))
+  ];
+  for (const team of teams) {
+    const player = (team?.roster ?? []).find((entry) =>
+      (id && (String(entry?.id ?? "") === id || String(entry?.playerId ?? "") === id)) ||
+      (name && String(entry?.name ?? "") === name)
+    );
+    if (player) return gamecastProfileFromPlayer(player);
+  }
+  return null;
+}
+
+function resolveGamecastDefenseProfiles(context, team, state) {
+  const ids = context?.defenseByTeamId?.[String(team?.id ?? "")] ?? {};
+  const result = {};
+  for (const [key, playerId] of Object.entries(ids)) {
+    const profile = resolveGamecastPlayerProfile(context, playerId, "", state, team);
+    if (profile) result[key] = profile;
+  }
+  return result;
+}
+
+function resolveGamecastDefenderFieldingKey(defenderId, profilesByPosition, recordedPosition) {
+  const id = String(defenderId ?? "");
+  if (id) {
+    const assigned = Object.entries(profilesByPosition ?? {}).find(([, profile]) => String(profile?.id ?? "") === id);
+    if (assigned?.[0]) return normalizeFieldingPosition(assigned[0]);
+  }
+  return normalizeFieldingPosition(recordedPosition);
+}
+
+function resolveGamecastBaseRunnerProfiles(ids, context, state, offenseTeam) {
+  return Array.from({ length: 3 }, (_, index) => {
+    const id = Array.isArray(ids) ? String(ids[index] ?? "") : "";
+    return id ? resolveGamecastPlayerProfile(context, id, "", state, offenseTeam) : null;
+  });
+}
+
+function gamecastProfileFromPlayer(player) {
+  const position = String(player?.position ?? "").toUpperCase();
+  return {
+    id: String(player?.id ?? player?.playerId ?? ""),
+    name: String(player?.name ?? ""),
+    role: String(player?.role ?? ""),
+    position,
+    uniformNumber: String(player?.uniformNumber ?? player?.jerseyNumber ?? player?.number ?? ""),
+    ovr: Math.max(0, Math.min(200, Math.round(Number(player?.ovr ?? player?.currentAbility ?? 0) || 0))),
+    batting: gamecastCompositeProfileAbility(player, ["contactL", "contactR", "powerL", "powerR", "eye", "situational"]),
+    pitching: gamecastCompositeProfileAbility(player, ["stuff", "control", "movement", "stamina", "pitchingIQ"]),
+    fielding: gamecastCompositeProfileAbility(
+      player,
+      position === "C" ? ["defense", "range", "arm", "catching", "catching"] : ["defense", "range", "arm"]
+    ),
+    running: gamecastCompositeProfileAbility(player, ["speed", "baserunning", "stealing"])
+  };
+}
+
+function gamecastCompositeProfileAbility(player, keys) {
+  const values = keys
+    .map((key) => Number(player?.[key]))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (!values.length) return Math.max(0, Math.min(200, Math.round(Number(player?.ovr ?? 0) || 0)));
+  return Math.max(0, Math.min(200, Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10)));
+}
+
+function buildFallbackGamecastDefenseMap(team) {
+  const lineup = team?.roster ? buildLineup(team) : [];
+  const used = new Set();
+  const result = {};
+  const positionOf = (player) => String(player?.position ?? "").toUpperCase();
+  const score = (player) => gamecastCompositeProfileAbility(player, ["defense", "range", "arm", "catching"]);
+  const assign = (key, candidates) => {
+    const player = [...candidates]
+      .sort((a, b) => score(b) - score(a) || Number(b?.ovr ?? 0) - Number(a?.ovr ?? 0))
+      .find((entry) => {
+        const id = String(entry?.id ?? entry?.playerId ?? "");
+        return id && !used.has(id);
+      });
+    if (!player) return;
+    const id = String(player.id ?? player.playerId);
+    result[key] = id;
+    used.add(id);
+  };
+  const exact = (key) => lineup.filter((player) => positionOf(player) === key);
+  assign("C", [...exact("C"), ...lineup.filter((player) => positionOf(player).includes("C"))]);
+  for (const key of ["SS", "2B", "3B", "1B"]) assign(key, exact(key));
+  for (const key of ["CF", "LF", "RF"]) assign(key, exact(key));
+  const infield = lineup.filter((player) => ["IF", "1B", "2B", "3B", "SS"].includes(positionOf(player)));
+  const outfield = lineup.filter((player) => ["OF", "LF", "CF", "RF"].includes(positionOf(player)));
+  for (const key of ["SS", "2B", "3B", "1B"]) if (!result[key]) assign(key, infield);
+  for (const key of ["CF", "LF", "RF"]) if (!result[key]) assign(key, outfield);
+  for (const key of ["C", "SS", "2B", "3B", "1B", "CF", "LF", "RF"]) {
+    if (!result[key]) assign(key, lineup);
+  }
+  return result;
+}
+
+function gamecastAbilityVisual(profile) {
+  if (!profile || !Number.isFinite(Number(profile.ovr))) return null;
+  const score = Math.max(0, Math.min(200, Math.round(Number(profile.ovr))));
+  const tier = GAMECAST_ABILITY_TIERS.find((entry) => score >= entry.min) ?? GAMECAST_ABILITY_TIERS.at(-1);
+  return {
+    grade: tier.key,
+    color: tier.color,
+    score,
+    playerId: String(profile.id ?? ""),
+    playerName: String(profile.name ?? "")
+  };
+}
+
+function gamecastProfileUniformNumber(profile, fallbackName, fallbackId = "") {
+  const raw = String(profile?.uniformNumber ?? "").trim();
+  const value = Number(raw);
+  return raw && Number.isFinite(value) ? Math.abs(Math.floor(value)) % 10 : gamecastUniformNumber(fallbackName, fallbackId);
 }
 
 function gamecastUniformNumber(name, id = "") {
@@ -7673,7 +7976,10 @@ function drawPixelAction(ctx, palette, frame) {
       accentColor: defender.accentColor,
       pose: defender.pose,
       fieldingKey: defender.fieldingKey,
-      uniformNumber: defender.uniformNumber
+      uniformNumber: defender.uniformNumber,
+      abilityGrade: defender.abilityGrade,
+      abilityColor: defender.abilityColor,
+      abilityActive: defender.abilityActive
     });
   }
   for (const runner of frame.runners ?? []) {
@@ -7688,7 +7994,10 @@ function drawPixelAction(ctx, palette, frame) {
       jerseyColor: frame.batter.jerseyColor,
       jerseyShadow: frame.batter.jerseyShadow,
       accentColor: frame.batter.accentColor,
-      uniformNumber: frame.batter.uniformNumber
+      uniformNumber: frame.batter.uniformNumber,
+      abilityGrade: frame.batter.abilityGrade,
+      abilityColor: frame.batter.abilityColor,
+      abilityActive: frame.batter.abilityActive
     });
   }
   for (const runner of frame.runners ?? []) {
@@ -7698,7 +8007,10 @@ function drawPixelAction(ctx, palette, frame) {
       accentColor: runner.accentColor,
       pose: runner.pose,
       uniformNumber: runner.uniformNumber,
-      facing: runner.facing
+      facing: runner.facing,
+      abilityGrade: runner.abilityGrade,
+      abilityColor: runner.abilityColor,
+      abilityActive: runner.abilityActive
     });
   }
   if (frame.ball) drawPixelBall(ctx, palette, frame.ball, frame.ballColor ?? palette.base);
@@ -8148,7 +8460,11 @@ function drawPixelFielders(ctx, palette, frame) {
       jerseyShadow: frame.defenseJerseyShadow ?? palette.uniformSh,
       accentColor: frame.defenseAccentColor ?? defenderColor,
       pose,
-      fieldingKey: fielder.key
+      fieldingKey: fielder.key,
+      uniformNumber: fielder.uniformNumber,
+      abilityGrade: fielder.abilityGrade,
+      abilityColor: fielder.abilityColor,
+      abilityActive: fielder.abilityActive
     });
   }
 }
@@ -8162,9 +8478,9 @@ function gamecastDefensiveAlignment() {
     { key: "RF", position: { x: gamecastX(89), y: gamecastY(47) }, frame: 0 },
     { key: "SS", position: { x: gamecastX(46), y: gamecastY(63) }, frame: 1 },
     { key: "2B", position: { x: gamecastX(73), y: gamecastY(62) }, frame: 0 },
-    { key: "3B", position: { x: gamecastX(29), y: gamecastY(74) }, frame: 2 },
-    { key: "1B", position: { x: gamecastX(91), y: gamecastY(74) }, frame: 2 },
-    { key: "P", position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(1) }, frame: 2 },
+    { key: "3B", position: { x: gamecastX(37), y: gamecastY(70) }, frame: 2 },
+    { key: "1B", position: { x: gamecastX(83), y: gamecastY(70) }, frame: 2 },
+    { key: "P", position: { x: bases.mound.x, y: bases.mound.y - gamecastSize(4) }, frame: 2 },
     { key: "C", position: { ...plate.catcher }, frame: 2 }
   ];
 }
@@ -8172,16 +8488,21 @@ function gamecastDefensiveAlignment() {
 function gamecastStaticDefenseSnapshot(frame) {
   const movingFielders = new Set(frame?.activeFielders ?? []);
   const activeProgress = Number(frame?.progress ?? 0);
-  const pitchingNow = frame?.event && activeProgress < gamecastPitchEnd(frame.event) + 0.09;
+  const pitchingNow = frame?.event && activeProgress <= gamecastPitchEnd(frame.event) + 0.11;
   return gamecastDefensiveAlignment()
     .filter((fielder) => !movingFielders.has(fielder.key) && !(pitchingNow && fielder.key === "P"))
     .map((fielder) => {
       const transition = gamecastStaticFielderTransition(fielder, frame);
+      const profile = fielder.key === "P"
+        ? frame?.event?.pitcherProfile
+        : frame?.event?.defenseProfilesByPosition?.[fielder.key];
       return {
         ...fielder,
         position: transition?.position ?? { ...fielder.position },
         transitioning: Boolean(transition),
-        frame: transition ? Math.floor(transition.t * 8) % 4 : fielder.frame
+        frame: transition ? Math.floor(transition.t * 8) % 4 : fielder.frame,
+        uniformNumber: gamecastProfileUniformNumber(profile, profile?.name ?? fielder.key, profile?.id ?? fielder.key),
+        ...gamecastAbilitySpriteFields(gamecastFieldingAbilityForEvent(frame?.event, fielder.key), false)
       };
     });
 }
@@ -8247,9 +8568,9 @@ function gamecastFoulLinePositions() {
 function gamecastHomePlateCluster() {
   const bases = gamecastBasePositions();
   return {
-    batter: { x: bases.home.x + gamecastSize(8), y: bases.home.y - gamecastSize(2) },
-    catcher: { x: bases.home.x, y: bases.home.y + gamecastSize(3) },
-    umpire: { x: bases.home.x - gamecastSize(3), y: bases.home.y + gamecastSize(6) }
+    batter: { x: bases.home.x + gamecastSize(10), y: bases.home.y - gamecastSize(3) },
+    catcher: { x: bases.home.x - gamecastSize(1), y: bases.home.y + gamecastSize(4) },
+    umpire: { x: bases.home.x - gamecastSize(6), y: bases.home.y + gamecastSize(8) }
   };
 }
 
@@ -8367,7 +8688,7 @@ function buildGamecastFrameState(state, forceFinal = false) {
     contactBurst: buildGamecastContactBurst(event, progress),
     ballTrailColor: event.outcome === "homeRun" ? state.palette.homerL : state.palette.baseSh,
     ballColor: state.palette.base,
-    playerLabel: buildGamecastPlayerLabel(event, progress, runners),
+    playerLabel: buildGamecastPlayerLabel(event, progress, runners, defenseSprites),
     actionBurst: buildGamecastActionBurst(event, progress),
     baseCallout: buildGamecastBaseCallout(event, progress),
     inningSlate,
@@ -8636,13 +8957,34 @@ function gamecastBurstClass(outcome) {
   return "";
 }
 
+function gamecastAbilitySpriteFields(ability, active = false) {
+  if (!ability?.grade || !ability?.color) return {};
+  return {
+    abilityGrade: ability.grade,
+    abilityColor: ability.color,
+    abilityScore: Number(ability.score ?? 0),
+    abilityActive: Boolean(active),
+    playerId: String(ability.playerId ?? ""),
+    playerName: String(ability.playerName ?? "")
+  };
+}
+
+function gamecastFieldingAbilityForEvent(event, key) {
+  const fieldingKey = normalizeFieldingPosition(key);
+  if (fieldingKey === "P") return event?.pitcherAbility ?? null;
+  if (fieldingKey && fieldingKey === normalizeFieldingPosition(event?.fieldingPosition) && event?.defenderAbility) {
+    return event.defenderAbility;
+  }
+  return event?.defenseAbilityByPosition?.[fieldingKey] ?? null;
+}
+
 function buildBatterSprite(event, progress, palette) {
   if (!event || progress >= 0.72) return null;
   const advance = gamecastAdvanceCount(event.outcome);
   const pitchEnd = gamecastPitchEnd(event);
   const batted = isBattedBallOutcome(event.outcome);
   const runnerStart = gamecastRunnerMoveStart(event);
-  if ((advance > 0 || event.outcome === "walk") && progress >= (batted ? runnerStart + 0.04 : runnerStart + 0.04)) return null;
+  if ((advance > 0 || event.outcome === "walk") && progress >= runnerStart) return null;
   if (event.outcome === "out" && progress >= runnerStart) return null;
   let pose = "stance";
   if (progress >= pitchEnd - 0.08 && progress < pitchEnd + 0.01) pose = "load";
@@ -8667,11 +9009,12 @@ function buildBatterSprite(event, progress, palette) {
     pose,
     animationKey: event.outcome === "walk" ? null : "swing",
     animationT: swingT,
-    runFrame: 2
+    runFrame: 2,
+    ...gamecastAbilitySpriteFields(event.hitterAbility, true)
   };
 }
 
-function buildGamecastPlayerLabel(event, progress, runners) {
+function buildGamecastPlayerLabel(event, progress, runners, defenseSprites = []) {
   if (!event || progress >= 0.96) {
     return { visible: false, text: "", x: 50, y: 50, scoring: false };
   }
@@ -8684,17 +9027,21 @@ function buildGamecastPlayerLabel(event, progress, runners) {
     const target = battedBallGroundPoint(event, 1);
     const start = gamecastDefenderStartForTarget(target, event);
     const eased = easeOutCubic(fieldT);
-    const position = {
-      x: Math.round(lerp(start.x, target.x, eased)),
-      y: Math.round(lerp(start.y, target.y, eased))
-    };
+    const activeKey = gamecastFieldingKeyForTarget(event, target);
+    const activeDefender = defenseSprites.find((sprite) => sprite?.fieldingKey === activeKey && sprite?.position);
+    const position = activeDefender?.position
+      ? { ...activeDefender.position }
+      : {
+          x: Math.round(lerp(start.x, target.x, eased)),
+          y: Math.round(lerp(start.y, target.y, eased))
+        };
     const revealProgress = gamecastResultRevealProgress(event);
     const fadeOut = progress > revealProgress - 0.08 ? Math.max(0, (revealProgress - progress) / 0.08) : 1;
     return {
       visible: fadeOut > 0.08,
       text: shortenGamecastPlayerName(event.defenderName),
       x: Math.max(gamecastX(10), Math.min(gamecastX(110), position.x)),
-      y: Math.max(gamecastY(10), Math.min(gamecastY(98), position.y - gamecastSize(14))),
+      y: Math.max(gamecastY(10), Math.min(gamecastY(96), position.y - gamecastSize(16))),
       opacity: fadeOut,
       scoring: false
     };
@@ -8711,7 +9058,7 @@ function buildGamecastPlayerLabel(event, progress, runners) {
   const fadeIn = Math.min(1, Math.max(0, progress / 0.08));
   const fadeOut = progress > 0.86 ? Math.max(0, (0.98 - progress) / 0.12) : 1;
   const opacity = Math.max(0, Math.min(1, fadeIn * fadeOut));
-  const lift = batterRunner ? gamecastSize(8) : gamecastSize(3);
+  const lift = batterRunner ? gamecastSize(12) : gamecastSize(16);
   return {
     visible: opacity > 0.08,
     text: shortenGamecastPlayerName(event.hitterName),
@@ -8783,21 +9130,26 @@ function buildRunnerSprites(event, progress, palette) {
       if (!occupied) return;
       const startBase = index + 1;
       const targetBase = Math.min(4, startBase + advance);
+      const runnerProfile = event.baseRunnerProfilesBefore?.[index] ?? null;
+      const runnerAbility = gamecastAbilityVisual(runnerProfile);
       runners.push(makeRunnerSprite(gamecastPathBetween(startBase, targetBase), eased, runnerColor, trailColor, moveT, "runner", {
         jerseyColor,
         jerseyShadow,
         accentColor,
+        uniformNumber: gamecastProfileUniformNumber(runnerProfile, runnerProfile?.name ?? "", runnerProfile?.id ?? ""),
+        ability: runnerAbility,
         pose: walking ? "walk" : "run",
         trail: !walking,
         allowSlide: !walking && event.outcome !== "homeRun"
       }));
     });
     const batterTarget = Math.min(4, advance);
-    runners.push(makeRunnerSprite(gamecastPathBetween(0, batterTarget), eased, runnerColor, trailColor, moveT, "batter", {
+    runners.push(makeRunnerSprite(gamecastBatterPathTo(batterTarget), eased, runnerColor, trailColor, moveT, "batter", {
       jerseyColor,
       jerseyShadow,
       accentColor,
       uniformNumber,
+      ability: event.hitterAbility,
       pose: walking ? "walk" : "run",
       trail: !walking,
       allowSlide: !walking && event.outcome !== "homeRun" && batterTarget > 1
@@ -8806,11 +9158,12 @@ function buildRunnerSprites(event, progress, palette) {
   }
 
   const bases = gamecastBasePositions();
+  const batterStart = gamecastHomePlateCluster().batter;
   const outT = Math.min(1, moveT * 1.3);
   runners.push({
     position: {
-      x: Math.round(lerp(bases.home.x, bases.home.x + gamecastSize(7), outT)),
-      y: Math.round(lerp(bases.home.y, bases.home.y - gamecastSize(3), outT))
+      x: Math.round(lerp(batterStart.x, bases.home.x + gamecastSize(7), outT)),
+      y: Math.round(lerp(batterStart.y, bases.home.y - gamecastSize(3), outT))
     },
     trail: [],
     color: runnerColor,
@@ -8824,7 +9177,8 @@ function buildRunnerSprites(event, progress, palette) {
     pose: "run",
     animationKey: "run",
     animationT: moveT * 2,
-    animationLoop: true
+    animationLoop: true,
+    ...gamecastAbilitySpriteFields(event.hitterAbility, true)
   });
   return runners;
 }
@@ -8865,7 +9219,8 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner"
     animationT: pose === "run" ? moveT * 2.4 : moveT,
     animationLoop: pose === "run" || pose === "walk",
     facing,
-    role
+    role,
+    ...gamecastAbilitySpriteFields(options.ability, role === "batter")
   };
 }
 
@@ -8979,18 +9334,19 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     const bases = gamecastBasePositions();
     const windT = Math.max(0, Math.min(1, progress / Math.max(0.01, pitchEnd)));
     sprites.push({
-      position: { x: bases.mound.x, y: bases.mound.y + gamecastSize(1) - (windT > 0.48 && windT < 0.72 ? 1 : 0) },
+      position: { x: bases.mound.x, y: bases.mound.y - gamecastSize(4) - (windT > 0.48 && windT < 0.72 ? 1 : 0) },
       color: event.defenseColor ?? palette.defender,
       jerseyColor: event.defenseJerseyColor ?? palette.defenderL,
       jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
       accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
       fieldingKey: "P",
-      uniformNumber: gamecastUniformNumber(event.pitcherName, "P"),
+      uniformNumber: gamecastProfileUniformNumber(event.pitcherProfile, event.pitcherName, event.pitcherId),
       runFrame: windT > 0.72 ? 1 : 2,
       squash: false,
       pose: windT < 0.48 ? "windup" : "pitch",
       animationKey: "pitch",
-      animationT: windT
+      animationT: windT,
+      ...gamecastAbilitySpriteFields(event.pitcherAbility, true)
     });
   }
   if (!isBattedBallOutcome(event?.outcome)) return sprites;
@@ -9007,16 +9363,22 @@ function buildGamecastDefenseSprites(event, progress, palette) {
   const target = isHomeRun ? gamecastHomeRunFielderSpot(event, ballTarget, fieldingKey) : ballTarget;
   const routeEnd = isHomeRun ? Math.min(catchProgress, gamecastBallFlightEnd(event) - 0.03) : catchProgress;
   const fieldT = Math.max(0, Math.min(1, (progress - runStart) / Math.max(0.01, routeEnd - runStart)));
-  const position = gamecastFielderRoutePoint(start, target, fieldT, fieldingKey, event);
+  let position = gamecastClampFielderPosition(fieldingKey, gamecastFielderRoutePoint(start, target, fieldT, fieldingKey, event), event);
+  if (fieldingKey === "1B" && progress > catchProgress) {
+    position = gamecastFirstBasemanCoverPosition(event, progress);
+  }
   const hardPlay = !isHomeRun && gamecastDifficultFieldingPlay(event, fieldingKey, target, start);
-  const throwing = progress >= gamecastThrowStartProgress(event) && progress <= gamecastThrowEndProgress(event) && !isHomeRun;
+  const directFirstBaseOut = fieldingKey === "1B" && event.outcome === "out" && !event.doublePlay;
+  const throwing = !directFirstBaseOut && progress >= gamecastThrowStartProgress(event) && progress <= gamecastThrowEndProgress(event) && !isHomeRun;
   const impactPose = isHomeRun
     ? progress < routeEnd - 0.02 ? "run" : "watch"
-    : event.outcome === "error" && progress > catchProgress - 0.02
+    : directFirstBaseOut
+      ? progress > catchProgress + 0.08 ? "field" : progress > catchProgress - 0.04 ? "catch" : "run"
+    : event.outcome === "error" && progress > catchProgress - 0.02 && progress < catchProgress + 0.12
       ? "dive"
       : hardPlay && progress > catchProgress - 0.06 && progress < catchProgress + 0.06
         ? "dive"
-        : progress > catchProgress + 0.08
+        : throwing
           ? "throw"
           : progress > catchProgress - 0.04
             ? "catch"
@@ -9032,7 +9394,7 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
     accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
     fieldingKey,
-    uniformNumber: gamecastUniformNumber(event.defenderName, event.fieldingPosition),
+    uniformNumber: gamecastProfileUniformNumber(event.defenderProfile, event.defenderName, event.defenderId || event.fieldingPosition),
     runFrame: Math.floor(fieldT * 12) % 4,
     squash: throwing,
     pose: impactPose,
@@ -9040,17 +9402,18 @@ function buildGamecastDefenseSprites(event, progress, palette) {
     animationT: defenseAnimation.t,
     animationLoop: defenseAnimation.loop,
     catchBurst,
-    facing: target.x >= start.x ? 1 : -1
+    facing: target.x >= start.x ? 1 : -1,
+    ...gamecastAbilitySpriteFields(gamecastFieldingAbilityForEvent(event, fieldingKey), true)
   });
 
   if (event.doublePlay) {
     sprites.push(...buildGamecastDoublePlaySprites(event, progress, palette, catchProgress));
-  } else if (["out", "single", "double", "error"].includes(event.outcome) && progress >= catchProgress + 0.04 && progress <= resultReveal) {
+  } else if (fieldingKey !== "1B" && ["out", "single", "double", "error"].includes(event.outcome) && progress >= catchProgress + 0.04 && progress <= resultReveal) {
     const firstBase = gamecastBasePositions().first;
     const stretchT = Math.max(0, Math.min(1, (progress - catchProgress - 0.04) / 0.22));
     sprites.push(gamecastSupportFielderSprite(event, palette, "1B", {
-      x: Math.round(lerp(gamecastX(91), firstBase.x + gamecastSize(2), easeOutCubic(stretchT))),
-      y: Math.round(lerp(gamecastY(74), firstBase.y + gamecastSize(1), easeOutCubic(stretchT)))
+      x: Math.round(lerp(gamecastX(83), firstBase.x - gamecastSize(5), easeOutCubic(stretchT))),
+      y: Math.round(lerp(gamecastY(70), firstBase.y - gamecastSize(2), easeOutCubic(stretchT)))
     }, progress > catchProgress + 0.18 ? "catch" : "field", 1));
   }
 
@@ -9113,6 +9476,38 @@ function gamecastFielderRoutePoint(start, target, t, key, event) {
   };
 }
 
+function gamecastClampFielderPosition(key, point, event) {
+  const anchor = gamecastFielderLogicalAnchor(key);
+  if (!anchor || !point) return point;
+  const raw = gamecastLogicalPoint(point);
+  const zone = GAMECAST_FIELDER_MOVE_ZONES[key] ?? { x: 16, yTop: 13, yBottom: 13 };
+  const profile = gamecastBallparkProfileForEvent(event);
+  let x = gamecastClampNumber(raw.x, anchor.x - zone.x, anchor.x + zone.x);
+  let y = gamecastClampNumber(raw.y, anchor.y - zone.yTop, anchor.y + zone.yBottom);
+  if (["LF", "CF", "RF"].includes(key)) {
+    y = Math.max(y, gamecastOutfieldWallY(profile, x) + 4.7);
+  }
+  x = gamecastClampNumber(x, 4, 116);
+  y = gamecastClampNumber(y, 5, 104);
+  return { x: gamecastX(x), y: gamecastY(y) };
+}
+
+function gamecastFielderLogicalAnchor(key) {
+  const fielder = gamecastDefensiveAlignment().find((entry) => entry.key === key);
+  return fielder ? gamecastLogicalPoint(fielder.position) : null;
+}
+
+function gamecastLogicalPoint(point) {
+  return {
+    x: (Number(point?.x ?? 0) / GAMECAST_PIXEL_W) * 120,
+    y: (Number(point?.y ?? 0) / GAMECAST_PIXEL_H) * 108
+  };
+}
+
+function gamecastClampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, Number(value) || 0));
+}
+
 function quadBezier(a, b, c, t) {
   const inv = 1 - t;
   return inv * inv * a + 2 * inv * t * b + t * t * c;
@@ -9128,6 +9523,7 @@ function gamecastDifficultFieldingPlay(event, key, target, start) {
 
 function gamecastSupportFielderSprite(event, palette, key, position, pose = "field", runFrame = 0) {
   const animationKey = pose === "throw" ? "throw" : pose === "catch" ? "catch" : pose === "run" ? "run" : null;
+  const profile = key === "P" ? event?.pitcherProfile : event?.defenseProfilesByPosition?.[key] ?? null;
   return {
     position,
     color: event.defenseColor ?? palette.defender,
@@ -9135,13 +9531,14 @@ function gamecastSupportFielderSprite(event, palette, key, position, pose = "fie
     jerseyShadow: event.defenseJerseyShadow ?? palette.uniformSh,
     accentColor: event.defenseAccentColor ?? event.defenseColor ?? palette.defender,
     fieldingKey: key,
-    uniformNumber: gamecastUniformNumber(key, key),
+    uniformNumber: gamecastProfileUniformNumber(profile, profile?.name ?? key, profile?.id ?? key),
     runFrame,
     squash: false,
     pose,
     animationKey,
     animationT: pose === "throw" || pose === "catch" ? 0.72 : 0,
-    animationLoop: pose === "run"
+    animationLoop: pose === "run",
+    ...gamecastAbilitySpriteFields(gamecastFieldingAbilityForEvent(event, key), false)
   };
 }
 
@@ -9151,41 +9548,77 @@ function buildGamecastDoublePlaySprites(event, progress, palette, catchProgress)
   const pivotKey = leadKey === "SS" ? "2B" : "SS";
   const pivotStart = gamecastDefensiveAlignment().find((fielder) => fielder.key === pivotKey)?.position ?? bases.second;
   const pivotT = Math.max(0, Math.min(1, (progress - catchProgress) / 0.2));
+  const pivotTargetX = bases.second.x + gamecastSize(pivotKey === "SS" ? -4 : 4);
   const pivotPosition = {
-    x: Math.round(lerp(pivotStart.x, bases.second.x, easeOutCubic(pivotT))),
-    y: Math.round(lerp(pivotStart.y, bases.second.y + gamecastSize(1), easeOutCubic(pivotT)))
+    x: Math.round(lerp(pivotStart.x, pivotTargetX, easeOutCubic(pivotT))),
+    y: Math.round(lerp(pivotStart.y, bases.second.y - gamecastSize(1), easeOutCubic(pivotT)))
   };
   const firstT = Math.max(0, Math.min(1, (progress - catchProgress - 0.15) / 0.22));
-  return [
-    gamecastSupportFielderSprite(event, palette, pivotKey, pivotPosition, progress > catchProgress + 0.12 ? "throw" : "catch", Math.floor(pivotT * 4) % 4),
-    gamecastSupportFielderSprite(event, palette, "1B", {
-      x: Math.round(lerp(gamecastX(91), bases.first.x + gamecastSize(2), easeOutCubic(firstT))),
-      y: Math.round(lerp(gamecastY(74), bases.first.y + gamecastSize(1), easeOutCubic(firstT)))
-    }, progress > catchProgress + 0.28 ? "catch" : "field", 1)
+  const sprites = [
+    gamecastSupportFielderSprite(event, palette, pivotKey, pivotPosition, progress > catchProgress + 0.12 ? "throw" : "catch", Math.floor(pivotT * 4) % 4)
   ];
+  if (leadKey !== "1B") {
+    sprites.push(gamecastSupportFielderSprite(event, palette, "1B", {
+      x: Math.round(lerp(gamecastX(83), bases.first.x - gamecastSize(5), easeOutCubic(firstT))),
+      y: Math.round(lerp(gamecastY(70), bases.first.y - gamecastSize(2), easeOutCubic(firstT)))
+    }, progress > catchProgress + 0.28 ? "catch" : "field", 1));
+  }
+  return sprites;
 }
 
 function buildGamecastThrowLines(event, progress) {
   if (!isBattedBallOutcome(event?.outcome)) return [];
-  if (!["out", "error", "single", "double"].includes(event.outcome)) return [];
+  if (!["out", "error", "single", "double", "triple"].includes(event.outcome)) return [];
   const startProgress = gamecastThrowStartProgress(event);
   const endProgress = gamecastThrowEndProgress(event);
   if (progress < startProgress || progress > endProgress) return [];
 
   const target = battedBallGroundPoint(event, 1);
   const bases = gamecastBasePositions();
+  const fieldingKey = gamecastFieldingKeyForTarget(event, target);
+  if (fieldingKey === "1B" && event.outcome === "out" && !event.doublePlay) return [];
+  const from = fieldingKey === "1B"
+    ? gamecastFirstBasemanCoverPosition(event, startProgress)
+    : target;
+  const rawT = Math.max(0, Math.min(1, (progress - startProgress) / Math.max(0.01, endProgress - startProgress)));
+  if (event.doublePlay) {
+    const split = 0.48;
+    if (rawT <= split) {
+      const localT = easeOutCubic(rawT / split);
+      return [{ from, to: bases.second, t: localT, opacity: 1 }];
+    }
+    const localRaw = (rawT - split) / (1 - split);
+    return [{
+      from: bases.second,
+      to: bases.first,
+      t: easeOutCubic(localRaw),
+      opacity: 1 - Math.max(0, localRaw - 0.72) / 0.28
+    }];
+  }
   const throwTarget = event.outcome === "out"
     ? bases.first
+    : event.outcome === "triple"
+      ? bases.third
     : event.outcome === "double"
       ? bases.second
       : bases.home;
-  const t = Math.max(0, Math.min(1, (progress - startProgress) / Math.max(0.01, endProgress - startProgress)));
   return [{
-    from: target,
+    from,
     to: throwTarget,
-    t: easeOutCubic(t),
-    opacity: 1 - Math.max(0, t - 0.7) / 0.3
+    t: easeOutCubic(rawT),
+    opacity: 1 - Math.max(0, rawT - 0.7) / 0.3
   }];
+}
+
+function gamecastFirstBasemanCoverPosition(event, progress) {
+  const catchProgress = gamecastFieldingCatchProgress(event);
+  const fieldSpot = gamecastClampFielderPosition("1B", battedBallGroundPoint(event, 1), event);
+  const firstBase = gamecastBasePositions().first;
+  const coverT = easeOutCubic(Math.max(0, Math.min(1, (progress - catchProgress) / 0.18)));
+  return {
+    x: Math.round(lerp(fieldSpot.x, firstBase.x - gamecastSize(5), coverT)),
+    y: Math.round(lerp(fieldSpot.y, firstBase.y - gamecastSize(2), coverT))
+  };
 }
 
 function gamecastPitchEnd(event) {
@@ -9214,16 +9647,16 @@ function gamecastRunnerMoveEnd(event) {
 
 function gamecastBallFlightEnd(event) {
   if (event?.outcome === "homeRun") return 0.88;
-  if (event?.outcome === "triple") return 0.84;
-  if (event?.outcome === "double") return 0.82;
-  if (event?.outcome === "single" || event?.outcome === "error") return 0.76;
-  if (event?.outcome === "out") return String(event?.battedBallType ?? "") === "groundBall" ? 0.66 : 0.76;
-  return Math.min(0.68, gamecastPitchEnd(event) + 0.22);
+  return gamecastNonHomerCatchProgress(event);
 }
 
 function gamecastFieldingCatchProgress(event) {
-  const battedType = String(event?.battedBallType ?? "");
   if (event?.outcome === "homeRun") return 0.78;
+  return gamecastNonHomerCatchProgress(event);
+}
+
+function gamecastNonHomerCatchProgress(event) {
+  const battedType = String(event?.battedBallType ?? "");
   if (battedType === "groundBall") return 0.62;
   if (battedType === "lineDrive") return 0.66;
   if (battedType === "flyBall") return 0.72;
@@ -9232,11 +9665,16 @@ function gamecastFieldingCatchProgress(event) {
 
 function gamecastThrowStartProgress(event) {
   if (event?.outcome === "homeRun") return 1;
-  return Math.min(0.84, gamecastFieldingCatchProgress(event) + 0.08);
+  return Math.min(0.9, Math.max(
+    gamecastFieldingCatchProgress(event) + 0.08,
+    gamecastBallFlightEnd(event) + 0.01
+  ));
 }
 
 function gamecastThrowEndProgress(event) {
-  return Math.max(gamecastThrowStartProgress(event) + 0.12, gamecastResultRevealProgress(event) - 0.04);
+  const start = gamecastThrowStartProgress(event);
+  const desired = Math.max(start + 0.12, gamecastResultRevealProgress(event) - 0.04);
+  return Math.max(start + 0.08, Math.min(0.96, gamecastResultRevealProgress(event) + 0.08, desired));
 }
 
 function gamecastResultRevealProgress(event) {
@@ -9446,6 +9884,12 @@ function gamecastPathBetween(startBase, targetBase) {
   return points.slice(start, target + 1).map((point) => ({ ...point }));
 }
 
+function gamecastBatterPathTo(targetBase) {
+  const path = gamecastPathBetween(0, targetBase);
+  if (path.length) path[0] = { ...gamecastHomePlateCluster().batter };
+  return path;
+}
+
 function positionAlongPath(path, t) {
   if (!path.length) return { x: gamecastX(60), y: gamecastY(96) };
   if (path.length === 1) return { ...path[0] };
@@ -9461,7 +9905,12 @@ function positionAlongPath(path, t) {
 }
 
 function syncGamecastDom(state, frame) {
-  if (state?.screen) state.screen.__gamecastDebugFrame = frame;
+  const ratingTokens = gamecastRatingTokensForFrame(frame);
+  frame.ratingTokens = ratingTokens;
+  if (state?.screen) {
+    state.screen.__gamecastDebugFrame = frame;
+    state.screen.dataset.gamecastAbilityUnderlays = String(ratingTokens.length);
+  }
   if (state.scoreNodes?.[0]) state.scoreNodes[0].textContent = formatNumber(frame.score?.away ?? 0);
   if (state.scoreNodes?.[1]) state.scoreNodes[1].textContent = formatNumber(frame.score?.home ?? 0);
   if (state.nowTitle) state.nowTitle.textContent = frame.done ? "경기 종료" : frame.event ? gamecastNowTitle(frame.event) : "중계 대기";
@@ -9481,6 +9930,28 @@ function syncGamecastDom(state, frame) {
   for (const item of state.feedItems ?? []) {
     item.classList.toggle("is-live", Boolean(frame.event?.id && !frame.done && item.dataset.gamecastEventId === frame.event.id));
   }
+}
+
+function gamecastRatingTokensForFrame(frame) {
+  const actors = [
+    ...(frame?.staticDefense ?? []),
+    ...(frame?.defenseSprites ?? []),
+    ...(frame?.runners ?? []),
+    ...(frame?.batter ? [frame.batter] : [])
+  ];
+  return actors
+    .filter((actor) => actor?.abilityGrade && actor?.abilityColor && actor?.position)
+    .map((actor) => ({
+      playerId: String(actor.playerId ?? ""),
+      playerName: String(actor.playerName ?? ""),
+      role: String(actor.fieldingKey ?? actor.role ?? ""),
+      ovr: Number(actor.abilityScore ?? 0),
+      tier: String(actor.abilityGrade),
+      color: String(actor.abilityColor),
+      x: Number(actor.position.x ?? 0),
+      y: Number(actor.position.y ?? 0),
+      active: Boolean(actor.abilityActive)
+    }));
 }
 
 function createGamecastFpsStats() {
@@ -9905,6 +10376,47 @@ function drawPixelSprite(ctx, palette, ox, oy, cells) {
   for (const c of cells) { ctx.fillStyle = c[2]; ctx.fillRect(ox + c[0], oy + c[1], 1, 1); }
 }
 
+function drawPixelAbilityPlate(ctx, palette, position, options = {}) {
+  const grade = String(options.abilityGrade ?? "").toUpperCase();
+  const color = normalizeHexColor(options.abilityColor, "");
+  if (!grade || !color || !position) return;
+  const depth = Number(position.y ?? 0) / Math.max(1, GAMECAST_PIXEL_H);
+  const width = (depth < 0.56 ? 10 : depth < 0.76 ? 12 : 14) + (options.abilityActive ? 2 : 0);
+  const height = 6;
+  const left = Math.round(position.x) - Math.floor(width / 2);
+  const top = Math.round(position.y) - 3;
+  const previousAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = options.abilityActive ? 0.34 : 0.2;
+  ctx.fillStyle = color;
+  ctx.fillRect(left - 2, top - 2, width + 4, height + 4);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = palette.outline;
+  ctx.fillRect(left - 1, top - 1, width + 2, height + 2);
+  ctx.fillStyle = color;
+  ctx.fillRect(left, top, width, height);
+  ctx.fillStyle = mixHexColors(options.accentColor ?? palette.defender, palette.outline, 0.74);
+  ctx.fillRect(left + 1, top + 1, Math.max(1, width - 2), Math.max(1, height - 2));
+  drawPixelGradeGlyph(ctx, grade, left + width - 4, top + 1, color);
+  ctx.globalAlpha = previousAlpha;
+}
+
+function drawPixelGradeGlyph(ctx, grade, x, y, color) {
+  const glyph = {
+    S: ["111", "100", "111", "001", "111"],
+    A: ["010", "101", "111", "101", "101"],
+    B: ["110", "101", "110", "101", "110"],
+    C: ["111", "100", "100", "100", "111"],
+    D: ["110", "101", "101", "101", "110"]
+  }[grade];
+  if (!glyph) return;
+  ctx.fillStyle = color;
+  glyph.forEach((row, rowIndex) => {
+    [...row].forEach((cell, colIndex) => {
+      if (cell === "1") ctx.fillRect(x + colIndex, y + rowIndex, 1, 1);
+    });
+  });
+}
+
 // 9x13 outlined chibi player; runFrame 0/1 = stride, 2 = standing
 function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, options = {}) {
   const S = palette.skin;
@@ -9915,6 +10427,7 @@ function drawPixelRunner(ctx, palette, position, squash, color, runFrame = 0, op
   const accent = normalizeHexColor(options.accentColor ?? color, trim);
   const ink = options.uniformNumber === undefined ? palette.uniformInk : mixHexColors(palette.uniformInk, accent, 0.18);
   const pose = options.pose ?? "run";
+  drawPixelAbilityPlate(ctx, palette, position, { ...options, accentColor: accent });
   if (pose === "slide") {
     drawPixelSlidingRunner(ctx, palette, position, color, options);
     return;

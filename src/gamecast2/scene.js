@@ -8,6 +8,18 @@ import {
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
+const FIELD_EDGE_PADDING = 8;
+const DEFENDER_MOVE_ZONES = {
+  P: { x: 10, yTop: 6, yBottom: 10 },
+  C: { x: 14, yTop: 10, yBottom: 8 },
+  "1B": { x: 54, yTop: 42, yBottom: 44 },
+  "2B": { x: 58, yTop: 46, yBottom: 44 },
+  "3B": { x: 54, yTop: 42, yBottom: 44 },
+  SS: { x: 58, yTop: 46, yBottom: 44 },
+  LF: { x: 96, yTop: 58, yBottom: 64 },
+  CF: { x: 116, yTop: 62, yBottom: 68 },
+  RF: { x: 96, yTop: 58, yBottom: 64 }
+};
 const PLAYER_TEXTURE_KEYS = {
   defense: {
     idle: "gamecast2-player-defense-idle",
@@ -236,6 +248,7 @@ function createScene(scene, runtime) {
   scene.playerMap = new Map();
   scene.ballSprite = null;
   scene.ballTrail = null;
+  scene.abilityGraphics = scene.add.graphics().setDepth(500);
   scene.anchorGraphics = scene.add.graphics().setDepth(30000);
   scene.anchorLabels = [];
 
@@ -260,6 +273,7 @@ function clearStaticPlayers(scene) {
   for (const object of scene.playerObjects ?? []) object.destroy();
   scene.ballSprite?.destroy();
   scene.ballTrail?.destroy();
+  scene.abilityGraphics?.clear();
   scene.playerObjects = [];
   scene.playerActors = [];
   scene.playerMap = new Map();
@@ -353,7 +367,10 @@ function updateGamecast2Playback(runtime, frame = null) {
 
 function updateStaticPlayerIdle(runtime, frame = null) {
   const scene = runtime.scene;
-  if (!scene?.playerObjects?.length) return;
+  if (!scene?.playerObjects?.length) {
+    scene?.abilityGraphics?.clear();
+    return;
+  }
   const elapsed = Number(runtime.elapsedMs ?? 0);
   const pixel = Math.max(1, Math.round(runtime.metrics.drawScaleY));
   const play = buildVisualPlay(runtime, frame);
@@ -364,17 +381,104 @@ function updateStaticPlayerIdle(runtime, frame = null) {
     const idleT = elapsed / 430 + actor.phase;
     const bob = actor.role === "catcher" ? 0 : Math.sin(idleT) * pixel * 0.55 * actor.anchorScale;
     const pose = state.pose ?? defaultPoseForActor(actor);
-    const position = state.position ?? { x: actor.designX, y: actor.designY };
+    const rawPosition = state.position ?? { x: actor.designX, y: actor.designY };
+    const position = clampActorDesignPosition(actor, rawPosition, runtime);
     const renderX = position.x * runtime.metrics.drawScaleX;
     const renderY = position.y * runtime.metrics.drawScaleY;
-    const renderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY) * actor.anchorScale;
+    const designScale = Math.max(0.5, Number(position.scale ?? actor.anchorScale));
+    const renderScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY) * designScale;
     const lean = Number(state.angle ?? (actor.role === "batter" ? Math.sin(idleT * 0.58) * 1.5 : 0));
     sprite.setTexture(textureForRole(actor.role, pose));
     sprite.setPosition(renderX, renderY + (state.position ? 0 : bob));
     sprite.setScale(renderScale * (1 + Math.sin(idleT * 0.5) * 0.012), renderScale);
     sprite.setAngle(lean);
     sprite.setDepth(Math.round(position.y * 10) + (actor.key === "batter" ? 8 : 0));
+    actor.currentDesignX = position.x;
+    actor.currentDesignY = position.y;
+    actor.currentDesignScale = designScale;
+    actor.currentRenderScale = renderScale;
   }
+  updateAbilityPlates(runtime, frame, play);
+}
+
+function updateAbilityPlates(runtime, frame = null, play = null) {
+  const scene = runtime.scene;
+  const graphics = scene?.abilityGraphics;
+  if (!graphics) return;
+  graphics.clear();
+  const event = frame?.event;
+  const minScale = Math.min(runtime.metrics.drawScaleX, runtime.metrics.drawScaleY);
+  const ratingTokens = [];
+  for (const sprite of scene.playerObjects ?? []) {
+    const actor = sprite.__gamecast2Actor;
+    const ability = gamecast2AbilityForActor(event, actor);
+    if (!actor || !ability?.grade || !ability?.color || !sprite.visible) {
+      continue;
+    }
+    const activeFieldingKey = String(event?.fieldingPosition ?? event?.defenderPosition ?? play?.fielderKey ?? "").toUpperCase();
+    const active = actor.key === "batter"
+      || actor.fieldingKey === "P"
+      || actor.fieldingKey === activeFieldingKey;
+    const designScale = Math.max(0.5, Number(actor.currentDesignScale ?? actor.anchorScale ?? 1));
+    const width = Math.max(14, Math.round((active ? 20 : 17) * minScale * designScale));
+    const height = Math.max(6, Math.round((active ? 8 : 7) * minScale * Math.max(0.82, designScale)));
+    const left = Math.round(sprite.x - width / 2);
+    const top = Math.round(sprite.y - height * 0.58);
+    const color = hexToColor(ability.color, "#64748b");
+    graphics.fillStyle(0x061018, active ? 0.92 : 0.78);
+    graphics.fillRoundedRect(left - 2, top - 2, width + 4, height + 4, Math.max(2, Math.round(height / 2)));
+    graphics.fillStyle(color, active ? 0.96 : 0.72);
+    graphics.fillRoundedRect(left, top, width, height, Math.max(2, Math.round(height / 2)));
+    graphics.fillStyle(0x102737, 0.96);
+    graphics.fillRoundedRect(left + 2, top + 2, Math.max(2, width - 4), Math.max(2, height - 4), Math.max(1, Math.round((height - 4) / 2)));
+    drawGamecast2GradeGlyph(graphics, String(ability.grade).slice(0, 1), left + width - 5, top + 1, color);
+    actor.abilityGrade = String(ability.grade);
+    actor.abilityColor = String(ability.color);
+    actor.abilityScore = Number(ability.score ?? 0);
+    actor.playerId = String(ability.playerId ?? "");
+    actor.abilityActive = active;
+    ratingTokens.push({
+      role: String(actor.fieldingKey || actor.role || actor.key),
+      playerId: actor.playerId,
+      ovr: actor.abilityScore,
+      tier: actor.abilityGrade,
+      color: actor.abilityColor,
+      x: Number(actor.currentDesignX ?? actor.designX),
+      y: Number(actor.currentDesignY ?? actor.designY),
+      width: width / Math.max(0.01, runtime.metrics.drawScaleX),
+      height: height / Math.max(0.01, runtime.metrics.drawScaleY),
+      active
+    });
+  }
+  runtime.gamecast2RatingTokens = ratingTokens;
+  runtime.screen.dataset.gamecastAbilityUnderlays = String(ratingTokens.length);
+}
+
+function drawGamecast2GradeGlyph(graphics, grade, x, y, color) {
+  const pattern = {
+    S: ["111", "100", "111", "001", "111"],
+    A: ["010", "101", "111", "101", "101"],
+    B: ["110", "101", "110", "101", "110"],
+    C: ["111", "100", "100", "100", "111"],
+    D: ["110", "101", "101", "101", "110"]
+  }[grade];
+  if (!pattern) return;
+  graphics.fillStyle(color, 1);
+  for (let row = 0; row < pattern.length; row += 1) {
+    for (let column = 0; column < pattern[row].length; column += 1) {
+      if (pattern[row][column] === "1") graphics.fillRect(x + column, y + row, 1, 1);
+    }
+  }
+}
+
+function gamecast2AbilityForActor(event, actor) {
+  if (!event || !actor) return null;
+  if (actor.key === "batter") return event.hitterAbility ?? null;
+  const key = String(actor.fieldingKey || actor.key || "").toUpperCase();
+  if (key === "P") return event.pitcherAbility ?? event.defenseAbilityByPosition?.P ?? null;
+  const activeKey = String(event.fieldingPosition ?? event.defenderPosition ?? "").toUpperCase();
+  if (key && key === activeKey && event.defenderAbility) return event.defenderAbility;
+  return event.defenseAbilityByPosition?.[key] ?? null;
 }
 
 function defaultPoseForActor(actor) {
@@ -397,7 +501,8 @@ function buildVisualPlay(runtime, frame = null) {
   const catchTime = fieldingCatchTime(event);
   const throwStart = throwStartTime(event);
   const throwEnd = throwEndTime(event);
-  const fielderKey = batted && event.outcome !== "homeRun" ? fieldingKeyForEvent(event, anchors) : "";
+  const battedTarget = batted ? battedBallTargetForEvent(event, anchors) : null;
+  const fielderKey = batted ? fieldingKeyForEvent(event, anchors, battedTarget) : "";
   const fieldSpot = fielderKey ? fieldingSpotForEvent(event, anchors, fielderKey) : null;
 
   actors.set("P", {
@@ -412,14 +517,14 @@ function buildVisualPlay(runtime, frame = null) {
     else {
       actors.set("batter", {
         pose: Math.floor(progress * 18) % 2 ? "run1" : "run2",
-        position: batterRunPosition(anchors, progress, runnerStart),
+        position: batterRunPosition(anchors, event, progress, runnerStart),
         angle: 0
       });
     }
   } else if (event.outcome === "walk") {
     actors.set("batter", progress < pitchEnd ? { pose: "stance" } : {
       pose: Math.floor(progress * 16) % 2 ? "run1" : "run2",
-      position: batterRunPosition(anchors, progress, runnerStart)
+      position: batterRunPosition(anchors, event, progress, runnerStart)
     });
   } else if (event.outcome === "strikeout") {
     actors.set("batter", progress < pitchEnd ? { pose: "load" } : { pose: "follow", angle: -8 });
@@ -438,26 +543,38 @@ function buildVisualPlay(runtime, frame = null) {
 
   let movingDefenseCount = 0;
   if (fielderKey && fieldSpot) {
+    const homeRun = event.outcome === "homeRun";
     const routeStart = pitchEnd + 0.06;
-    const routeT = clamp01((progress - routeStart) / Math.max(0.01, catchTime - routeStart));
+    const routeEnd = homeRun ? Math.min(0.8, ballFlightEndTime(event) - 0.04) : catchTime;
+    const routeT = clamp01((progress - routeStart) / Math.max(0.01, routeEnd - routeStart));
     const actor = anchors[fielderKey];
     const position = actor && progress >= routeStart
-      ? curvedRoute(actor, fieldSpot, easeInOutCubic(routeT), eventNoise(event, 71) * 18)
+      ? clampDefenderDesignPoint(
+          curvedRoute(actor, fieldSpot, easeInOutCubic(routeT), eventNoise(event, 71) * 18),
+          anchors,
+          fielderKey
+        )
       : null;
-    if (position && progress < throwEnd) movingDefenseCount = 1;
-    const pose = progress < routeStart
-      ? "ready"
-      : progress < catchTime
-        ? (Math.floor(progress * 18) % 2 ? "run1" : "run2")
-        : progress < throwStart
-          ? "catch"
-          : progress < throwEnd
-            ? "throw"
-            : "ready";
+    if (position && progress < (homeRun ? 0.96 : throwEnd)) movingDefenseCount = 1;
+    const pose = homeRun
+      ? progress < routeStart
+        ? "ready"
+        : progress < routeEnd
+          ? (Math.floor(progress * 18) % 2 ? "run1" : "run2")
+          : "ready"
+      : progress < routeStart
+        ? "ready"
+        : progress < catchTime
+          ? (Math.floor(progress * 18) % 2 ? "run1" : "run2")
+          : progress < throwStart
+            ? "catch"
+            : progress < throwEnd
+              ? "throw"
+              : "ready";
     actors.set(fielderKey, {
       pose,
-      position: progress >= routeStart && progress < throwEnd ? position : null,
-      angle: pose === "throw" ? (fieldSpot.x < Number(anchors.home?.x ?? 480) ? -7 : 7) : 0
+      position: progress >= routeStart && progress < (homeRun ? 0.96 : throwEnd) ? position : null,
+      angle: !homeRun && pose === "throw" ? (fieldSpot.x < Number(anchors.home?.x ?? 480) ? -7 : 7) : 0
     });
   }
 
@@ -537,7 +654,14 @@ function buildBallState(runtime, frame = null) {
   const play = buildVisualPlay(runtime, frame);
   const throwStart = throwStartTime(event);
   const throwEnd = throwEndTime(event);
-  if (!play.fieldSpot || progress < throwStart || progress > throwEnd) return null;
+  if (!play.fieldSpot || progress > throwEnd) return null;
+  if (progress < throwStart) {
+    return {
+      ...play.fieldSpot,
+      scale: 0.74,
+      trail: []
+    };
+  }
   const throwTarget = throwTargetForEvent(event, anchors);
   const t = easeInOutCubic(clamp01((progress - throwStart) / Math.max(0.01, throwEnd - throwStart)));
   return {
@@ -550,14 +674,19 @@ function buildBallState(runtime, frame = null) {
 function exposeMotionDebug(runtime, frame = null) {
   const play = buildVisualPlay(runtime, frame);
   const ballVisible = Boolean(runtime.scene?.ballSprite?.visible);
+  const positionGuard = collectGamecast2PositionGuard(runtime);
   runtime.screen.dataset.gamecast2MovingDefenseCount = String(play.movingDefenseCount ?? 0);
   runtime.screen.dataset.gamecast2BallVisible = ballVisible ? "1" : "0";
+  runtime.screen.dataset.gamecast2PositionViolations = String(positionGuard.violations.length);
+  runtime.screen.dataset.gamecastAbilityUnderlays = String(runtime.gamecast2RatingTokens?.length ?? 0);
   runtime.screen.__gamecast2Frame = {
     eventId: String(frame?.event?.id ?? ""),
     outcome: String(frame?.event?.outcome ?? ""),
     progress: Number(frame?.progress ?? 0),
     movingDefenseCount: play.movingDefenseCount ?? 0,
-    ballVisible
+    ballVisible,
+    positionGuard,
+    ratingTokens: runtime.gamecast2RatingTokens ?? []
   };
 }
 
@@ -596,10 +725,14 @@ function isBattedBallOutcome(outcome) {
   return ["single", "double", "triple", "homeRun", "out", "error"].includes(String(outcome ?? ""));
 }
 
-function fieldingKeyForEvent(event, anchors) {
+function fieldingKeyForEvent(event, anchors, target = null) {
   const explicit = String(event?.fieldingPosition ?? event?.defenderPosition ?? "").toUpperCase();
   if (DEFENSE_ANCHORS.includes(explicit)) return explicit;
-  if (event?.outcome === "homeRun") return "";
+  if (event?.outcome === "homeRun" && target) {
+    return ["LF", "CF", "RF"]
+      .filter((key) => anchors[key])
+      .sort((a, b) => Math.abs(Number(anchors[a].x) - Number(target.x)) - Math.abs(Number(anchors[b].x) - Number(target.x)))[0] ?? "CF";
+  }
   const type = String(event?.battedBallType ?? "").toLowerCase();
   const lane = eventNoise(event, 4);
   if (type.includes("ground") || (event?.outcome === "out" && lane > -0.35 && lane < 0.35)) {
@@ -617,14 +750,23 @@ function fieldingSpotForEvent(event, anchors, key) {
   const anchor = anchors[key];
   const home = anchors.home;
   if (!anchor || !home) return anchor ?? home ?? { x: 480, y: 420 };
+  if (event?.outcome === "homeRun" && OUTFIELD_ANCHORS.has(key)) {
+    const wallTarget = battedBallTargetForEvent(event, anchors);
+    const x = lerp(anchor.x, wallTarget.x, 0.62);
+    return clampDefenderDesignPoint({
+      x,
+      y: outfieldPlayableMinY(anchors, x) + 6,
+      scale: lerp(Number(anchor.scale ?? 1), Number(wallTarget.scale ?? anchor.scale ?? 1), 0.45)
+    }, anchors, key);
+  }
   const towardHome = normalizeVector(home.x - anchor.x, home.y - anchor.y);
   const lateral = eventNoise(event, 8) * (OUTFIELD_ANCHORS.has(key) ? 34 : 16);
   const depth = OUTFIELD_ANCHORS.has(key) ? 18 + Math.abs(eventNoise(event, 9)) * 22 : 10;
-  return {
+  return clampDefenderDesignPoint({
     x: anchor.x + lateral + towardHome.x * depth,
     y: anchor.y + towardHome.y * depth,
     scale: anchor.scale
-  };
+  }, anchors, key);
 }
 
 function battedBallTargetForEvent(event, anchors) {
@@ -647,11 +789,28 @@ function throwTargetForEvent(event, anchors) {
   return anchors.first ?? anchors.home ?? { x: 720, y: 420 };
 }
 
-function batterRunPosition(anchors, progress, start) {
+function batterRunPosition(anchors, event, progress, start) {
   const home = derivePlateActor(anchors, "batter") ?? anchors.home;
-  const first = anchors.first ?? home;
-  const t = easeInOutCubic(clamp01((progress - start) / 0.36));
-  return arcPoint(home, first, t, 18);
+  const plate = anchors.home ?? home;
+  const first = anchors.first ?? plate;
+  const second = anchors.second ?? first;
+  const third = anchors.third ?? second;
+  const advance = gamecast2AdvanceCount(event?.outcome);
+  const route = [home, first, second, third, plate];
+  const duration = Math.max(0.12, Math.min(0.94 - start, 0.32 + Math.max(0, advance - 1) * 0.1));
+  const routeT = easeInOutCubic(clamp01((progress - start) / duration));
+  const traveled = routeT * advance;
+  const segment = Math.min(Math.max(0, advance - 1), Math.floor(traveled));
+  const localT = clamp01(traveled - segment);
+  return arcPoint(route[segment], route[segment + 1], localT, 18);
+}
+
+function gamecast2AdvanceCount(outcome) {
+  if (outcome === "homeRun") return 4;
+  if (outcome === "triple") return 3;
+  if (outcome === "double") return 2;
+  if (["single", "walk", "error", "out"].includes(String(outcome ?? ""))) return 1;
+  return 1;
 }
 
 function battedBallArc(event) {
@@ -660,6 +819,110 @@ function battedBallArc(event) {
   if (event?.outcome === "double") return 64;
   if (String(event?.battedBallType ?? "").toLowerCase().includes("ground")) return 8;
   return 42;
+}
+
+function clampActorDesignPosition(actor, position, runtime) {
+  const point = position ?? { x: actor?.designX ?? GAMECAST2_DESIGN_W / 2, y: actor?.designY ?? GAMECAST2_DESIGN_H / 2 };
+  if (actor?.isDefender) {
+    return clampDefenderDesignPoint(point, runtime?.anchors?.anchors ?? {}, actor.fieldingKey || actor.key);
+  }
+  return clampDesignPointToCanvas(point);
+}
+
+function clampDefenderDesignPoint(point, anchors, key) {
+  const raw = point ?? {};
+  const anchor = anchors?.[key];
+  let x = Number(raw.x ?? anchor?.x ?? GAMECAST2_DESIGN_W / 2);
+  let y = Number(raw.y ?? anchor?.y ?? GAMECAST2_DESIGN_H / 2);
+  x = clampNumber(x, FIELD_EDGE_PADDING, GAMECAST2_DESIGN_W - FIELD_EDGE_PADDING);
+  y = clampNumber(y, FIELD_EDGE_PADDING, GAMECAST2_DESIGN_H - FIELD_EDGE_PADDING);
+  if (anchor) {
+    const zone = DEFENDER_MOVE_ZONES[key] ?? { x: 54, yTop: 42, yBottom: 44 };
+    x = clampNumber(x, anchor.x - zone.x, anchor.x + zone.x);
+    y = clampNumber(y, anchor.y - zone.yTop, anchor.y + zone.yBottom);
+    if (OUTFIELD_ANCHORS.has(key)) {
+      y = Math.max(y, outfieldPlayableMinY(anchors, x));
+    }
+  }
+  return {
+    ...raw,
+    x,
+    y,
+    scale: Number(raw.scale ?? anchor?.scale ?? 1)
+  };
+}
+
+function clampDesignPointToCanvas(point) {
+  return {
+    ...point,
+    x: clampNumber(Number(point?.x ?? GAMECAST2_DESIGN_W / 2), FIELD_EDGE_PADDING, GAMECAST2_DESIGN_W - FIELD_EDGE_PADDING),
+    y: clampNumber(Number(point?.y ?? GAMECAST2_DESIGN_H / 2), FIELD_EDGE_PADDING, GAMECAST2_DESIGN_H - FIELD_EDGE_PADDING)
+  };
+}
+
+function collectGamecast2PositionGuard(runtime) {
+  const scene = runtime?.scene;
+  const sx = Number(runtime?.metrics?.drawScaleX ?? 1) || 1;
+  const sy = Number(runtime?.metrics?.drawScaleY ?? 1) || 1;
+  const anchors = runtime?.anchors?.anchors ?? {};
+  const actors = (scene?.playerObjects ?? []).map((sprite) => {
+    const actor = sprite.__gamecast2Actor ?? {};
+    const point = {
+      x: Number(sprite.x ?? 0) / sx,
+      y: Number(sprite.y ?? 0) / sy
+    };
+    const violation = actor.isDefender ? defenderPositionViolation(point, anchors, actor.fieldingKey || actor.key) : "";
+    return {
+      key: actor.key ?? "",
+      fieldingKey: actor.fieldingKey ?? "",
+      role: actor.role ?? "",
+      x: Math.round(point.x * 100) / 100,
+      y: Math.round(point.y * 100) / 100,
+      violation
+    };
+  });
+  return {
+    violations: actors.filter((actor) => actor.violation),
+    actors
+  };
+}
+
+function defenderPositionViolation(point, anchors, key) {
+  const anchor = anchors?.[key];
+  if (!anchor) return "";
+  const zone = DEFENDER_MOVE_ZONES[key] ?? { x: 54, yTop: 42, yBottom: 44 };
+  const x = Number(point?.x ?? 0);
+  const y = Number(point?.y ?? 0);
+  const tolerance = 1.25;
+  if (x < FIELD_EDGE_PADDING - tolerance || x > GAMECAST2_DESIGN_W - FIELD_EDGE_PADDING + tolerance) return "canvas-x";
+  if (y < FIELD_EDGE_PADDING - tolerance || y > GAMECAST2_DESIGN_H - FIELD_EDGE_PADDING + tolerance) return "canvas-y";
+  if (x < anchor.x - zone.x - tolerance || x > anchor.x + zone.x + tolerance) return "zone-x";
+  if (y < anchor.y - zone.yTop - tolerance || y > anchor.y + zone.yBottom + tolerance) return "zone-y";
+  if (OUTFIELD_ANCHORS.has(key) && y < outfieldPlayableMinY(anchors, x) - tolerance) return "outfield-wall";
+  return "";
+}
+
+function outfieldPlayableMinY(anchors, x) {
+  return outfieldWallYForDesignX(anchors, x) + 10;
+}
+
+function outfieldWallYForDesignX(anchors, x) {
+  const left = anchors?.leftPole ?? { x: 38, y: 252 };
+  const right = anchors?.rightPole ?? { x: 922, y: 252 };
+  const centerAnchor = anchors?.CF ?? { x: GAMECAST2_DESIGN_W / 2, y: 270 };
+  const center = {
+    x: Number(centerAnchor.x ?? GAMECAST2_DESIGN_W / 2),
+    y: Math.min((Number(left.y ?? 252) + Number(right.y ?? 252)) / 2, Number(centerAnchor.y ?? 270) - 16)
+  };
+  const px = Number(x ?? center.x);
+  const from = px < center.x ? left : center;
+  const to = px < center.x ? center : right;
+  const local = (px - Number(from.x ?? 0)) / Math.max(1, Number(to.x ?? 1) - Number(from.x ?? 0));
+  return lerp(Number(from.y ?? center.y), Number(to.y ?? center.y), local);
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, Number(value) || 0));
 }
 
 function curvedRoute(from, to, t, bend = 0) {
@@ -753,8 +1016,8 @@ function derivePlateActor(anchors, role) {
 
   const toFirst = normalizeVector(first.x - home.x, first.y - home.y);
   const toMound = normalizeVector(mound.x - home.x, mound.y - home.y);
-  const plateStride = Math.max(14, Math.min(26, distance(home, first) * 0.052));
-  const forward = Math.max(4, Math.min(10, distance(home, mound) * 0.045));
+  const plateStride = Math.max(20, Math.min(32, distance(home, first) * 0.07));
+  const forward = Math.max(6, Math.min(12, distance(home, mound) * 0.05));
   if (role === "batter") {
     return {
       x: home.x + toFirst.x * plateStride + toMound.x * forward,

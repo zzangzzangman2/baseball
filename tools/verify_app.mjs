@@ -7,8 +7,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..");
 const SRC_DIR = path.join(ROOT_DIR, "src");
+const ASSET_DIR = path.join(ROOT_DIR, "assets");
 const REPORT_DIR = path.join(ROOT_DIR, "reports");
 const REPORT_PATH = path.join(REPORT_DIR, "verification.md");
+const GAMECAST_PLAYER_ATLAS_PATH = path.join(ASSET_DIR, "gamecast", "player-home.json");
+const GAMECAST_MOTION_MIN_FRAMES = {
+  swing: 18,
+  pitch: 18,
+  run: 8,
+  throw: 12,
+  catch: 8,
+  dive: 8,
+  slide: 8,
+  catcher: 8
+};
 
 const MODULE_PATHS = {
   data: path.join(SRC_DIR, "data.js"),
@@ -272,6 +284,7 @@ async function main() {
   await runCheck("다음 경기 보기/시뮬레이션 플로우", checkNextUserGameFlow);
   await runCheck("선수 누적 기록 모델", checkPlayerSeasonStats);
   await runCheck("경기 박스스코어/eventLog", checkGameBoxScoreEventLog);
+  await runCheck("게임캐스트 v3 모션 아틀라스", checkGamecastMotionAtlas);
   await runCheck("하프이닝 경기 AI/작전", checkHalfInningGameAiTactics);
   await runCheck("로테이션/불펜 운용 snapshot", checkPitchingSnapshotUsage);
   await runCheck("수동 투수 운용 우선 적용", checkManualPitchingPlan);
@@ -936,6 +949,8 @@ function checkGameBoxScoreEventLog() {
   let multiRunnerBaseStateSeen = false;
   let ballparkContextSeen = false;
   let paSchemaCount = 0;
+  let gamecastProfileCount = 0;
+  const expectedDefenseKeys = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 
   if (!Array.isArray(state.eventLog)) {
     problems.push("state.eventLog가 배열이 아님");
@@ -962,10 +977,43 @@ function checkGameBoxScoreEventLog() {
     const homeBatting = Array.isArray(boxScore?.batting?.home) ? boxScore.batting.home : [];
     const paEvents = Array.isArray(game.plateAppearanceEvents) ? game.plateAppearanceEvents : [];
     const scoringEvents = Array.isArray(game.scoringEvents) ? game.scoringEvents : [];
+    const gamecast = game.gamecast;
+    const playersById = gamecast?.playersById && typeof gamecast.playersById === "object" ? gamecast.playersById : {};
+    const profiles = Object.values(playersById);
 
     if (!boxScore || !lineAway || !lineHome) {
       problems.push(`${game.id}: boxScore linescore 누락`);
       continue;
+    }
+
+    if (gamecast?.version !== 1 || profiles.length < 18) {
+      problems.push(`${game.id}: gamecast player snapshot missing or too small (${profiles.length})`);
+    }
+    gamecastProfileCount += profiles.length;
+    for (const profile of profiles) {
+      if (!profile?.id || String(profile.id) !== String(playersById[profile.id]?.id ?? "")) {
+        problems.push(`${game.id}: gamecast player registry key mismatch`);
+        break;
+      }
+      for (const key of ["ovr", "batting", "pitching", "fielding", "running"]) {
+        const value = Number(profile[key]);
+        if (!Number.isFinite(value) || value < 0 || value > 200) {
+          problems.push(`${game.id}: gamecast profile ${profile.id} ${key}=${profile[key]}`);
+          break;
+        }
+      }
+    }
+    for (const teamId of [game.awayTeamId, game.homeTeamId]) {
+      const defense = gamecast?.defenseByTeamId?.[teamId] ?? {};
+      const keys = Object.keys(defense).sort();
+      const expected = [...expectedDefenseKeys].sort();
+      const ids = Object.values(defense).map(String);
+      if (keys.join("|") !== expected.join("|")) {
+        problems.push(`${game.id}/${teamId}: gamecast defense keys ${keys.join(",")}`);
+      }
+      if (new Set(ids).size !== ids.length || ids.some((id) => !playersById[id])) {
+        problems.push(`${game.id}/${teamId}: gamecast defense assignment duplicate or unknown player`);
+      }
     }
 
     if (lineAway.runs !== game.awayScore || lineHome.runs !== game.homeScore) {
@@ -1026,6 +1074,30 @@ function checkGameBoxScoreEventLog() {
       if (!isBooleanTriple(event.basesAfter)) {
         problems.push(`${game.id}: PA ${event.sequence} basesAfter schema 오류`);
       }
+      if (!isStringTriple(event.baseRunnerIdsBefore) || !isStringTriple(event.baseRunnerIdsAfter)) {
+        problems.push(`${game.id}: PA ${event.sequence} baseRunnerIds schema error`);
+      } else {
+        for (let index = 0; index < 3; index += 1) {
+          if (Boolean(event.baseRunnerIdsBefore[index]) !== Boolean(event.basesBefore?.[index])) {
+            problems.push(`${game.id}: PA ${event.sequence} baseRunnerIdsBefore occupancy mismatch`);
+            break;
+          }
+          if (Boolean(event.baseRunnerIdsAfter[index]) !== Boolean(event.basesAfter?.[index])) {
+            problems.push(`${game.id}: PA ${event.sequence} baseRunnerIdsAfter occupancy mismatch`);
+            break;
+          }
+        }
+      }
+      for (const [label, playerId, required] of [
+        ["hitter", event.hitterId, true],
+        ["pitcher", event.pitcherId, true],
+        ["defender", event.defenderId, false]
+      ]) {
+        const id = String(playerId ?? "");
+        if ((required && !id) || (id && !playersById[id])) {
+          problems.push(`${game.id}: PA ${event.sequence} ${label} id missing from gamecast registry (${id || "empty"})`);
+        }
+      }
       const runs = safeInteger(event.runs);
       const scoredRunners = Array.isArray(event.scoredRunners) ? event.scoredRunners : [];
       if (runs > 0 && scoredRunners.length !== runs) {
@@ -1069,6 +1141,37 @@ function checkGameBoxScoreEventLog() {
   const totalErrors = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.errors);
   const totalDoublePlays = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.doublePlays);
   return `game.final ${state.eventLog.length}개, 박스스코어 ${state.lastGames.length}경기, PA 이벤트 ${totalPaEvents}개, 실책 ${totalErrors}, 병살 ${totalDoublePlays}`;
+}
+
+function checkGamecastMotionAtlas() {
+  assert(fs.existsSync(GAMECAST_PLAYER_ATLAS_PATH), "player-home.json 아틀라스가 없습니다.", GAMECAST_PLAYER_ATLAS_PATH);
+  const payload = JSON.parse(fs.readFileSync(GAMECAST_PLAYER_ATLAS_PATH, "utf8"));
+  const frames = payload.frames ?? {};
+  const animations = payload.animations ?? {};
+  const meta = payload.meta ?? {};
+  const imagePath = path.join(path.dirname(GAMECAST_PLAYER_ATLAS_PATH), String(meta.image ?? "player-home.png"));
+
+  assert(meta.layout === "v3", `게임캐스트 선수 아틀라스 layout=${meta.layout}; v3 필요`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(fs.existsSync(imagePath), `아틀라스 이미지가 없습니다: ${relativePath(imagePath)}`, imagePath);
+  assert(safeInteger(meta.frameSize?.w) >= 48 && safeInteger(meta.frameSize?.h) >= 48, `프레임 크기 메타가 작습니다: ${JSON.stringify(meta.frameSize)}`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(safeInteger(meta.size?.w) >= safeInteger(meta.frameSize?.w) * 8, `아틀라스 폭이 너무 작습니다: ${JSON.stringify(meta.size)}`, GAMECAST_PLAYER_ATLAS_PATH);
+
+  const problems = [];
+  for (const [name, minimum] of Object.entries(GAMECAST_MOTION_MIN_FRAMES)) {
+    const spec = animations[name];
+    const sequence = Array.isArray(spec?.frames) ? spec.frames : [];
+    const durations = Array.isArray(spec?.durations) ? spec.durations : [];
+    const missing = sequence.filter((frameName) => !frames[frameName]);
+    if (sequence.length < minimum) problems.push(`${name} ${sequence.length}/${minimum}프레임`);
+    if (durations.length !== sequence.length) problems.push(`${name} duration ${durations.length}/${sequence.length}`);
+    if (missing.length > 0) problems.push(`${name} missing ${missing.slice(0, 3).join(",")}`);
+  }
+
+  const denseNames = new Set(Object.values(animations).flatMap((spec) => Array.isArray(spec?.frames) ? spec.frames : []));
+  assert(denseNames.size >= 100, `v3 고밀도 모션 프레임이 부족합니다: ${denseNames.size}`, GAMECAST_PLAYER_ATLAS_PATH);
+  assert(problems.length === 0, `모션 아틀라스 오류 ${problems.length}건. 예: ${problems.slice(0, 6).join(" / ")}`, GAMECAST_PLAYER_ATLAS_PATH);
+
+  return `layout v3, 고유 모션 프레임 ${denseNames.size}개, pitch ${animations.pitch.frames.length}, swing ${animations.swing.frames.length}, throw ${animations.throw.frames.length}`;
 }
 
 function checkHalfInningGameAiTactics() {
@@ -2581,6 +2684,10 @@ function safeInteger(value) {
 
 function isBooleanTriple(value) {
   return Array.isArray(value) && value.length === 3 && value.every((item) => typeof item === "boolean");
+}
+
+function isStringTriple(value) {
+  return Array.isArray(value) && value.length === 3 && value.every((item) => typeof item === "string");
 }
 
 function isPositiveNumber(value) {

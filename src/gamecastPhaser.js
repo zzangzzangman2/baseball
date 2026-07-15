@@ -1,8 +1,9 @@
 const PHASER_DESIGN_W = 400;
 const PHASER_DESIGN_H = 360;
-const PLAYER_ATLAS_SIZE = 48;
+const PLAYER_FALLBACK_ATLAS_SIZE = 48;
 const PLAYER_MIN_RENDER_SCALE = 0.48;
 const PLAYER_MAX_RENDER_SCALE = 0.7;
+const spriteFrameRange = (prefix, count) => Array.from({ length: count }, (_, index) => `${prefix}_${String(index).padStart(2, "0")}`);
 const PLAYER_ATLAS_FRAMES = {
   stance: [0, 0],
   load: [1, 0],
@@ -64,6 +65,17 @@ const PLAYER_ATLAS_FRAMES = {
   run: [0, 2],
   coach: [7, 1],
   umpire: [7, 1]
+};
+const PLAYER_V3_ANIMATIONS = {
+  swing: { frames: spriteFrameRange("swing", 24), durations: [30, 30, 28, 28, 24, 22, 20, 18, 18, 18, 20, 22, 30, 34, 28, 26, 28, 30, 32, 34, 38, 42, 46, 54] },
+  pitch: { frames: spriteFrameRange("pitch", 24), durations: [36, 34, 32, 30, 30, 28, 26, 24, 22, 20, 18, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 40, 44, 50] },
+  run: { frames: spriteFrameRange("run", 8), durations: [55, 55, 55, 55, 55, 55, 55, 55] },
+  walk: { frames: spriteFrameRange("walk", 6), durations: [95, 95, 95, 95, 95, 95] },
+  throw: { frames: spriteFrameRange("throw", 12), durations: [42, 38, 34, 30, 24, 20, 20, 24, 28, 32, 38, 44] },
+  catch: { frames: spriteFrameRange("catch", 10), durations: [48, 42, 36, 28, 28, 34, 42, 48, 56, 64] },
+  dive: { frames: spriteFrameRange("dive", 10), durations: [42, 38, 34, 32, 34, 42, 52, 62, 72, 82] },
+  slide: { frames: spriteFrameRange("slide", 8), durations: [42, 36, 32, 34, 44, 58, 72, 86] },
+  catcher: { frames: spriteFrameRange("catcher", 8), durations: [64, 54, 44, 38, 42, 52, 62, 72] }
 };
 const PLAYER_V2_ANIMATIONS = {
   swing: { frames: ["stance", "load", "stride", "swing1", "contact", "swing2", "follow1", "follow2"], durations: [90, 70, 70, 45, 90, 45, 70, 100] },
@@ -408,9 +420,13 @@ function renderScene(scene, runtime, frame) {
     })()
   ].sort(compareGamecastActorDepth);
 
+  runtime.screen.dataset.gamecastAbilityUnderlays = String(
+    actors.filter(({ sprite }) => sprite?.abilityGrade && sprite?.abilityColor).length
+  );
+
   for (const runner of frame.runners ?? []) drawRunnerEffects(fx, runtime, runner, palette);
   for (const actor of actors) drawGamecastPlayer(scene, player, runtime, actor.sprite, actor.role, useSprites);
-  drawThrowLines(ball, runtime, frame);
+  drawThrowLines(scene, ball, runtime, frame);
   drawBallTrail(ball, runtime, frame);
   if (frame.ballShadow) drawBallShadow(ball, runtime, frame.ballShadow);
   if (frame.ball) drawGamecastBall(scene, ball, runtime, frame.ball, frame.ballColor ?? palette.base);
@@ -944,8 +960,8 @@ function fieldSize(runtime, value) {
 function phaserHomePlateCluster(runtime) {
   const home = runtime.basePositions?.home ?? { x: fieldX(runtime, 60), y: fieldY(runtime, 96) };
   return {
-    catcher: { x: home.x, y: home.y + fieldSize(runtime, 3.4) },
-    umpire: { x: home.x - fieldSize(runtime, 3.2), y: home.y + fieldSize(runtime, 6.6) }
+    catcher: { x: home.x - fieldSize(runtime, 1), y: home.y + fieldSize(runtime, 4) },
+    umpire: { x: home.x - fieldSize(runtime, 6), y: home.y + fieldSize(runtime, 8) }
   };
 }
 
@@ -977,9 +993,9 @@ function buildStaticDefenseSprites(runtime, frame) {
   const accentColor = frame.defenseAccentColor ?? color;
   const positions = [
     { key: "C", x: plate.catcher.x, y: plate.catcher.y },
-    { key: "1B", x: fieldX(runtime, 91), y: fieldY(runtime, 74) },
+    { key: "1B", x: fieldX(runtime, 83), y: fieldY(runtime, 70) },
     { key: "2B", x: fieldX(runtime, 73), y: fieldY(runtime, 62) },
-    { key: "3B", x: fieldX(runtime, 29), y: fieldY(runtime, 74) },
+    { key: "3B", x: fieldX(runtime, 37), y: fieldY(runtime, 70) },
     { key: "SS", x: fieldX(runtime, 46), y: fieldY(runtime, 63) },
     { key: "P", x: fieldX(runtime, 60), y: fieldY(runtime, 72.8) },
     { key: "LF", x: fieldX(runtime, 31), y: fieldY(runtime, 47) },
@@ -991,6 +1007,14 @@ function buildStaticDefenseSprites(runtime, frame) {
     if (movingFielders.has(item.key)) continue;
     const transition = staticFielderTransition(runtime, item, frame);
     const position = transition?.position ?? { x: item.x, y: item.y };
+    const profile = item.key === "P"
+      ? frame.event?.pitcherProfile ?? null
+      : frame.event?.defenseProfilesByPosition?.[item.key] ?? null;
+    const uniformRaw = String(profile?.uniformNumber ?? "").trim();
+    const uniformValue = Number(uniformRaw);
+    const ability = phaserFieldingAbility(frame.event, item.key);
+    const active = item.key === "P"
+      || item.key === String(frame.event?.fieldingPosition ?? frame.event?.defenderPosition ?? "").toUpperCase();
     sprites.push({
       position,
       color,
@@ -1004,10 +1028,31 @@ function buildStaticDefenseSprites(runtime, frame) {
       runFrame: transition ? Math.floor(transition.t * 8) % 4 : 0,
       fieldingKey: item.key,
       facing: transition ? transition.facing : item.key === "C" ? 1 : undefined,
-      renderScale: item.key === "C" ? 0.62 : item.key === "P" ? 0.58 : undefined
+      uniformNumber: uniformRaw && Number.isFinite(uniformValue) ? Math.abs(Math.floor(uniformValue)) % 10 : undefined,
+      ...phaserAbilitySpriteFields(ability, active)
     });
   }
   return sprites;
+}
+
+function phaserFieldingAbility(event, key) {
+  const fieldingKey = String(key ?? "").toUpperCase();
+  if (fieldingKey === "P") return event?.pitcherAbility ?? event?.defenseAbilityByPosition?.P ?? null;
+  const activeKey = String(event?.fieldingPosition ?? event?.defenderPosition ?? "").toUpperCase();
+  if (fieldingKey && fieldingKey === activeKey && event?.defenderAbility) return event.defenderAbility;
+  return event?.defenseAbilityByPosition?.[fieldingKey] ?? null;
+}
+
+function phaserAbilitySpriteFields(ability, active = false) {
+  if (!ability?.grade || !ability?.color) return {};
+  return {
+    abilityGrade: String(ability.grade),
+    abilityColor: String(ability.color),
+    abilityScore: Number(ability.score ?? 0),
+    abilityActive: Boolean(active),
+    playerId: String(ability.playerId ?? ""),
+    playerName: String(ability.playerName ?? "")
+  };
 }
 
 function staticFielderTransition(runtime, item, frame) {
@@ -1086,8 +1131,41 @@ function drawRunnerEffects(graphics, runtime, runner, palette) {
 }
 
 function drawGamecastPlayer(scene, graphics, runtime, sprite, role, useSprites) {
+  drawPlayerAbilityPlate(graphics, runtime, sprite, role);
   if (useSprites && drawSpritePlayer(scene, graphics, runtime, sprite, role)) return;
   drawPlayer(graphics, runtime, sprite, role);
+}
+
+function drawPlayerAbilityPlate(graphics, runtime, sprite, role) {
+  if (!sprite?.position || !sprite.abilityGrade || !sprite.abilityColor) return;
+  const x = Number(sprite.position.x ?? 0);
+  const y = Number(sprite.position.y ?? 0);
+  const renderScale = gamecastPlayerRenderScale(runtime, sprite, role);
+  const active = Boolean(sprite.abilityActive);
+  const width = Math.max(16, Math.round(24 * renderScale) + (active ? 4 : 0));
+  const height = active ? 8 : 7;
+  const left = x - width / 2;
+  const top = y - height / 2 + 1;
+  rect(graphics, runtime, left - 2, top - 2, width + 4, height + 4, runtime.palette.outline, active ? 0.92 : 0.76);
+  rect(graphics, runtime, left, top, width, height, sprite.abilityColor, active ? 0.96 : 0.72);
+  rect(graphics, runtime, left + 2, top + 2, width - 4, Math.max(2, height - 4), runtime.palette.uniformSh, 0.96);
+  drawAbilityGradeGlyph(graphics, runtime, String(sprite.abilityGrade).slice(0, 1), left + width - 5, top + 1, sprite.abilityColor);
+}
+
+function drawAbilityGradeGlyph(graphics, runtime, grade, x, y, color) {
+  const patterns = {
+    S: ["111", "100", "111", "001", "111"],
+    A: ["010", "101", "111", "101", "101"],
+    B: ["110", "101", "110", "101", "110"],
+    C: ["111", "100", "100", "100", "111"],
+    D: ["110", "101", "101", "101", "110"]
+  };
+  const pattern = patterns[grade] ?? patterns.D;
+  for (let row = 0; row < pattern.length; row += 1) {
+    for (let column = 0; column < pattern[row].length; column += 1) {
+      if (pattern[row][column] === "1") rect(graphics, runtime, x + column, y + row, 1, 1, color, 1);
+    }
+  }
 }
 
 function hasPlayerSprites(scene) {
@@ -1139,8 +1217,8 @@ function gamecastPlayerRenderScale(runtime, sprite, role) {
   return base;
 }
 
-const CENTER_ORIGIN_X = 24 / PLAYER_ATLAS_SIZE;
-const BASELINE_ORIGIN_Y = 45 / PLAYER_ATLAS_SIZE;
+const CENTER_ORIGIN_X = 0.5;
+const BASELINE_ORIGIN_Y = 45 / PLAYER_FALLBACK_ATLAS_SIZE;
 
 function spriteFrameForPose(scene, textureKey, sprite, role) {
   if (role === "umpire") return "umpire";
@@ -1187,6 +1265,8 @@ function normalizeAnimationTime(value, loop = false) {
 }
 
 function selectSpriteAnimationSpec(scene, textureKey, key) {
+  const v3 = PLAYER_V3_ANIMATIONS[key];
+  if (v3 && v3.frames.every((frame) => textureHasFrame(scene, textureKey, frame))) return v3;
   const v2 = PLAYER_V2_ANIMATIONS[key];
   if (v2 && v2.frames.every((frame) => textureHasFrame(scene, textureKey, frame))) return v2;
   const legacy = PLAYER_LEGACY_ANIMATIONS[key];
@@ -1243,15 +1323,15 @@ function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
         imageData.data[offset + 2] = secondary[2];
       }
     }
-    liftSpriteSkinPixels(imageData, originalData, canvas.width, canvas.height);
+    const frameMetrics = inferPlayerTextureFrameMetrics(scene, baseKey);
+    liftSpriteSkinPixels(imageData, originalData, canvas.width, canvas.height, frameMetrics.width, frameMetrics.height);
     ctx.putImageData(imageData, 0, 0);
 
     const texture = scene.textures.addCanvas(cacheKey, canvas);
-    for (const [name, [col, row]] of Object.entries(PLAYER_ATLAS_FRAMES)) {
-      const x = col * PLAYER_ATLAS_SIZE;
-      const y = row * PLAYER_ATLAS_SIZE;
-      if (x + PLAYER_ATLAS_SIZE > canvas.width || y + PLAYER_ATLAS_SIZE > canvas.height) continue;
-      texture.add(name, 0, x, y, PLAYER_ATLAS_SIZE, PLAYER_ATLAS_SIZE);
+    for (const name of playerTextureFrameNames(scene, baseKey)) {
+      const rect = playerTextureFrameRect(scene, baseKey, name);
+      if (!rect || rect.x + rect.width > canvas.width || rect.y + rect.height > canvas.height) continue;
+      texture.add(name, rect.sourceIndex, rect.x, rect.y, rect.width, rect.height);
     }
     texture.refresh?.();
     scene.gamecastTeamTextureCache?.set(cacheKey, cacheKey);
@@ -1261,7 +1341,50 @@ function ensureTeamSpriteAtlas(scene, baseKey, accentColor) {
   }
 }
 
-function liftSpriteSkinPixels(imageData, originalData, width, height) {
+function playerTextureFrameNames(scene, textureKey) {
+  const texture = scene?.textures?.get?.(textureKey);
+  const names = typeof texture?.getFrameNames === "function"
+    ? texture.getFrameNames().filter((name) => name && name !== "__BASE")
+    : [];
+  return names.length ? names : Object.keys(PLAYER_ATLAS_FRAMES);
+}
+
+function playerTextureFrameRect(scene, textureKey, name) {
+  const frame = scene?.textures?.getFrame?.(textureKey, name);
+  if (frame) {
+    const x = Number(frame.cutX ?? frame.x ?? 0);
+    const y = Number(frame.cutY ?? frame.y ?? 0);
+    const width = Number(frame.cutWidth ?? frame.width ?? PLAYER_FALLBACK_ATLAS_SIZE);
+    const height = Number(frame.cutHeight ?? frame.height ?? PLAYER_FALLBACK_ATLAS_SIZE);
+    return {
+      x,
+      y,
+      width: Math.max(1, width),
+      height: Math.max(1, height),
+      sourceIndex: Number(frame.sourceIndex ?? 0)
+    };
+  }
+
+  const fallback = PLAYER_ATLAS_FRAMES[name];
+  if (!fallback) return null;
+  return {
+    x: fallback[0] * PLAYER_FALLBACK_ATLAS_SIZE,
+    y: fallback[1] * PLAYER_FALLBACK_ATLAS_SIZE,
+    width: PLAYER_FALLBACK_ATLAS_SIZE,
+    height: PLAYER_FALLBACK_ATLAS_SIZE,
+    sourceIndex: 0
+  };
+}
+
+function inferPlayerTextureFrameMetrics(scene, textureKey) {
+  for (const name of playerTextureFrameNames(scene, textureKey)) {
+    const rect = playerTextureFrameRect(scene, textureKey, name);
+    if (rect?.width && rect?.height) return rect;
+  }
+  return { width: PLAYER_FALLBACK_ATLAS_SIZE, height: PLAYER_FALLBACK_ATLAS_SIZE };
+}
+
+function liftSpriteSkinPixels(imageData, originalData, width, height, frameWidth = PLAYER_FALLBACK_ATLAS_SIZE, frameHeight = PLAYER_FALLBACK_ATLAS_SIZE) {
   const skin = [242, 199, 154];
   const skinShadow = [207, 154, 106];
   const writes = [];
@@ -1281,9 +1404,9 @@ function liftSpriteSkinPixels(imageData, originalData, width, height) {
       const baseColor = isNearRgb(sourcePixel, skinShadow, 28) ? skinShadow : skin;
       writes.push([offset, baseColor]);
 
-      const localX = x % PLAYER_ATLAS_SIZE;
-      const localY = y % PLAYER_ATLAS_SIZE;
-      const headArea = localX >= 8 && localX <= 38 && localY >= 9 && localY <= 25;
+      const localX = x % Math.max(1, frameWidth);
+      const localY = y % Math.max(1, frameHeight);
+      const headArea = localX >= frameWidth * 0.17 && localX <= frameWidth * 0.8 && localY >= frameHeight * 0.18 && localY <= frameHeight * 0.54;
       const neighbors = headArea
         ? buildSpriteSkinLiftOffsets()
         : [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1]];
@@ -1391,10 +1514,24 @@ function buildUmpireSprite(runtime, frame) {
   };
 }
 
-function drawThrowLines(graphics, runtime, frame) {
+function drawThrowLines(scene, graphics, runtime, frame) {
   const palette = runtime.palette;
   for (const line of frame.throwLines ?? []) {
-    drawLine(graphics, runtime, line.from, line.to, palette.throw, Number(line.opacity ?? 1), 1);
+    const t = Math.max(0, Math.min(1, Number(line.t ?? 0)));
+    const current = {
+      x: lerp(line.from?.x, line.to?.x, t),
+      y: lerp(line.from?.y, line.to?.y, t)
+    };
+    const opacity = Number(line.opacity ?? 1);
+    drawLine(graphics, runtime, line.from, line.to, palette.throw, opacity * 0.22, 1);
+    drawLine(graphics, runtime, line.from, current, palette.throw, opacity * 0.82, 1);
+    drawGamecastBall(scene, graphics, runtime, {
+      ...current,
+      size: 0.82,
+      opacity,
+      velocityX: Number(line.to?.x ?? 0) - Number(line.from?.x ?? 0),
+      velocityY: Number(line.to?.y ?? 0) - Number(line.from?.y ?? 0)
+    }, palette.base);
   }
 }
 
@@ -1410,21 +1547,24 @@ function drawBallShadow(graphics, runtime, shadow) {
 
 function drawBall(graphics, runtime, ball, color) {
   const size = Math.max(4, Number(ball.size ?? 1) * 3.4);
-  rect(graphics, runtime, ball.x - size / 2 - 1, ball.y - size / 2 - 1, size + 2, size + 2, runtime.palette.outline, Number(ball.opacity ?? 1));
-  rect(graphics, runtime, ball.x - size / 2, ball.y - size / 2, size, size, color, Number(ball.opacity ?? 1));
-  rect(graphics, runtime, ball.x, ball.y - 1, 1, size, runtime.palette.ballSeam, 0.85);
+  const opacity = Number(ball.opacity ?? 1);
+  rect(graphics, runtime, ball.x - size / 2, ball.y - size / 2 - 1, size, 1, runtime.palette.outline, opacity);
+  rect(graphics, runtime, ball.x - size / 2 - 1, ball.y - size / 2, size + 2, size, runtime.palette.outline, opacity);
+  rect(graphics, runtime, ball.x - size / 2, ball.y + size / 2, size, 1, runtime.palette.outline, opacity);
+  rect(graphics, runtime, ball.x - size / 2, ball.y - size / 2, size, size, color, opacity);
+  rect(graphics, runtime, ball.x, ball.y - 1, 1, 2, runtime.palette.ballSeam, 0.85);
 }
 
 function drawGamecastBall(scene, graphics, runtime, ball, color) {
-  drawBall(graphics, runtime, ball, color);
-  if (!scene?.ballSpriteLayer || !scene.textures.exists("gamecast-props")) {
-    return;
-  }
   const speed = Math.abs(Number(ball.velocityX ?? 0)) + Math.abs(Number(ball.velocityY ?? 0));
   const frame = `ball${Math.max(1, Math.min(3, (Math.floor(speed) % 3) + 1))}`;
-  if (!scene.textures.getFrame("gamecast-props", frame)) {
+  if (!scene?.ballSpriteLayer || !scene.textures.exists("gamecast-props") || !scene.textures.getFrame("gamecast-props", frame)) {
+    drawBall(graphics, runtime, ball, color);
     return;
   }
+  const glow = Math.max(3, Number(ball.size ?? 1) * 2.2);
+  rect(graphics, runtime, ball.x - glow, ball.y, glow * 2, 1, color, 0.16);
+  rect(graphics, runtime, ball.x, ball.y - glow, 1, glow * 2, color, 0.16);
   const metrics = runtime.metrics;
   const size = Math.max(1.05, Math.min(1.85, Number(ball.size ?? 1) * 0.68));
   const image = acquirePooledImage(scene, "balls", scene.ballSpriteLayer, "gamecast-props", frame);

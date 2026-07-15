@@ -58,6 +58,7 @@ let browserProfileDir;
 let appUrl;
 let cdp;
 let browserName = "";
+let activeViewportLabel = "viewport";
 
 class VerificationError extends Error {
   constructor(message, location) {
@@ -297,7 +298,7 @@ function checkPackagingConfig() {
 
   const pkg = JSON.parse(fs.readFileSync(PACKAGE_PATH, "utf8"));
   const buildFiles = pkg.build?.files ?? [];
-  const missingBuildEntries = ["index.html", "src/**/*", "assets/**/*", "electron-main.cjs"].filter(
+  const missingBuildEntries = ["index.html", "src/**/*", "assets/**/*", "electron-main.cjs", "electron-preload.cjs"].filter(
     (entry) => !buildFiles.includes(entry)
   );
 
@@ -313,12 +314,16 @@ function checkPackagingConfig() {
     "electron-main.cjs"
   );
   assert(electronMain.includes("nodeIntegration: false"), "Electron nodeIntegration 비활성화 설정을 찾지 못했습니다.", "electron-main.cjs");
+  assert(electronMain.includes("requestSingleInstanceLock"), "Electron 단일 실행 잠금 설정을 찾지 못했습니다.", "electron-main.cjs");
+  assert(electronMain.includes("setVisualZoomLevelLimits"), "Electron 줌 고정 설정을 찾지 못했습니다.", "electron-main.cjs");
+  assert(electronMain.includes("window-state.json"), "Electron 창 크기 저장 설정을 찾지 못했습니다.", "electron-main.cjs");
+  assert(electronMain.includes("electron-preload.cjs"), "Electron preload 연결을 찾지 못했습니다.", "electron-main.cjs");
 
   if (!fs.existsSync(path.join(ROOT_DIR, "node_modules", "electron"))) {
     warnings.push("node_modules/electron이 아직 없습니다. 실제 EXE 빌드 전 `npm install`이 필요합니다.");
   }
 
-  return `main=${pkg.main}, product=${pkg.build?.productName ?? pkg.name}`;
+  return `main=${pkg.main}, preload=electron-preload.cjs, product=${pkg.build?.productName ?? pkg.name}`;
 }
 
 async function checkPlayerTotal() {
@@ -337,6 +342,7 @@ async function checkPlayerTotal() {
 
 async function checkViewport(viewport) {
   assert(cdp, "브라우저 CDP 연결이 없습니다.", "tools/verify_browser.mjs");
+  activeViewportLabel = viewport.label;
 
   browserErrors.length = 0;
   consoleEvents.length = 0;
@@ -352,36 +358,183 @@ async function checkViewport(viewport) {
   await cdp.send("Page.navigate", { url: `${appUrl}?qa=${viewport.label}-${Date.now()}` });
   await loadEvent;
   await waitForStartScreen();
+  await captureQaShot(`${viewport.label}-01-start`);
   await evaluateInBrowser(`document.querySelector("[data-action='start-new']")?.click(); true`);
   await waitForTeamSelect();
+  await captureQaShot(`${viewport.label}-02-team-select`);
   await evaluateInBrowser(`document.querySelector("[data-action='choose-start-team'][data-team-id='kia']")?.click(); true`);
   await waitForManagerSetup();
-  await evaluateInBrowser(`
+  await captureQaShot(`${viewport.label}-03-manager-setup`);
+  const managerSetupSubmitProbe = await evaluateInBrowser(`
     (() => {
       const form = document.querySelector("[data-manager-form]");
       if (!form) return false;
-      form.querySelector("[name='managerName']").value = "검증감독";
+      const nameInput = form.querySelector("[name='managerName']");
+      const result = {
+        hasForm: true,
+        placeholder: nameInput?.getAttribute("placeholder") ?? "",
+        nameRequired: Boolean(nameInput?.hasAttribute("required")),
+        submitted: false
+      };
+      nameInput.value = "";
       form.querySelector("[name='managerAge']").value = "38";
       form.querySelector("[name='managerStyle']").value = "balanced";
       form.requestSubmit();
-      return true;
+      result.submitted = true;
+      return result;
     })()
   `);
+  assert(
+    managerSetupSubmitProbe.hasForm &&
+      managerSetupSubmitProbe.placeholder === "예: 박민준" &&
+      !managerSetupSubmitProbe.nameRequired &&
+      managerSetupSubmitProbe.submitted,
+    `감독 등록 이름 예시/빈칸 제출 설정이 맞지 않습니다: ${JSON.stringify(managerSetupSubmitProbe)}`,
+    "src/ui.js"
+  );
   await waitForAppointment();
+  await captureQaShot(`${viewport.label}-04-appointment`);
+  const defaultManagerNameProbe = await evaluateInBrowser(`
+    (() => {
+      const bodyText = document.body.innerText;
+      return {
+        hasDefaultManager: bodyText.includes("박민준"),
+        stillOnAppointment: Boolean(document.querySelector("[data-appointment-form]"))
+      };
+    })()
+  `);
+  assert(
+    defaultManagerNameProbe.hasDefaultManager && defaultManagerNameProbe.stillOnAppointment,
+    `빈 감독 이름 제출 시 박민준 기본값이 적용되지 않았습니다: ${JSON.stringify(defaultManagerNameProbe)}`,
+    "src/ui.js"
+  );
+  const appointmentContrastProbe = await evaluateInBrowser(`
+    (() => {
+      const readStyle = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const style = getComputedStyle(element);
+        return {
+          color: style.color,
+          backgroundColor: style.backgroundColor,
+          backgroundImage: style.backgroundImage,
+          borderColor: style.borderTopColor,
+          fontWeight: style.fontWeight
+        };
+      };
+      return {
+        legend: readStyle(".interview-question legend span"),
+        optionTitle: readStyle(".interview-question label strong"),
+        optionNote: readStyle(".interview-question label:not(:has(input:checked)) small"),
+        selectedOption: readStyle(".interview-question label:has(input:checked)"),
+        selectedOptionNote: readStyle(".interview-question label:has(input:checked) small"),
+        ceremonyCopy: readStyle(".appointment-ceremony-banner p"),
+        mediaCopy: readStyle(".appointment-media-strip small"),
+        card: readStyle(".appointment-card")
+      };
+    })()
+  `);
+  assert(
+      appointmentContrastProbe.legend?.color === "rgb(43, 23, 34)" &&
+      appointmentContrastProbe.legend?.backgroundColor === "rgb(255, 248, 236)" &&
+      appointmentContrastProbe.optionTitle?.color === "rgb(255, 248, 236)" &&
+      Number(appointmentContrastProbe.optionTitle?.fontWeight ?? 0) >= 900 &&
+      appointmentContrastProbe.optionNote?.color === "rgb(231, 238, 248)" &&
+      appointmentContrastProbe.selectedOptionNote?.color === "rgb(255, 248, 236)" &&
+      appointmentContrastProbe.ceremonyCopy?.color === "rgb(223, 231, 241)" &&
+      appointmentContrastProbe.mediaCopy?.color === "rgb(223, 231, 241)" &&
+      appointmentContrastProbe.selectedOption?.backgroundImage !== "none" &&
+      appointmentContrastProbe.card?.backgroundImage !== "none",
+    `취임 기자회견 색 대비가 낮거나 흐린 스타일이 남아 있습니다: ${JSON.stringify(appointmentContrastProbe)}`,
+    "src/styles.css"
+  );
   await evaluateInBrowser(`document.querySelector("[data-appointment-form]")?.requestSubmit(); true`);
   await waitForRenderedApp();
+  await captureQaShot(`${viewport.label}-05-clubhouse`);
   await installGamecastRafProbe();
   const headerProbe = await evaluateInBrowser(`
     (() => {
       const bodyText = document.body.innerText;
+      const inbox = document.querySelector(".clubhouse-side-rail [data-main-news-inbox]");
+      const grid = inbox?.querySelector(".mailbox-grid");
+      const list = inbox?.querySelector(".mailbox-list");
+      const detail = inbox?.querySelector(".mailbox-body");
+      const renderedMailButtons = [...document.querySelectorAll("[data-main-news-inbox] [data-action='open-mail']")];
+      const item = renderedMailButtons[0] ?? null;
+      const meta = item?.querySelector(".mail-list-meta");
+      const title = item?.querySelector("strong");
+      const content = detail?.querySelector(".mailbox-body-content");
+      const listRect = list?.getBoundingClientRect();
+      const detailRect = detail?.getBoundingClientRect();
+      const itemRect = item?.getBoundingClientRect();
+      const metaRect = meta?.getBoundingClientRect();
+      const titleRect = title?.getBoundingClientRect();
+      const contentRect = content?.getBoundingClientRect();
+      const metaStyle = meta ? getComputedStyle(meta) : null;
+      const managerChip = document.querySelector(".manager-chip");
+      const managerChipStyle = managerChip ? getComputedStyle(managerChip) : null;
+      const teamSelect = document.querySelector("[data-action='select-team']");
+      const unreadButtons = renderedMailButtons.filter((node) => node.classList.contains("is-unread"));
+      const selectedUnread = document.querySelector("[data-main-news-inbox] [data-action='open-mail'].is-selected.is-unread");
+      const lastUnread = unreadButtons.at(-1) ?? null;
+      const selectedUnreadIndex = renderedMailButtons.indexOf(selectedUnread);
+      const lastUnreadIndex = renderedMailButtons.indexOf(lastUnread);
+      const unreadAfterSelectedCount = selectedUnreadIndex < 0 ? -1 : renderedMailButtons
+        .slice(selectedUnreadIndex + 1)
+        .filter((node) => node.classList.contains("is-unread")).length;
+      const selectedUnreadRect = selectedUnread?.getBoundingClientRect();
+      const selectedUnreadBottomGap = selectedUnreadRect && listRect
+        ? Math.round(listRect.bottom - selectedUnreadRect.bottom)
+        : -1;
+      const signatureCounts = new Map();
+      for (const button of renderedMailButtons) {
+        const signature = [
+          button.querySelector(".mail-list-meta em")?.textContent?.trim() ?? "",
+          button.querySelector("strong")?.textContent?.trim() ?? "",
+          button.querySelector("small")?.textContent?.trim() ?? ""
+        ].join("|").replace(/\\s+/g, " ");
+        signatureCounts.set(signature, (signatureCounts.get(signature) ?? 0) + 1);
+      }
+      const duplicateMailSignatures = [...signatureCounts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([signature]) => signature);
+      const duplicateMailSignatureCount = duplicateMailSignatures.length;
       return {
         hasMainNewsInbox: Boolean(document.querySelector("[data-main-news-inbox]")),
         inboxInRightRail: Boolean(document.querySelector(".clubhouse-side-rail [data-main-news-inbox]")),
+        hasMailOnlyClubhouse: Boolean(document.querySelector(".clubhouse-dashboard.is-mail-only")) && !Boolean(document.querySelector(".clubhouse-main-rail")),
         hasTodayDesk: Boolean(document.querySelector("[data-today-desk]")),
-        todayCardLabels: [...document.querySelectorAll("[data-today-desk] .today-desk-cards article span")].map((node) => node.textContent.trim()),
         hasMailboxGrid: Boolean(document.querySelector(".mailbox-grid")),
+        mailboxGridColumns: grid ? getComputedStyle(grid).gridTemplateColumns : "",
+        mailListWidth: Math.round(listRect?.width ?? 0),
+        mailBodyWidth: Math.round(detailRect?.width ?? 0),
+        mailBodyContentWidth: Math.round(contentRect?.width ?? 0),
+        mailItemHeight: Math.round(itemRect?.height ?? 0),
+        mailRowsSeparated: Boolean(metaRect && titleRect && metaRect.bottom <= titleRect.top + 2),
+        renderedMailCount: renderedMailButtons.length,
+        unreadButtonCount: unreadButtons.length,
+        lastItemUnread: Boolean(renderedMailButtons.at(-1)?.classList.contains("is-unread")),
+        mailMetaHeight: Math.round(metaRect?.height ?? 0),
+        mailMetaBackground: metaStyle?.backgroundColor ?? "",
+        mailMetaBorderTop: metaStyle?.borderTopWidth ?? "",
+        mailboxScrollTop: Math.round(list?.scrollTop ?? 0),
+        selectedUnreadOffsetTop: Math.round(selectedUnread?.offsetTop ?? -1),
+        lastUnreadOffsetTop: Math.round(lastUnread?.offsetTop ?? -1),
+        selectedUnreadIndex,
+        lastUnreadIndex,
+        selectedIsLastUnread: Boolean(selectedUnread && lastUnread && selectedUnread === lastUnread),
+        unreadAfterSelectedCount,
+        selectedUnreadBottomGap,
+        duplicateMailSignatureCount,
+        duplicateMailSignatures,
         mailFilterCount: document.querySelectorAll("[data-action='mail-filter']").length,
-        hasUnreadDot: Boolean(document.querySelector(".unread-dot")),
+        hasUnreadMarker: Boolean(document.querySelector(".mail-read-marker.is-unread")),
+        hasWhiteMailIcon: Boolean(document.querySelector(".mail-source-icon, .news-inbox-panel .unread-dot")),
+        teamSelectDisabled: Boolean(teamSelect?.disabled),
+        teamPickerLabel: document.querySelector(".team-picker span")?.textContent?.trim() ?? "",
+        managerChipBorderTop: managerChipStyle?.borderTopWidth ?? "",
+        managerChipBorderLeft: managerChipStyle?.borderLeftWidth ?? "",
+        managerChipBackground: managerChipStyle?.backgroundColor ?? "",
         hasTopbarLogo: Boolean(document.querySelector(".topbar .topbar-logo-plate img")),
         hasDuplicateHero: Boolean(document.querySelector(".hero-card")),
         hasManagerBriefing: Boolean(document.querySelector(".manager-briefing-panel")) || bodyText.includes("감독실"),
@@ -401,13 +554,36 @@ async function checkViewport(viewport) {
   `);
   assert(headerProbe.hasTopbarLogo && !headerProbe.hasDuplicateHero, "상단 로고 이동 또는 중복 구단 히어로 제거가 확인되지 않았습니다.", "src/ui.js");
   assert(
+    headerProbe.mailListWidth >= (viewport.mobile ? 300 : 280) &&
+      headerProbe.mailBodyWidth >= (viewport.mobile ? 300 : 360) &&
+      headerProbe.mailBodyContentWidth >= (viewport.mobile ? 260 : 320) &&
+      headerProbe.mailItemHeight >= 96 &&
+      headerProbe.mailRowsSeparated &&
+      headerProbe.mailMetaHeight <= 24 &&
+      headerProbe.mailMetaBackground === "rgba(0, 0, 0, 0)" &&
+      headerProbe.mailMetaBorderTop === "0px",
+    `받은편지함 가독성 레이아웃이 좁거나 겹칩니다: ${JSON.stringify(headerProbe)}`,
+    "src/styles.css"
+  );
+  assert(
     headerProbe.hasMainNewsInbox &&
       headerProbe.inboxInRightRail &&
-      headerProbe.hasTodayDesk &&
-      headerProbe.todayCardLabels.join("|") === "날씨|성적|순위" &&
+      headerProbe.hasMailOnlyClubhouse &&
+      !headerProbe.hasTodayDesk &&
       headerProbe.hasMailboxGrid &&
       headerProbe.mailFilterCount >= 5 &&
-      headerProbe.hasUnreadDot &&
+      headerProbe.hasUnreadMarker &&
+      (headerProbe.unreadButtonCount === 0 || headerProbe.lastItemUnread) &&
+      (headerProbe.unreadButtonCount === 0 || headerProbe.selectedIsLastUnread) &&
+      (headerProbe.unreadButtonCount === 0 || headerProbe.unreadAfterSelectedCount === 0) &&
+      headerProbe.duplicateMailSignatureCount === 0 &&
+      !headerProbe.hasWhiteMailIcon &&
+      headerProbe.teamSelectDisabled &&
+      headerProbe.teamPickerLabel === "구단 고정" &&
+      headerProbe.managerChipBorderTop === "0px" &&
+      headerProbe.managerChipBorderLeft === "0px" &&
+      headerProbe.managerChipBackground === "rgba(0, 0, 0, 0)" &&
+      (headerProbe.unreadButtonCount <= 1 || (headerProbe.mailboxScrollTop > 0 && headerProbe.selectedUnreadOffsetTop === headerProbe.lastUnreadOffsetTop && headerProbe.selectedUnreadBottomGap <= 24)) &&
       headerProbe.hasPreseasonDesk &&
       headerProbe.hasAssistantBrief &&
       headerProbe.hasMediaBrief &&
@@ -420,7 +596,30 @@ async function checkViewport(viewport) {
       !headerProbe.hasMetricGrid &&
       !headerProbe.hasTodayScheduleCopy &&
       !headerProbe.hasTodayMailPreview,
-    "간소화된 오늘의 데스크/오른쪽 받은편지함/중복 섹션 제거가 확인되지 않았습니다.",
+    `오늘의 데스크 제거/받은편지함 단독 화면/흰 원 아이콘 제거/구단 잠금 검증 실패: ${JSON.stringify(headerProbe)}`,
+    "src/ui.js"
+  );
+  const mailSelectionProbe = await evaluateInBrowser(`
+    (() => {
+      const items = [...document.querySelectorAll(".clubhouse-side-rail [data-action='open-mail']")];
+      const target = items.find((node) => !node.classList.contains("is-selected")) ?? items[0];
+      const targetId = target?.dataset?.mailId ?? "";
+      target?.click();
+      const body = document.querySelector(".clubhouse-side-rail [data-mail-body]");
+      return {
+        itemCount: items.length,
+        targetId,
+        bodyId: body?.dataset?.mailId ?? "",
+        stillClubhouse: Boolean(document.querySelector(".nav-item.is-active[data-tab-id='clubhouse']"))
+      };
+    })()
+  `);
+  assert(
+    mailSelectionProbe.itemCount > 1 &&
+      mailSelectionProbe.targetId &&
+      mailSelectionProbe.bodyId === mailSelectionProbe.targetId &&
+      mailSelectionProbe.stillClubhouse,
+    `받은편지함 목록 선택 후 오른쪽 본문 갱신이 확인되지 않았습니다: ${JSON.stringify(mailSelectionProbe)}`,
     "src/ui.js"
   );
   await switchDashboardTab("lineup");
@@ -501,16 +700,110 @@ async function checkViewport(viewport) {
     "src/ui.js"
   );
   await switchDashboardTab("clubhouse");
+  const preseasonBefore = await evaluateInBrowser(`
+    (() => {
+      const unreadButtons = [...document.querySelectorAll("[data-main-news-inbox] [data-action='open-mail'].is-unread")];
+      return {
+        hadPreseason: document.body.innerText.includes("프리시즌"),
+        currentDate: document.querySelector(".sidebar-card strong")?.textContent?.trim() ?? "",
+        unreadBefore: unreadButtons.length,
+        bottomUnreadBefore: unreadButtons.at(-1)?.dataset?.mailId ?? "",
+        selectedBefore: document.querySelector("[data-main-news-inbox] [data-action='open-mail'].is-selected")?.dataset?.mailId ?? ""
+      };
+    })()
+  `);
+  await evaluateInBrowser(`document.activeElement?.blur?.(); true`);
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await delay(260);
+  const unreadSpaceProbe = await evaluateInBrowser(`
+    (() => ({
+      currentDate: document.querySelector(".sidebar-card strong")?.textContent?.trim() ?? "",
+      unreadAfter: document.querySelectorAll("[data-main-news-inbox] [data-action='open-mail'].is-unread").length,
+      selectedAfter: document.querySelector("[data-main-news-inbox] [data-action='open-mail'].is-selected")?.dataset?.mailId ?? ""
+    }))()
+  `);
+  assert(
+    preseasonBefore.unreadBefore > 0 &&
+      unreadSpaceProbe.currentDate === preseasonBefore.currentDate &&
+      unreadSpaceProbe.unreadAfter < preseasonBefore.unreadBefore &&
+      (unreadSpaceProbe.unreadAfter === 0 || unreadSpaceProbe.selectedAfter !== preseasonBefore.bottomUnreadBefore),
+    `Space 첫 입력이 읽지 않은 편지를 먼저 열지 않았습니다: ${JSON.stringify({ preseasonBefore, unreadSpaceProbe })}`,
+    "src/ui.js"
+  );
+  await evaluateInBrowser(`
+    (async () => {
+      for (let guard = 0; guard < 120; guard += 1) {
+        const unread = document.querySelector("[data-main-news-inbox] [data-action='open-mail'].is-unread");
+        if (!unread) break;
+        unread.click();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      document.activeElement?.blur?.();
+      return true;
+    })()
+  `);
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
   const preseasonProbe = await evaluateInBrowser(`
     (async () => {
-      const before = document.body.innerText;
-      document.querySelector("[data-action='next-day']")?.click();
-      await new Promise((resolve) => setTimeout(resolve, 850));
-      const after = document.body.innerText;
+      const deadline = Date.now() + 3500;
+      let after = document.body.innerText;
+      let currentDate = document.querySelector(".sidebar-card strong")?.textContent?.trim() ?? "";
+      while (Date.now() < deadline && currentDate === ${JSON.stringify(preseasonBefore.currentDate)}) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        after = document.body.innerText;
+        currentDate = document.querySelector(".sidebar-card strong")?.textContent?.trim() ?? "";
+      }
+      after = document.body.innerText;
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
       const newsTypes = [...document.querySelectorAll("[data-news-type]")].map((node) => node.dataset.newsType);
+      const list = document.querySelector("[data-main-news-inbox] .mailbox-list");
+      const renderedMailButtons = [...document.querySelectorAll("[data-main-news-inbox] [data-action='open-mail']")];
+      const unreadButtons = renderedMailButtons.filter((node) => node.classList.contains("is-unread"));
+      const selectedUnread = document.querySelector("[data-main-news-inbox] [data-action='open-mail'].is-selected.is-unread");
+      const lastUnread = unreadButtons.at(-1) ?? null;
+      const selectedUnreadIndex = renderedMailButtons.indexOf(selectedUnread);
+      const lastUnreadIndex = renderedMailButtons.indexOf(lastUnread);
+      const unreadAfterSelectedCount = selectedUnreadIndex < 0 ? -1 : renderedMailButtons
+        .slice(selectedUnreadIndex + 1)
+        .filter((node) => node.classList.contains("is-unread")).length;
+      const listRect = list?.getBoundingClientRect();
+      const selectedUnreadRect = selectedUnread?.getBoundingClientRect();
+      const selectedUnreadBottomGap = selectedUnreadRect && listRect
+        ? Math.round(listRect.bottom - selectedUnreadRect.bottom)
+        : -1;
+      const signatureCounts = new Map();
+      for (const button of renderedMailButtons) {
+        const signature = [
+          button.querySelector(".mail-list-meta em")?.textContent?.trim() ?? "",
+          button.querySelector("strong")?.textContent?.trim() ?? "",
+          button.querySelector("small")?.textContent?.trim() ?? ""
+        ].join("|").replace(/\\s+/g, " ");
+        signatureCounts.set(signature, (signatureCounts.get(signature) ?? 0) + 1);
+      }
+      const duplicateMailSignatures = [...signatureCounts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([signature]) => signature);
+      const duplicateMailSignatureCount = duplicateMailSignatures.length;
       return {
-        hadPreseason: before.includes("프리시즌"),
-        dateAdvanced: after.includes("2026-03-02"),
+        hadPreseason: ${preseasonBefore.hadPreseason ? "true" : "false"},
+        dateAdvanced: currentDate !== ${JSON.stringify(preseasonBefore.currentDate)} && currentDate.startsWith("2026-03-"),
+        spaceShortcutWorked: currentDate !== ${JSON.stringify(preseasonBefore.currentDate)},
+        currentDate,
+        renderedMailCount: renderedMailButtons.length,
+        unreadCount: unreadButtons.length,
+        lastItemUnread: Boolean(renderedMailButtons.at(-1)?.classList.contains("is-unread")),
+        selectedIsLastUnread: Boolean(selectedUnread && lastUnread && selectedUnread === lastUnread),
+        selectedUnreadOffsetTop: Math.round(selectedUnread?.offsetTop ?? -1),
+        lastUnreadOffsetTop: Math.round(lastUnread?.offsetTop ?? -1),
+        selectedUnreadIndex,
+        lastUnreadIndex,
+        unreadAfterSelectedCount,
+        selectedUnreadBottomGap,
+        mailboxScrollTop: Math.round(list?.scrollTop ?? 0),
+        duplicateMailSignatureCount,
+        duplicateMailSignatures,
         gamesStillZero: after.includes("0 / 720경기"),
         boxscores: document.querySelectorAll(".boxscore-mini").length,
         hasSimulationPanel: Boolean(document.querySelector("[data-simulation-progress].is-complete")),
@@ -520,28 +813,53 @@ async function checkViewport(viewport) {
       };
     })()
   `);
-  assert(preseasonProbe.hadPreseason && preseasonProbe.dateAdvanced && preseasonProbe.gamesStillZero && preseasonProbe.boxscores === 0, "프리시즌 하루 진행이 경기 없이 날짜만 넘기지 않았습니다.", "src/ui.js");
+  assert(preseasonProbe.hadPreseason && preseasonProbe.spaceShortcutWorked && preseasonProbe.dateAdvanced && preseasonProbe.gamesStillZero && preseasonProbe.boxscores === 0, `스페이스 계속/프리시즌 진행이 경기 없이 날짜를 넘기지 않았습니다: ${JSON.stringify(preseasonProbe)}`, "src/ui.js");
   assert(preseasonProbe.hasSimulationPanel, "날짜 진행 계산 패널이 완료 상태로 렌더링되지 않았습니다.", "src/ui.js");
   assert(preseasonProbe.hasAssistantMail && preseasonProbe.hasMediaMail && preseasonProbe.hasKboStyleMail, "프리시즌 하루 진행 후 비서/언론/KBO식 메일이 쌓이지 않았습니다.", "src/ui.js");
+  assert(
+    preseasonProbe.renderedMailCount > 30 &&
+      preseasonProbe.unreadCount > 25 &&
+      preseasonProbe.lastItemUnread &&
+      preseasonProbe.selectedIsLastUnread &&
+      preseasonProbe.selectedUnreadOffsetTop === preseasonProbe.lastUnreadOffsetTop &&
+      preseasonProbe.unreadAfterSelectedCount === 0 &&
+      preseasonProbe.mailboxScrollTop > 0 &&
+      preseasonProbe.selectedUnreadBottomGap <= 24 &&
+      preseasonProbe.duplicateMailSignatureCount === 0,
+    `대량 unread 상태에서 전체 목록 맨 아래 unread로 시작하지 않았습니다: ${JSON.stringify(preseasonProbe)}`,
+    "src/ui.js"
+  );
   await switchDashboardTab("operations");
   const weeklyProbe = await evaluateInBrowser(`
     (async () => {
+      const addDays = (value, days) => {
+        const [year, month, day] = String(value).split("-").map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day + days));
+        return date.toISOString().slice(0, 10);
+      };
+      const beforeDate = document.querySelector(".sidebar-card strong")?.textContent?.trim() ?? "";
+      const expectedDate = addDays(beforeDate, 7);
       const hasWeekButton = Boolean(document.querySelector("[data-action='week']"));
       document.querySelector("[data-action='week']")?.click();
       for (let guard = 0; guard < 24; guard += 1) {
         await new Promise((resolve) => setTimeout(resolve, 140));
-        if (document.body.innerText.includes("2026-03-09")) break;
+        const currentDate = document.querySelector(".sidebar-card strong")?.textContent?.trim() ?? "";
+        if (currentDate === expectedDate) break;
       }
       const after = document.body.innerText;
+      const currentDate = document.querySelector(".sidebar-card strong")?.textContent?.trim() ?? "";
       return {
         hasWeekButton,
-        dateAdvanced: after.includes("2026-03-09"),
+        beforeDate,
+        expectedDate,
+        currentDate,
+        dateAdvanced: currentDate === expectedDate,
         gamesStillZero: after.includes("0 / 720경기"),
         boxscores: document.querySelectorAll(".boxscore-mini").length
       };
     })()
   `);
-  assert(weeklyProbe.hasWeekButton && weeklyProbe.dateAdvanced && weeklyProbe.gamesStillZero && weeklyProbe.boxscores === 0, "빠른 주간 진행이 프리시즌에서 7일만 안전하게 넘기지 못했습니다.", "src/ui.js");
+  assert(weeklyProbe.hasWeekButton && weeklyProbe.dateAdvanced && weeklyProbe.gamesStillZero && weeklyProbe.boxscores === 0, `빠른 주간 진행이 프리시즌에서 7일만 안전하게 넘기지 못했습니다: ${JSON.stringify(weeklyProbe)}`, "src/ui.js");
   await evaluateInBrowser(`
     (async () => {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1077,6 +1395,13 @@ async function checkGamecastLab() {
           ...((frame?.defenseSprites ?? []).map((sprite) => ({ source: "dynamic", ...sprite })))
         ];
         const pitcherVisible = defenders.some((sprite) => String(sprite.fieldingKey ?? sprite.key ?? "") === "P");
+        const dynamicDefense = frame?.defenseSprites ?? [];
+        const defenseOutOfBounds = dynamicDefense.some((sprite) => {
+          const pos = sprite.position ?? {};
+          const x = Number(pos.x ?? 0);
+          const y = Number(pos.y ?? 0);
+          return x < 4 || x > 396 || y < 12 || y > 356;
+        });
         let pitchPathWhitePixels = 0;
         if (canvas && frame?.ball?.kind === "pitch") {
           const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -1111,6 +1436,8 @@ async function checkGamecastLab() {
           resultRevealed: Boolean(frame?.resultRevealed),
           pitcherVisible,
           homeRunBadDefense: frame?.event?.outcome === "homeRun" && (frame?.defenseSprites ?? []).some((sprite) => ["catch", "dive", "throw", "lookUp"].includes(String(sprite.pose ?? ""))),
+          homeRunMovingDefense: frame?.event?.outcome === "homeRun" && dynamicDefense.some((sprite) => String(sprite.fieldingKey ?? "") !== "P"),
+          defenseOutOfBounds,
           ballVisible: Boolean(frame?.ball),
           ballKind: frame?.ball?.kind ?? "",
           pitchPathWhitePixels,
@@ -1135,6 +1462,8 @@ async function checkGamecastLab() {
     battedBallFrames: playFeelSamples.filter((sample) => sample.ballKind === "batted").length,
     movingDefenseFrames: playFeelSamples.filter((sample) => sample.movingDefense).length,
     homeRunBadDefenseFrames: playFeelSamples.filter((sample) => sample.homeRunBadDefense).length,
+    homeRunMovingDefenseFrames: playFeelSamples.filter((sample) => sample.homeRunMovingDefense).length,
+    defenseOutOfBoundsFrames: playFeelSamples.filter((sample) => sample.defenseOutOfBounds).length,
     runnerFrames: playFeelSamples.filter((sample) => sample.runnerCount > 0).length,
     burstBeforeRevealFrames: playFeelSamples.filter((sample) => sample.burstVisible && !sample.resultRevealed).length
   };
@@ -1143,6 +1472,8 @@ async function checkGamecastLab() {
   assert(playFeelProbe.battedBallFrames >= 1, `버스트 샘플에서 타구 비행이 잡히지 않습니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
   assert(playFeelProbe.movingDefenseFrames >= 1 || playFeelProbe.runnerFrames >= 1, `버스트 샘플에서 수비/주자 움직임이 없습니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
   assert(playFeelProbe.homeRunBadDefenseFrames === 0, `홈런인데 외야수가 잡는 포즈를 취합니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
+  assert(playFeelProbe.homeRunMovingDefenseFrames === 0, `홈런인데 외야수가 동적으로 따라갑니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
+  assert(playFeelProbe.defenseOutOfBoundsFrames === 0, `수비수가 캔버스 밖/관중석 쪽으로 벗어납니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
   assert(playFeelProbe.burstBeforeRevealFrames === 0, `결과 배지가 연기 전에 표시됩니다: ${JSON.stringify(playFeelProbe)}`, "src/ui.js");
 
   const viewportSweep = [];
@@ -1404,6 +1735,9 @@ async function checkGamecastLab() {
         canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0),
         canvasWidth: Math.round(rect?.width ?? 0),
         canvasHeight: Math.round(rect?.height ?? 0),
+        positionViolations: Number(screen?.dataset?.gamecast2PositionViolations ?? 0),
+        motionViolations: Number(screen?.__gamecast2Frame?.positionGuard?.violations?.length ?? 0),
+        motionViolationActors: screen?.__gamecast2Frame?.positionGuard?.violations ?? [],
         baseDirectionOk: Number(anchors.first?.x ?? 0) > Number(anchors.home?.x ?? 0) && Number(anchors.third?.x ?? 0) < Number(anchors.home?.x ?? 0),
         baseBagOk: Math.abs(Number(anchors.first?.y ?? 0) - Number(anchors.third?.y ?? 999)) <= 4 && Number(anchors.first?.y ?? 999) < Number(anchors.C?.y ?? 0),
         depthOk: Number(anchors.CF?.y ?? 999) < Number(anchors.LF?.y ?? 0) && Number(anchors.LF?.y ?? 999) < Number(anchors.third?.y ?? 0),
@@ -1417,6 +1751,7 @@ async function checkGamecastLab() {
   assert(anchorProbe.anchorCount >= 15 && anchorProbe.missing.length === 0, `v2 앵커가 부족합니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(anchorProbe.canvasPixelW === 960 && anchorProbe.canvasPixelH === 720, `v2 필드 해상도 계약이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.canvasWidth > 0 && anchorProbe.canvasHeight > 0, `v2 캔버스가 보이지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
+  assert(anchorProbe.positionViolations === 0 && anchorProbe.motionViolations === 0, `v2 선수 좌표가 허용 구역 밖입니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.baseDirectionOk && anchorProbe.baseBagOk && anchorProbe.depthOk && anchorProbe.pitcherOk, `v2 앵커 배치가 어긋났습니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(
       anchorProbe.defenderCount === 9 &&
@@ -1544,6 +1879,7 @@ async function collectTabbedCoverage() {
   const coverage = {};
 
   await switchDashboardTab("news");
+  await captureQaShot(`${activeViewportLabel}-tab-news`);
   Object.assign(coverage, await evaluateInBrowser(`
     (() => {
       const bodyText = document.body.innerText || "";
@@ -1554,6 +1890,7 @@ async function collectTabbedCoverage() {
   `));
 
   await switchDashboardTab("players");
+  await captureQaShot(`${activeViewportLabel}-tab-players`);
   Object.assign(coverage, await evaluateInBrowser(`
     (() => {
       const statsPanel = document.querySelector("#stats.stats-panel");
@@ -1571,6 +1908,7 @@ async function collectTabbedCoverage() {
   `));
 
   await switchDashboardTab("postseason");
+  await captureQaShot(`${activeViewportLabel}-tab-postseason`);
   Object.assign(coverage, await evaluateInBrowser(`
     (() => {
       const postseasonPanel = document.querySelector("#postseason.postseason-panel");
@@ -1585,6 +1923,7 @@ async function collectTabbedCoverage() {
   `));
 
   await switchDashboardTab("drafts");
+  await captureQaShot(`${activeViewportLabel}-tab-drafts`);
   Object.assign(coverage, await evaluateInBrowser(`
     (() => {
       const draftPanel = document.querySelector("#draft.draft-panel");
@@ -1603,6 +1942,7 @@ async function collectTabbedCoverage() {
   `));
 
   await switchDashboardTab("market");
+  await captureQaShot(`${activeViewportLabel}-tab-market`);
   Object.assign(coverage, await evaluateInBrowser(`
     (() => {
       const tradeLedgerPanel = document.querySelector("#trade-ledger.trade-ledger-panel");
@@ -1630,6 +1970,7 @@ async function collectTabbedCoverage() {
   `));
 
   await switchDashboardTab("schedule");
+  await captureQaShot(`${activeViewportLabel}-tab-schedule`);
   Object.assign(coverage, await evaluateInBrowser(`
     (() => {
       const schedulePanel = document.querySelector("#schedule.schedule-calendar-panel");
@@ -1652,6 +1993,7 @@ async function collectTabbedCoverage() {
   `));
 
   await switchDashboardTab("lineup");
+  await captureQaShot(`${activeViewportLabel}-tab-lineup`);
   Object.assign(coverage, await evaluateInBrowser(`
     (() => ({
       hasPitchingSnapshot: document.body.innerText.includes("선발 로테이션") && document.body.innerText.includes("불펜 역할")
@@ -1659,6 +2001,7 @@ async function collectTabbedCoverage() {
   `));
 
   await switchDashboardTab("operations");
+  await captureQaShot(`${activeViewportLabel}-tab-operations`);
   Object.assign(coverage, await evaluateInBrowser(`
     (() => ({
       hasSeasonFastButton: Boolean(document.querySelector("[data-action='season']")),
@@ -1904,6 +2247,20 @@ async function evaluateInBrowser(expression) {
   return result.result?.value;
 }
 
+async function captureQaShot(name) {
+  if (!cdp) return;
+  await delay(80);
+  const safeName = String(name).replace(/[^a-z0-9_-]+/gi, "-").toLowerCase();
+  const result = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+    captureBeyondViewport: false
+  });
+  if (!result?.data) return;
+  fs.mkdirSync(REPORT_DIR, { recursive: true });
+  fs.writeFileSync(path.join(REPORT_DIR, `ui-tour-${safeName}.png`), Buffer.from(result.data, "base64"));
+}
+
 async function waitForDevToolsEndpoint(profileDir, childProcess, stderrLines) {
   const portFile = path.join(profileDir, "DevToolsActivePort");
   const deadline = Date.now() + 12000;
@@ -2036,13 +2393,13 @@ function buildReport() {
   const generatedAt = new Date().toISOString();
 
   const lines = [
-    "# 브라우저/패키징 QA 보고서",
+    "# Electron 렌더링/패키징 QA 보고서",
     "",
     `- 실행 시각: ${generatedAt}`,
     `- 작업 폴더: ${ROOT_DIR}`,
     `- 실행 Node: ${process.execPath} (${process.version})`,
-    `- 대상 URL: ${appUrl ?? "-"}`,
-    `- 브라우저: ${browserName || "-"}`,
+    `- 렌더링 검증 URL: ${appUrl ?? "-"}`,
+    `- 검증 렌더러: ${browserName || "-"}`,
     `- 종합 결과: ${failed === 0 ? "통과" : "실패"} (${passed}/${results.length} 통과, 경고 ${warnings.length}건)`,
     "",
     "## 체크 결과",
@@ -2075,7 +2432,7 @@ function buildReport() {
     "## 실행 명령",
     "",
     "```powershell",
-    "npm run verify:browser",
+    "npm run verify:electron",
     "```",
     ""
   );

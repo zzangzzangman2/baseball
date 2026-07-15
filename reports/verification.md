@@ -1,10 +1,10 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-08T05:11:04.084Z
+- 실행 시각: 2026-07-15T01:16:27.729Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Program Files\nodejs\node.exe (v24.18.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
-- 종합 결과: 통과 (38/38 통과)
+- 종합 결과: 통과 (39/39 통과)
 
 ## 체크 결과
 
@@ -27,12 +27,13 @@
 | 다음 경기 보기/시뮬레이션 플로우 | PASS | 프리시즌 차단 후 2026-03-28 KT@LG, Gamecast PA 78개 포커스 | - |
 | 선수 누적 기록 모델 | PASS | 타자 90명/투수 29명 기록, 득점 34, PA 391, 투수아웃 264 | - |
 | 경기 박스스코어/eventLog | PASS | game.final 5개, 박스스코어 5경기, PA 이벤트 391개, 실책 0, 병살 0 | - |
+| 게임캐스트 v3 모션 아틀라스 | PASS | layout v3, 고유 모션 프레임 110개, pitch 24, swing 24, throw 12 | - |
 | 하프이닝 경기 AI/작전 | PASS | 경기 81개, 희생번트 250, 대타 127, 세이브상황 CL 282/290, 9회말 생략 28, 끝내기 10 | - |
 | 로테이션/불펜 운용 snapshot | PASS | 7일 선발 41명, 등판 투수 104명, SU 24, CL 15, W-L 30-30, SV 17, HLD 9 | - |
 | 수동 투수 운용 우선 적용 | PASS | 수동 nextStarter 리오스, CL 김윤식, SV 김윤식, 부상 슬롯 자동 보정 확인 | - |
 | 운영 깊이 v0: 개인성/전략/스카우트/서사 | PASS | 개인성 55명, 전략 강공, 스카우트 리포트 5건, 서사 24개 | - |
 | FM 압박 v1: 구단주/불만/약속 | PASS | 목표 가을야구 진출, 철학 rebuild, 면담 송찬의 면담 요청, 약속 fulfilled/broken, 경질 구단주 결정: 감독직 해임 통보 | - |
-| FM식 daily loop: mailbox/continue/content | PASS | mailbox 4통/open 1건, 만료 1건, camp 101통/7경기 | - |
+| FM식 daily loop: mailbox/continue/content | PASS | mailbox 4통/open 1건, 만료 1건, camp 93통/7경기 | - |
 | simulateDays 실행 | PASS | 7일 진행 후 day=35, gamesPlayed=30 | - |
 | simulateRegularSeason 종료 상태 | PASS | 정규시즌 종료: 720/720경기, day=196, phase=complete | - |
 | 포스트시즌/시상식 자동 생성 | PASS | SSG 랜더스 우승, PS 15경기, MVP 올러, GG 10명 | - |

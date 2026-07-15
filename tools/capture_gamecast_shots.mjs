@@ -149,9 +149,17 @@ const burstProbe = () => scopedEval(`
     ...((frame?.staticDefense ?? []).map((sprite) => ({ source: "static", ...sprite }))),
     ...((frame?.defenseSprites ?? []).map((sprite) => ({ source: "dynamic", ...sprite })))
   ];
+  const dynamicDefense = frame?.defenseSprites ?? [];
   const pitcherVisible = defenders.some((sprite) => String(sprite.fieldingKey ?? sprite.key ?? "") === "P");
-  const homerBadDefense = frame?.event?.outcome === "homeRun" && (frame?.defenseSprites ?? []).some((sprite) => ["catch", "dive", "throw", "lookUp"].includes(String(sprite.pose ?? "")));
-  const movingDefense = (frame?.defenseSprites ?? []).some((sprite) => String(sprite.fieldingKey ?? "") !== "P");
+  const homerBadDefense = frame?.event?.outcome === "homeRun" && dynamicDefense.some((sprite) => ["catch", "dive", "throw", "lookUp"].includes(String(sprite.pose ?? "")));
+  const homerMovingDefense = frame?.event?.outcome === "homeRun" && dynamicDefense.some((sprite) => String(sprite.fieldingKey ?? "") !== "P");
+  const defenseOutOfBounds = dynamicDefense.some((sprite) => {
+    const pos = sprite.position ?? {};
+    const x = Number(pos.x ?? 0);
+    const y = Number(pos.y ?? 0);
+    return x < 4 || x > 396 || y < 12 || y > 356;
+  });
+  const movingDefense = dynamicDefense.some((sprite) => String(sprite.fieldingKey ?? "") !== "P");
   const burst = root.querySelector("[data-gamecast-action-burst]");
   const burstVisible = Boolean(burst?.classList.contains("is-visible"));
   const canvas = root.querySelector("[data-gamecast-canvas]");
@@ -171,6 +179,8 @@ const burstProbe = () => scopedEval(`
     pitcherVisible,
     movingDefense,
     homerBadDefense,
+    homerMovingDefense,
+    defenseOutOfBounds,
     runnerCount: frame?.runners?.length ?? 0,
     burstVisible,
     burstText: burst?.textContent?.trim() ?? "",
@@ -210,6 +220,8 @@ if (MODE === "burst") {
     battedBallFrames: samples.filter((sample) => sample.ballKind === "batted").length,
     movingDefenseFrames: samples.filter((sample) => sample.movingDefense).length,
     homeRunBadDefenseFrames: samples.filter((sample) => sample.homerBadDefense).length,
+    homeRunMovingDefenseFrames: samples.filter((sample) => sample.homerMovingDefense).length,
+    defenseOutOfBoundsFrames: samples.filter((sample) => sample.defenseOutOfBounds).length,
     runnerFrames: samples.filter((sample) => sample.runnerCount > 0).length,
     burstBeforeRevealFrames: samples.filter((sample) => sample.burstVisible && !sample.resultRevealed).length
   };
@@ -237,7 +249,8 @@ if (MODE === "anchors") {
         outcome: frame.outcome ?? "",
         progress: Number(frame.progress ?? 0),
         movingDefenseCount: Number(frame.movingDefenseCount ?? screen?.dataset?.gamecast2MovingDefenseCount ?? 0),
-        ballVisible: Boolean(frame.ballVisible ?? screen?.dataset?.gamecast2BallVisible === "1")
+        ballVisible: Boolean(frame.ballVisible ?? screen?.dataset?.gamecast2BallVisible === "1"),
+        positionViolations: Number(frame.positionGuard?.violations?.length ?? screen?.dataset?.gamecast2PositionViolations ?? 0)
       };
     `)));
     if (index < 11) await sleep(300);
@@ -261,13 +274,14 @@ if (MODE === "anchors") {
         ballFrames: ${JSON.stringify(motionSamples)}.filter((sample) => sample.ballVisible).length,
         movingDefenseFrames: ${JSON.stringify(motionSamples)}.filter((sample) => sample.movingDefenseCount > 0).length,
         homeRunBadDefenseFrames: ${JSON.stringify(motionSamples)}.filter((sample) => sample.outcome === "homeRun" && sample.movingDefenseCount > 0).length,
+        positionViolationFrames: ${JSON.stringify(motionSamples)}.filter((sample) => sample.positionViolations > 0).length,
         samples: ${JSON.stringify(motionSamples)}
       },
       canvasPixelW: Number(canvas?.dataset?.pixelW ?? 0),
       canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0)
     };
   `));
-  if (meta.engine !== "v2" || meta.anchorCount < 15 || meta.defenderCount !== 9 || meta.playerCount < 10 || meta.canvasPixelW !== 960 || meta.canvasPixelH !== 720) {
+  if (meta.engine !== "v2" || meta.anchorCount < 15 || meta.defenderCount !== 9 || meta.playerCount < 10 || meta.canvasPixelW !== 960 || meta.canvasPixelH !== 720 || meta.motion.positionViolationFrames > 0) {
     throw new Error(`Gamecast v2 anchors failed: ${JSON.stringify(meta)}`);
   }
   writeFileSync(path.join(OUT, "anchors-summary.json"), JSON.stringify(meta, null, 2));

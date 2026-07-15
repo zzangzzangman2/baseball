@@ -4163,6 +4163,16 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
   });
   const plateAppearanceEvents = mergeGameEvents(awayOffense.plateAppearanceEvents, homeOffense.plateAppearanceEvents);
   const scoringEvents = mergeGameEvents(awayOffense.scoringEvents, homeOffense.scoringEvents).slice(0, KEY_EVENT_LIMIT);
+  const gamecast = buildGamecastSnapshot({
+    away,
+    home,
+    awayLineup,
+    homeLineup,
+    awayPitchingPlan,
+    homePitchingPlan,
+    awayOffense,
+    homeOffense
+  });
 
   if (options.countInStandings !== false) {
     applyGameStats(home, away, homeRuns, awayRuns, attendance);
@@ -4211,6 +4221,7 @@ function simulateGame(state, matchup, gameIndex, weather, dateKey, options = {})
     } : null,
     extraDecision,
     boxScore,
+    gamecast,
     gameFlow: gameSimulation.flow,
     managerPlans: {
       away: summarizeGameIntervention(awayGamePlan),
@@ -5974,7 +5985,7 @@ function simulateHalfInning(runtime, { inning, isBottom, defenseRuns, walkOffTar
 
     const plateAppearance = result.plateAppearances;
     const outsBeforePlay = runtime.outs;
-    const basesBeforePlay = [Boolean(bases[0]), Boolean(bases[1]), Boolean(bases[2])];
+    const basesBeforePlay = [...bases];
     const scoreBefore = gameScoreSnapshot(runtime.side, result.runs, defenseRuns);
     const pitchingContext = buildPitchingSituation({
       inning,
@@ -6063,7 +6074,7 @@ function simulateHalfInning(runtime, { inning, isBottom, defenseRuns, walkOffTar
       outsBefore: outsBeforePlay,
       outsAfter: runtime.outs,
       basesBefore: basesBeforePlay,
-      basesAfter: [Boolean(bases[0]), Boolean(bases[1]), Boolean(bases[2])],
+      basesAfter: [...bases],
       inningEnded: inningOuts >= 3 || inningEnded(outsBeforePlay, runtime.outs),
       ballpark: runtime.weather?.ballpark,
       scoreBefore,
@@ -6275,7 +6286,7 @@ function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitc
       outs,
       gamePlan
     });
-    const basesBeforePlay = [Boolean(bases[0]), Boolean(bases[1]), Boolean(bases[2])];
+    const basesBeforePlay = [...bases];
     const advancement = applyPlateAppearanceOutcome({
       outcome,
       hitter,
@@ -6321,7 +6332,7 @@ function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitc
       outsBefore: outsBeforePlay,
       outsAfter: outs,
       basesBefore: basesBeforePlay,
-      basesAfter: [Boolean(bases[0]), Boolean(bases[1]), Boolean(bases[2])],
+      basesAfter: [...bases],
       inningEnded: inningEnded(outsBeforePlay, outs),
       ballpark: weather?.ballpark
     });
@@ -6958,6 +6969,8 @@ function addPlateAppearanceEvent(result, input) {
     outsAfter: input.outsAfter,
     basesBefore: toBaseOccupancy(input.basesBefore),
     basesAfter: toBaseOccupancy(input.basesAfter),
+    baseRunnerIdsBefore: toBaseRunnerIds(input.basesBefore),
+    baseRunnerIdsAfter: toBaseRunnerIds(input.basesAfter),
     scoredRunners: (input.advancement?.scoredRunners ?? []).map((runner) => ({
       id: runner.id ?? "",
       name: runner.name ?? ""
@@ -7333,6 +7346,109 @@ function buildBoxScore({ away, home, awayPitchingPlan, homePitchingPlan, awayOff
   };
 }
 
+function buildGamecastSnapshot({
+  away,
+  home,
+  awayLineup,
+  homeLineup,
+  awayPitchingPlan,
+  homePitchingPlan,
+  awayOffense,
+  homeOffense
+}) {
+  const players = uniquePlayers([
+    ...(awayLineup ?? []),
+    ...(homeLineup ?? []),
+    awayPitchingPlan?.starter,
+    ...(awayPitchingPlan?.bullpen ?? []),
+    homePitchingPlan?.starter,
+    ...(homePitchingPlan?.bullpen ?? []),
+    ...(awayOffense?.usedHitters ?? []),
+    ...(homeOffense?.usedHitters ?? []),
+    ...(awayOffense?.usedPitchers ?? []),
+    ...(homeOffense?.usedPitchers ?? [])
+  ].filter(Boolean));
+  const playersById = {};
+  for (const player of players) {
+    const profile = snapshotGamecastPlayer(player);
+    if (profile.id) playersById[profile.id] = profile;
+  }
+
+  return {
+    version: 1,
+    playersById,
+    defenseByTeamId: {
+      [away.id]: buildGamecastDefenseMap(away, awayLineup),
+      [home.id]: buildGamecastDefenseMap(home, homeLineup)
+    }
+  };
+}
+
+function snapshotGamecastPlayer(player) {
+  const position = String(player?.position ?? "").toUpperCase();
+  return {
+    id: String(player?.id ?? player?.playerId ?? ""),
+    name: String(player?.name ?? ""),
+    role: String(player?.role ?? ""),
+    position,
+    uniformNumber: String(player?.uniformNumber ?? player?.jerseyNumber ?? player?.number ?? ""),
+    ovr: clamp(Math.round(safeNumber(player?.ovr, player?.currentAbility)), 0, 200),
+    batting: gamecastCompositeAbility(player, ["contactL", "contactR", "powerL", "powerR", "eye", "situational"]),
+    pitching: gamecastCompositeAbility(player, ["stuff", "control", "movement", "stamina", "pitchingIQ"]),
+    fielding: gamecastCompositeAbility(
+      player,
+      position === "C" ? ["defense", "range", "arm", "catching", "catching"] : ["defense", "range", "arm"]
+    ),
+    running: gamecastCompositeAbility(player, ["speed", "baserunning", "stealing"])
+  };
+}
+
+function gamecastCompositeAbility(player, keys) {
+  const values = keys
+    .map((key) => Number(player?.[key]))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (!values.length) return clamp(Math.round(safeNumber(player?.ovr, 100)), 0, 200);
+  return clamp(Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10), 0, 200);
+}
+
+function buildGamecastDefenseMap(team, lineup) {
+  const players = uniquePlayers((lineup ?? []).filter(Boolean));
+  const defense = buildDefenseContext(team, players);
+  const used = new Set();
+  const assigned = {};
+  const sorted = (entries) => [...entries].sort((a, b) => {
+    const aPlayer = a?.defender ?? a;
+    const bPlayer = b?.defender ?? b;
+    return safeNumber(b?.quality, playerDefenseQuality(bPlayer, "IF")) - safeNumber(a?.quality, playerDefenseQuality(aPlayer, "IF"))
+      || safeNumber(bPlayer?.ovr) - safeNumber(aPlayer?.ovr);
+  });
+  const assign = (key, candidates) => {
+    const player = sorted(candidates).find((entry) => {
+      const candidate = entry?.defender ?? entry;
+      const id = String(candidate?.id ?? candidate?.playerId ?? "");
+      return id && !used.has(id);
+    });
+    if (!player) return;
+    const candidate = player?.defender ?? player;
+    const id = String(candidate.id ?? candidate.playerId);
+    assigned[key] = id;
+    used.add(id);
+  };
+  const entryPosition = (entry) => String(entry?.position ?? entry?.defender?.position ?? entry?.position ?? "").toUpperCase();
+  const exact = (entries, key) => entries.filter((entry) => entryPosition(entry) === key);
+
+  assign("C", defense.catcher);
+  for (const key of ["SS", "2B", "3B", "1B"]) assign(key, exact(defense.infield, key));
+  for (const key of ["CF", "LF", "RF"]) assign(key, exact(defense.outfield, key));
+
+  for (const key of ["SS", "2B", "3B", "1B"]) if (!assigned[key]) assign(key, defense.infield);
+  for (const key of ["CF", "LF", "RF"]) if (!assigned[key]) assign(key, defense.outfield);
+  for (const key of ["C", "SS", "2B", "3B", "1B", "CF", "LF", "RF"]) {
+    if (!assigned[key]) assign(key, [...(defense.defenders ?? []), ...players]);
+  }
+  return assigned;
+}
+
 function normalizedRunsByInning(runsByInning, inningsLength) {
   const values = Array.isArray(runsByInning) ? [...runsByInning] : [];
   while (values.length < inningsLength) values.push(0);
@@ -7436,6 +7552,13 @@ function toBaseOccupancy(value) {
   return Array.isArray(value)
     ? [Boolean(value[0]), Boolean(value[1]), Boolean(value[2])]
     : [false, false, false];
+}
+
+function toBaseRunnerIds(value) {
+  return Array.from({ length: 3 }, (_, index) => {
+    const runner = Array.isArray(value) ? value[index] : null;
+    return runner ? String(runner.id ?? runner.playerId ?? runner.name ?? "") : "";
+  });
 }
 
 function buildPitchingPlan(team) {
@@ -8592,6 +8715,8 @@ function insertMailboxItem(state, item, options = {}) {
       read: Boolean(state.mailbox.items[existingIndex].read && item.read)
     };
   } else {
+    const duplicateIndex = findDuplicateMailboxContentIndex(state.mailbox.items, item);
+    if (duplicateIndex >= 0) return state.mailbox.items[duplicateIndex];
     state.mailbox.items = [item, ...state.mailbox.items];
   }
   pruneMailbox(state);
@@ -8605,6 +8730,8 @@ function deferMailboxItem(state, item, deliverOn) {
   normalizeMailboxState(state);
   if (state.mailbox.items.some((mail) => String(mail.id) === String(item.id))) return null;
   if (state.mailbox.deferred.some((mail) => String(mail.id) === String(item.id))) return null;
+  if (findDuplicateMailboxContentIndex(state.mailbox.items, item) >= 0) return null;
+  if (findDuplicateMailboxContentIndex(state.mailbox.deferred, item) >= 0) return null;
   state.mailbox.deferred = [
     {
       ...item,
@@ -8613,6 +8740,25 @@ function deferMailboxItem(state, item, deliverOn) {
     ...state.mailbox.deferred
   ].slice(0, MAILBOX_DEFERRED_LIMIT);
   return item;
+}
+
+function findDuplicateMailboxContentIndex(items, item) {
+  const key = mailContentDedupeKey(item);
+  if (!key) return -1;
+  return (items ?? []).findIndex((entry) => mailContentDedupeKey(entry) === key);
+}
+
+function mailContentDedupeKey(item) {
+  if (!item || item.decision) return "";
+  const from = normalizeMailDedupeText(item.from?.role ?? "");
+  const category = normalizeMailDedupeText(item.category ?? "");
+  const headline = normalizeMailDedupeText(item.headline ?? "");
+  const body = normalizeMailDedupeText(item.body || headline);
+  return `${from}|${category}|${headline}|${body}`;
+}
+
+function normalizeMailDedupeText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function deliverDeferredMail(state, dateKey = state?.currentDate) {
