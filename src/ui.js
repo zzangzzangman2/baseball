@@ -41,7 +41,7 @@ import {
   simulateSecondaryDraft,
   setSecondaryDraftProtection,
   runAutonomousOffseason
-} from "./engine.js?v=gamecast-wall-impact-20260716-r24";
+} from "./engine.js?v=gamecast-jamsil-only-20260716-r25";
 
 import {
   getContractSummary,
@@ -68,14 +68,14 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-wall-impact-20260716-r24";
+} from "./gamecastPhaser.js?v=gamecast-jamsil-only-20260716-r25";
 
 import {
   canUseGamecast2,
   getGamecast2PlayDurationMs,
   getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-wall-impact-20260716-r24";
+} from "./gamecast2/index.js?v=gamecast-jamsil-only-20260716-r25";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },
@@ -210,6 +210,7 @@ const KBO_GAMECAST_BALLPARKS = {
   "daejeon-hanwha-life": { id: "daejeon-hanwha-life", label: "대전", lf: 99, lcf: 115, cf: 122, rcf: 112, rf: 95, wallHeight: 8, roofed: false, wallColor: "#5e2d35", wallCap: "#321c22", seatColors: ["#f37321", "#24222b", "#ffe39a"], grass: ["#4c886c", "#8dd0ad"], mow: "asymmetric", lightTone: "open", monsterSide: "right" },
   neutral: { id: "neutral", label: "중립", lf: 99, lcf: 116, cf: 121, rcf: 116, rf: 99, wallHeight: 3, roofed: false, wallColor: "#24483a", wallCap: "#1b3a2e", seatColors: ["#6f6874", "#575160", "#b9d9f7"], grass: ["#4f8a73", "#8fd0b4"], mow: "rings", lightTone: "open" }
 };
+const GAMECAST_FIXED_BALLPARK = KBO_GAMECAST_BALLPARKS.jamsil;
 const SIMULATION_STEP_DELAY_MS = 95;
 const SIMULATION_STEPS = [
   "날씨·구장 변수 계산",
@@ -6177,19 +6178,16 @@ function toBaseTriple(value) {
 }
 
 function normalizeGamecastBallparkProfile(game, homeTeam) {
-  const rawPark = game?.ballpark && typeof game.ballpark === "object" ? game.ballpark : {};
-  const rawId = String(rawPark.parkId ?? game?.ballparkId ?? "").trim();
-  const rawName = String(rawPark.name ?? game?.ballparkName ?? game?.ballpark ?? homeTeam?.home ?? "").trim();
-  const byId = rawId ? KBO_GAMECAST_BALLPARKS[rawId] : null;
-  const byName = byId ?? gamecastBallparkByName(rawName);
-  const profile = byName ?? KBO_GAMECAST_BALLPARKS.neutral;
+  // Gamecast presentation is intentionally locked to one authored coordinate
+  // system. The simulation keeps its real venue factors in engine.js.
+  const profile = GAMECAST_FIXED_BALLPARK;
   const attendance = Number(game?.attendance ?? 0);
   const capacity = gamecastBallparkCapacity(profile.id);
   const ratio = capacity > 0 ? Math.max(0.16, Math.min(1, attendance / capacity)) : 0.62;
   const homeColor = normalizeHexColor(getTeamColor(homeTeam), "#315288");
   return {
     ...profile,
-    name: rawName || profile.label,
+    name: profile.label,
     teamId: homeTeam?.id ?? "",
     homeColor,
     attendance,
@@ -6391,6 +6389,7 @@ function initGamecastPixelScreen(root, appState = null) {
     const actionBurst = screen.querySelector("[data-gamecast-action-burst]");
     const engine = normalizeGamecastEngine(screen.dataset?.gamecastEngineCurrent ?? latestGamecastEngine);
     if (!board || !canvas) continue;
+    screen.dataset.gamecastBallpark = normalizeGamecastSequenceBallpark(latestGamecastSequence?.ballparkProfile).id;
 
     const controllerOptions = {
       screen,
@@ -7270,20 +7269,21 @@ function normalizeGamecastSequenceForPlayback(sequence) {
 }
 
 function normalizeGamecastSequenceBallpark(profile) {
-  if (!profile || typeof profile !== "object") return KBO_GAMECAST_BALLPARKS.neutral;
-  const base = KBO_GAMECAST_BALLPARKS[String(profile.id ?? "")] ?? KBO_GAMECAST_BALLPARKS.neutral;
-  const attendance = Number(profile.attendance ?? 0);
-  const capacity = Number(profile.capacity ?? gamecastBallparkCapacity(base.id));
+  const input = profile && typeof profile === "object" ? profile : {};
+  const base = GAMECAST_FIXED_BALLPARK;
+  const attendance = Number(input.attendance ?? 0);
+  const capacity = gamecastBallparkCapacity(base.id);
   return {
     ...base,
-    ...profile,
-    id: String(profile.id ?? base.id),
+    id: base.id,
+    name: base.label,
+    label: base.label,
+    teamId: String(input.teamId ?? ""),
+    weatherLabel: String(input.weatherLabel ?? ""),
     attendance,
     capacity,
-    attendanceRatio: Math.max(0.16, Math.min(1, Number(profile.attendanceRatio ?? (capacity ? attendance / capacity : 0.62)) || 0.62)),
-    homeColor: normalizeHexColor(profile.homeColor, "#315288"),
-    grass: Array.isArray(profile.grass) ? profile.grass : base.grass,
-    seatColors: Array.isArray(profile.seatColors) ? profile.seatColors : base.seatColors
+    attendanceRatio: Math.max(0.16, Math.min(1, Number(input.attendanceRatio ?? (capacity ? attendance / capacity : 0.62)) || 0.62)),
+    homeColor: normalizeHexColor(input.homeColor, "#315288")
   };
 }
 
@@ -10555,8 +10555,7 @@ function gamecastPlayableFieldPoint(event, logicalX, logicalY, options = {}) {
 }
 
 function gamecastBallparkProfileForEvent(event) {
-  const id = String(event?.ballparkId ?? "").trim();
-  return KBO_GAMECAST_BALLPARKS[id] ?? gamecastBallparkByName(event?.ballparkName) ?? KBO_GAMECAST_BALLPARKS.neutral;
+  return GAMECAST_FIXED_BALLPARK;
 }
 
 function gamecastEventNoise(event, salt = 0) {

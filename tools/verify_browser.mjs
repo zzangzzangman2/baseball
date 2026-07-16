@@ -1791,7 +1791,7 @@ async function checkGamecastLab() {
           url.includes("/assets/gamecast/player-") ||
           url.includes("/assets/gamecast/props")
         );
-      const expectedAssetRevision = "20260715-force-clarity-5";
+      const expectedAssetRevision = "20260716-jamsil-only-6";
       const middleDepths = [
         [anchors.SS, anchors.second, anchors.third],
         [anchors["2B"], anchors.second, anchors.first]
@@ -1803,7 +1803,9 @@ async function checkGamecastLab() {
       });
       return {
         engine: screen?.dataset?.gamecastEngineCurrent ?? "",
+        ballpark: screen?.dataset?.gamecastBallpark ?? "",
         field: screen?.dataset?.gamecast2Field ?? "",
+        fieldLocked: screen?.dataset?.gamecast2FieldLocked === "1",
         playerAtlas: screen?.dataset?.gamecast2PlayerAtlas ?? "",
         nativeDisplaySize: Number(screen?.dataset?.gamecast2NativeDisplaySize ?? 0),
         assetRevision: screen?.dataset?.gamecast2AssetRevision ?? "",
@@ -1884,10 +1886,10 @@ async function checkGamecastLab() {
     `v2 watch playback ignores the authored timeline duration: ${JSON.stringify(anchorProbe)}`,
     "src/ui.js"
   );
-  assert(anchorProbe.assetRevision === "20260715-force-clarity-5" && anchorProbe.assetRevisionOk, `v2 assets are not cache-revisioned: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
-  assert(anchorProbe.firstAnchorSignature === "724,445", `v2 loaded a stale first-base anchor: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-gocheok-dome.anchors.json");
-  assert(anchorProbe.batterAnchorDistance >= 0 && anchorProbe.batterAnchorDistance <= 0.01, `v2 batter is outside the authored box anchor: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-gocheok-dome.anchors.json");
-  assert(anchorProbe.middleInfieldSignature === "388,388" && anchorProbe.middleDepths.every((depth) => depth >= 8 && depth <= 16), `v2 middle infield depth is wrong: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-gocheok-dome.anchors.json");
+  assert(anchorProbe.assetRevision === "20260716-jamsil-only-6" && anchorProbe.assetRevisionOk, `v2 assets are not cache-revisioned: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
+  assert(anchorProbe.firstAnchorSignature === "758,415", `v2 loaded a stale first-base anchor: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-jamsil-day.anchors.json");
+  assert(anchorProbe.batterAnchorDistance >= 0 && anchorProbe.batterAnchorDistance <= 0.01, `v2 batter is outside the authored box anchor: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-jamsil-day.anchors.json");
+  assert(anchorProbe.middleInfieldSignature === "347,347" && anchorProbe.middleDepths.every((depth) => depth >= 8 && depth <= 16), `v2 middle infield depth is wrong: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-jamsil-day.anchors.json");
   assert(anchorProbe.baseOccupantDistance < 0 || anchorProbe.baseOccupantDistance <= 0.01, `v2 stationary runner is not planted on a base: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(
     anchorProbe.scoreboardVisible &&
@@ -1921,7 +1923,7 @@ async function checkGamecastLab() {
     `v2 ability underlay 표시 수가 어긋났습니다: ${JSON.stringify(anchorProbe)}`,
     "src/gamecast2/scene.js"
   );
-  assert(anchorProbe.field === "field-gocheok-dome", `v2 필드 선택이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
+  assert(anchorProbe.ballpark === "jamsil" && anchorProbe.field === "field-jamsil-day" && anchorProbe.fieldLocked, `비활성 구장 URL이 잠실 고정을 우회했습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
   assert(anchorProbe.anchorCount >= 15 && anchorProbe.missing.length === 0, `v2 앵커가 부족합니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(anchorProbe.canvasPixelW === 960 && anchorProbe.canvasPixelH === 720, `v2 필드 해상도 계약이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
   assert(anchorProbe.canvasWidth >= 900 && anchorProbe.canvasHeight >= 675, `v2 데스크톱 캔버스가 고해상도로 표시되지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/styles.css");
@@ -1977,6 +1979,9 @@ async function checkGamecastLab() {
       const rect = canvas?.getBoundingClientRect();
       return {
         engine: screen?.dataset?.gamecastEngineCurrent ?? "",
+        ballpark: screen?.dataset?.gamecastBallpark ?? "",
+        field: screen?.dataset?.gamecast2Field ?? "",
+        fieldLocked: screen?.dataset?.gamecast2FieldLocked === "1",
         inModal: Boolean(screen?.closest("[data-gamecast-modal]")),
         largeScreen: Boolean(screen?.classList.contains("gamecast-screen-large")),
         playerAtlas: screen?.dataset?.gamecast2PlayerAtlas ?? "",
@@ -1991,6 +1996,9 @@ async function checkGamecastLab() {
   `);
   assert(
     inlineV2Probe.engine === "v2" &&
+      inlineV2Probe.ballpark === "jamsil" &&
+      inlineV2Probe.field === "field-jamsil-day" &&
+      inlineV2Probe.fieldLocked &&
       !inlineV2Probe.inModal &&
       !inlineV2Probe.largeScreen &&
       inlineV2Probe.playerAtlas === "128-day" &&

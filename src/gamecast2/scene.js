@@ -2,13 +2,14 @@ import {
   GAMECAST2_DESIGN_H,
   GAMECAST2_DESIGN_W,
   GAMECAST2_ASSET_REVISION,
+  GAMECAST2_FIXED_FIELD_ID,
   gamecast2AssetUrl,
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-wall-impact-20260716-r24";
-import { compilePlayTimeline } from "./timeline.js?v=gamecast-wall-impact-20260716-r24";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-wall-impact-20260716-r24";
+} from "./assets.js?v=gamecast-jamsil-only-20260716-r25";
+import { compilePlayTimeline } from "./timeline.js?v=gamecast-jamsil-only-20260716-r25";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-jamsil-only-20260716-r25";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -220,6 +221,7 @@ export function mountGamecast2(options) {
       runtime.game = null;
       runtime.scene = null;
       runtime.screen.removeAttribute("data-gamecast2-field");
+      runtime.screen.removeAttribute("data-gamecast2-field-locked");
       runtime.screen.removeAttribute("data-gamecast2-anchor-count");
       runtime.screen.removeAttribute("data-gamecast2-debug-anchors");
       runtime.screen.removeAttribute("data-gamecast2-defender-count");
@@ -2675,6 +2677,7 @@ function exposeSceneDebug(runtime) {
   const actors = runtime.scene?.playerActors ?? [];
   const defenders = actors.filter((actor) => actor.isDefender);
   runtime.screen.dataset.gamecast2Field = runtime.field.id;
+  runtime.screen.dataset.gamecast2FieldLocked = runtime.field.id === GAMECAST2_FIXED_FIELD_ID ? "1" : "0";
   runtime.screen.dataset.gamecast2AnchorCount = String(Object.keys(runtime.anchors?.anchors ?? {}).length);
   runtime.screen.dataset.gamecast2DebugAnchors = runtime.debugAnchors ? "1" : "0";
   runtime.screen.dataset.gamecast2DefenderCount = String(defenders.length);

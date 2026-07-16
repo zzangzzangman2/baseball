@@ -9,8 +9,8 @@ import { compilePlayTimeline } from "../src/gamecast2/timeline.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const ROOT_DIR = path.resolve(path.dirname(__filename), "..");
-const GOCHEOK_ANCHORS = JSON.parse(fs.readFileSync(
-  path.join(ROOT_DIR, "assets", "gamecast2", "field-gocheok-dome.anchors.json"),
+const JAMSIL_DAY_ANCHORS = JSON.parse(fs.readFileSync(
+  path.join(ROOT_DIR, "assets", "gamecast2", "field-jamsil-day.anchors.json"),
   "utf8"
 ));
 
@@ -18,6 +18,7 @@ const GAME_COUNT = 10;
 const MINIMUM_EVENT_COUNT = 600;
 const SAFE_WALL_MARGIN_PX = 4;
 const HOME_RUN_WALL_CLEARANCE_PX = 8;
+const GROUND_RESPONSIBILITY_ROUTE_LIMIT_PX = 55;
 const DEFENSE_POSITIONS = new Set(["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]);
 const INFIELD_POSITIONS = new Set(["P", "C", "1B", "2B", "3B", "SS"]);
 const OUTFIELD_POSITIONS = new Set(["LF", "CF", "RF"]);
@@ -114,7 +115,7 @@ export function verifyGamecastTenGames() {
       auditHitTrajectorySemantics(label, event, coverage, problems);
       let timeline;
       try {
-        timeline = compilePlayTimeline(event, GOCHEOK_ANCHORS);
+        timeline = compilePlayTimeline(event, JAMSIL_DAY_ANCHORS);
       } catch (error) {
         problems.push(`${label}: timeline compile failed (${error.message})`);
         continue;
@@ -262,7 +263,7 @@ function auditHitTrajectorySemantics(label, event, coverage, problems) {
 function auditOutfieldWallSemantics(label, event, timeline, coverage, problems) {
   if (event.type !== "plateAppearance") return;
   const outcome = canonicalOutcome(event);
-  const home = timeline.points?.home ?? GOCHEOK_ANCHORS.anchors?.home;
+  const home = timeline.points?.home ?? JAMSIL_DAY_ANCHORS.anchors?.home;
 
   if (outcome === "homeRun") {
     coverage.homeRunWallExits += 1;
@@ -298,7 +299,7 @@ function auditOutfieldWallSemantics(label, event, timeline, coverage, problems) 
 
   for (const [name, point] of points) {
     coverage.safeWallPoints += 1;
-    const boundary = wallBoundaryAlongRay(home, point);
+    const boundary = safeWallBoundary(home, point, event.sprayLane);
     const margin = boundary ? boundary.distance - pointDistance(home, point) : Number.NaN;
     if (Number.isFinite(margin)) {
       coverage.minimumSafeWallMarginPx = Math.min(coverage.minimumSafeWallMarginPx, margin);
@@ -321,10 +322,10 @@ function auditOutfieldWallSemantics(label, event, timeline, coverage, problems) 
 function auditSprayLaneBand(label, event, pointName, home, boundary, problems) {
   const lane = Number(event.sprayLane);
   if (!Number.isFinite(lane)) return;
-  const center = GOCHEOK_ANCHORS.anchors?.CF;
+  const center = JAMSIL_DAY_ANCHORS.anchors?.CF;
   const pole = lane < 0
-    ? GOCHEOK_ANCHORS.anchors?.leftPole
-    : GOCHEOK_ANCHORS.anchors?.rightPole;
+    ? JAMSIL_DAY_ANCHORS.anchors?.leftPole
+    : JAMSIL_DAY_ANCHORS.anchors?.rightPole;
   if (!center || !pole) return;
 
   const lateral = Number(boundary.point.x) - Number(center.x);
@@ -671,7 +672,7 @@ function auditGroundBallResponsibility(label, event, timeline, coverage, problem
     const landing = timeline.points?.landing;
     const origin = timeline.points?.[expected];
     const routeDistance = pointDistance(landing, origin);
-    if (!Number.isFinite(routeDistance) || routeDistance > 54.01) {
+    if (!Number.isFinite(routeDistance) || routeDistance > GROUND_RESPONSIBILITY_ROUTE_LIMIT_PX + 0.01) {
       problems.push(`${label}: ${expected} leaves its responsibility zone by ${routeDistance.toFixed(2)}px.`);
     }
   }
@@ -803,7 +804,7 @@ function countPositionViolations(label, timeline, problems) {
     }
     const destinationName = cue.at ?? cue.path?.at(-1);
     const destination = timeline.points?.[destinationName];
-    const origin = GOCHEOK_ANCHORS.anchors?.[cue.who];
+    const origin = JAMSIL_DAY_ANCHORS.anchors?.[cue.who];
     const zone = DEFENDER_MOVE_ZONES[cue.who];
     if (!destination || !origin || !zone) continue;
     const dx = Number(destination.x) - Number(origin.x);
@@ -918,15 +919,40 @@ function pointDistance(left, right) {
   return Math.hypot(Number(left.x) - Number(right.x), Number(left.y) - Number(right.y));
 }
 
+function safeWallBoundary(home, point, sprayLane) {
+  const directBoundary = wallBoundaryAlongRay(home, point);
+  if (directBoundary) return directBoundary;
+
+  // A very short infield hit near a foul line can project outside the
+  // leftPole-CF-rightPole polyline even though the ball itself is nowhere near
+  // the fence. Fall back to that event's broad spray sector instead of copying
+  // the production landing formula or treating the missing ray hit as outside.
+  const lane = Number(sprayLane);
+  const center = JAMSIL_DAY_ANCHORS.anchors?.CF;
+  const pole = lane < 0
+    ? JAMSIL_DAY_ANCHORS.anchors?.leftPole
+    : JAMSIL_DAY_ANCHORS.anchors?.rightPole;
+  if (!Number.isFinite(lane) || !isFinitePoint(center) || !isFinitePoint(pole)) return null;
+  const amount = Math.max(0, Math.min(1, Math.abs(lane)));
+  const boundaryPoint = {
+    x: Number(center.x) + (Number(pole.x) - Number(center.x)) * amount,
+    y: Number(center.y) + (Number(pole.y) - Number(center.y)) * amount
+  };
+  return {
+    distance: pointDistance(home, boundaryPoint),
+    point: boundaryPoint
+  };
+}
+
 function wallBoundaryAlongRay(home, point) {
   if (!isFinitePoint(home) || !isFinitePoint(point)) return null;
   const ray = pointVector(home, point);
   const rayLength = Math.hypot(ray.x, ray.y);
   if (rayLength < 0.001) return null;
   const direction = { x: ray.x / rayLength, y: ray.y / rayLength };
-  const center = GOCHEOK_ANCHORS.anchors?.CF;
-  const left = GOCHEOK_ANCHORS.anchors?.leftPole;
-  const right = GOCHEOK_ANCHORS.anchors?.rightPole;
+  const center = JAMSIL_DAY_ANCHORS.anchors?.CF;
+  const left = JAMSIL_DAY_ANCHORS.anchors?.leftPole;
+  const right = JAMSIL_DAY_ANCHORS.anchors?.rightPole;
   if (![center, left, right].every(isFinitePoint)) return null;
 
   const intersections = [

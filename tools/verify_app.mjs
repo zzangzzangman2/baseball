@@ -5,8 +5,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { verifyGamecastTimeline } from "./verify_gamecast_timeline.mjs";
 import {
   GAMECAST2_ASSET_REVISION,
+  GAMECAST2_FIXED_FIELD_ID,
   GAMECAST2_FIELDS,
-  gamecast2AssetUrl
+  gamecast2AssetUrl,
+  getGamecast2UrlOptions,
+  selectGamecast2Field
 } from "../src/gamecast2/assets.js";
 import {
   GAMECAST_SPRITE_ASSET_REVISION,
@@ -1153,7 +1156,7 @@ function checkGamecastTimelineEventIdentity() {
         event.success,
         event.eventOrder
       ]);
-      const key = gamecast2TimelineCacheKey("field-gocheok-dome", event);
+      const key = gamecast2TimelineCacheKey(GAMECAST2_FIXED_FIELD_ID, event);
       if (cache.has(key)) {
         cacheCollisions += 1;
         if (cache.get(key) !== semanticSignature) wrongTimelineReuse += 1;
@@ -1162,7 +1165,7 @@ function checkGamecastTimelineEventIdentity() {
       }
 
       const { id: _eventId, ...legacyEvent } = event;
-      const legacyKey = gamecast2TimelineCacheKey("field-gocheok-dome", legacyEvent);
+      const legacyKey = gamecast2TimelineCacheKey(GAMECAST2_FIXED_FIELD_ID, legacyEvent);
       if (legacyCache.has(legacyKey)) legacyCollisions += 1;
       else legacyCache.set(legacyKey, semanticSignature);
 
@@ -2311,6 +2314,24 @@ function checkBattedBallExtraBaseRules() {
 function checkGamecastMotionAtlas() {
   assert(GAMECAST2_ASSET_REVISION.length >= 8, `Gamecast asset revision is too short: ${GAMECAST2_ASSET_REVISION}`, "src/gamecast2/assets.js");
   assert(GAMECAST_SPRITE_ASSET_REVISION === GAMECAST2_ASSET_REVISION, `Legacy and v2 Gamecast asset revisions diverged: ${GAMECAST_SPRITE_ASSET_REVISION} / ${GAMECAST2_ASSET_REVISION}`, "src/gamecastPhaser.js");
+  assert(GAMECAST2_FIXED_FIELD_ID === "field-jamsil-day", `Gamecast fixed field changed: ${GAMECAST2_FIXED_FIELD_ID}`, "src/gamecast2/assets.js");
+  assert(
+    GAMECAST2_FIELDS.length === 1 && GAMECAST2_FIELDS[0]?.id === GAMECAST2_FIXED_FIELD_ID,
+    `Only Jamsil day may be registered: ${JSON.stringify(GAMECAST2_FIELDS)}`,
+    "src/gamecast2/assets.js"
+  );
+  for (const [profile, overrideId] of [
+    [{ id: "gocheok", label: "고척돔", roofed: true }, "field-gocheok-dome"],
+    [{ id: "jamsil-night", label: "잠실 밤" }, "field-jamsil-night"],
+    [{ id: "sajik", label: "사직" }, "field-sajik"]
+  ]) {
+    assert(
+      selectGamecast2Field(profile, overrideId)?.id === GAMECAST2_FIXED_FIELD_ID,
+      `A disabled Gamecast field escaped the Jamsil lock: ${JSON.stringify({ profile, overrideId })}`,
+      "src/gamecast2/assets.js"
+    );
+  }
+  assert(getGamecast2UrlOptions().fieldId === GAMECAST2_FIXED_FIELD_ID, "Gamecast URL options are not locked to Jamsil day.", "src/gamecast2/assets.js");
   assert(
     GAMECAST2_FIELDS.every((field) => field.imageUrl.includes(`v=${GAMECAST2_ASSET_REVISION}`) && field.anchorsUrl.includes(`v=${GAMECAST2_ASSET_REVISION}`)),
     `Gamecast field assets are not revisioned: ${JSON.stringify(GAMECAST2_FIELDS)}`,
@@ -2361,7 +2382,7 @@ function checkGamecastMotionAtlas() {
   assert(denseNames.size >= 100, `v3 고밀도 모션 프레임이 부족합니다: ${denseNames.size}`, GAMECAST_PLAYER_ATLAS_PATH);
   assert(problems.length === 0, `모션 아틀라스 오류 ${problems.length}건. 예: ${problems.slice(0, 6).join(" / ")}`, GAMECAST_PLAYER_ATLAS_PATH);
 
-  return `layout v3, 고유 모션 프레임 ${denseNames.size}개, pitch ${animations.pitch.frames.length}, swing ${animations.swing.frames.length}, throw ${animations.throw.frames.length}`;
+  return `layout v3, 활성 필드 ${GAMECAST2_FIXED_FIELD_ID} 1개, 고유 모션 프레임 ${denseNames.size}개, pitch ${animations.pitch.frames.length}, swing ${animations.swing.frames.length}, throw ${animations.throw.frames.length}`;
 }
 
 function checkHalfInningGameAiTactics() {

@@ -29,15 +29,18 @@ const ATLAS_PATHS = [
   "player-away.json",
   "player-away-night.json"
 ].map((name) => path.join(ROOT_DIR, "assets", "gamecast", name));
-const FIELD_ANCHOR_PATHS = [
-  "field-jamsil-day.anchors.json",
-  "field-jamsil-night.anchors.json",
-  "field-gocheok-dome.anchors.json"
-].map((name) => path.join(ROOT_DIR, "assets", "gamecast2", name));
+const JAMSIL_DAY_ANCHOR_PATH = path.join(
+  ROOT_DIR,
+  "assets",
+  "gamecast2",
+  "field-jamsil-day.anchors.json"
+);
+const FIELD_ANCHOR_PATHS = Object.freeze([JAMSIL_DAY_ANCHOR_PATH]);
+const JAMSIL_DAY_ANCHOR_PAYLOAD = deepFreeze(
+  JSON.parse(fs.readFileSync(JAMSIL_DAY_ANCHOR_PATH, "utf8"))
+);
 const BATTER_BOX_BOUNDS = Object.freeze({
-  "field-jamsil-day": Object.freeze({ xMin: 497, xMax: 536, yMin: 603, yMax: 642 }),
-  "field-jamsil-night": Object.freeze({ xMin: 496, xMax: 529, yMin: 577, yMax: 609 }),
-  "field-gocheok-dome": Object.freeze({ xMin: 493, xMax: 522, yMin: 599, yMax: 630 })
+  "field-jamsil-day": Object.freeze({ xMin: 497, xMax: 536, yMin: 603, yMax: 642 })
 });
 const DEFENSE_POSITIONS = Object.freeze(["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]);
 const OUTFIELD_POSITIONS = new Set(["LF", "CF", "RF"]);
@@ -55,24 +58,9 @@ const DEFENDER_MOVE_ZONES = Object.freeze({
   RF: { x: 96, yTop: 58, yBottom: 160 }
 });
 
-const ANCHORS = deepFreeze({
-  home: { x: 480, y: 617, scale: 1.01 },
-  first: { x: 758, y: 415, scale: 0.86 },
-  second: { x: 480, y: 321, scale: 0.79 },
-  third: { x: 202, y: 415, scale: 0.86 },
-  mound: { x: 480, y: 407, scale: 0.85 },
-  P: { x: 480, y: 414, scale: 0.86 },
-  C: { x: 480, y: 646, scale: 1.03 },
-  "1B": { x: 724, y: 438, scale: 0.88 },
-  "2B": { x: 592, y: 400, scale: 0.85 },
-  "3B": { x: 236, y: 438, scale: 0.88 },
-  SS: { x: 368, y: 400, scale: 0.85 },
-  LF: { x: 260, y: 306, scale: 0.78 },
-  CF: { x: 480, y: 264, scale: 0.75 },
-  RF: { x: 700, y: 306, scale: 0.78 },
-  leftPole: { x: 42, y: 252, scale: 0.74 },
-  rightPole: { x: 918, y: 252, scale: 0.74 }
-});
+// The timeline, wall, and defensive-movement matrices all use the same
+// canonical Jamsil day anchors that the live Gamecast scene loads.
+const ANCHORS = JAMSIL_DAY_ANCHOR_PAYLOAD.anchors;
 
 const BASE_EVENT = Object.freeze({
   type: "plateAppearance",
@@ -314,6 +302,7 @@ function verifyGroundBallResponsibilityZones() {
 }
 
 function verifyFieldAnchorContract() {
+  assert.equal(FIELD_ANCHOR_PATHS.length, 1, "Only the Jamsil day field may be active.");
   for (const anchorPath of FIELD_ANCHOR_PATHS) {
     const payload = JSON.parse(fs.readFileSync(anchorPath, "utf8"));
     const first = payload.anchors?.first;
@@ -368,13 +357,48 @@ function verifyFieldAnchorContract() {
       sideFieldDepths.every((depth) => depth >= 135),
       `${path.basename(anchorPath)}: corner outfielders are too close to the infield (${sideFieldDepths.map((depth) => depth.toFixed(1)).join(", ")}px).`
     );
-    if (payload.fieldId === "field-gocheok-dome") {
-      assert.deepEqual(
-        { first: [Number(first.x), Number(first.y)], third: [Number(third.x), Number(third.y)] },
-        { first: [724, 445], third: [236, 445] },
-        "Gocheok first/third anchors no longer match the visible base-bag centers."
-      );
-    }
+    assert.equal(payload.fieldId, "field-jamsil-day", "A non-Jamsil field is active in the timeline contract.");
+    assert.deepEqual(
+      Object.fromEntries([
+        "home",
+        "first",
+        "second",
+        "third",
+        "mound",
+        "P",
+        "C",
+        "1B",
+        "2B",
+        "3B",
+        "SS",
+        "LF",
+        "CF",
+        "RF",
+        "leftPole",
+        "rightPole",
+        "batter"
+      ].map((key) => [key, [Number(payload.anchors[key]?.x), Number(payload.anchors[key]?.y)]])),
+      {
+        home: [480, 617],
+        first: [758, 415],
+        second: [480, 321],
+        third: [202, 415],
+        mound: [480, 407],
+        P: [480, 414],
+        C: [480, 646],
+        "1B": [724, 438],
+        "2B": [592, 347],
+        "3B": [236, 438],
+        SS: [368, 347],
+        LF: [245, 270],
+        CF: [480, 230],
+        RF: [715, 270],
+        leftPole: [42, 252],
+        rightPole: [918, 252],
+        batter: [516, 622]
+      },
+      "Jamsil day anchors no longer match the canonical field coordinates."
+    );
   }
 }
 
@@ -491,9 +515,9 @@ function verifyFlyBallResolution() {
     sequence: 802,
     outcome: "single",
     battedBallType: "flyBall",
-    fieldingPosition: "CF",
+    fieldingPosition: "RF",
     hitTrajectory: "fly-bloop",
-    sprayLane: 0.04,
+    sprayLane: 0.6,
     basesAfter: [true, false, false],
     baseRunnerIdsAfter: ["batter", "", ""]
   }, { anchors: ANCHORS });
@@ -598,9 +622,9 @@ function verifyFlyBallResolution() {
 
   const safeFlight = safe.tracks.ball.find((cue) => cue.phase === "batted");
   const settle = safe.tracks.ball.find((cue) => cue.phase === "safe-settle");
-  const approach = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "approach");
-  const recover = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "recover");
-  const pickup = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "pickup");
+  const approach = safe.tracks.fielders.find((cue) => cue.who === "RF" && cue.phase === "approach");
+  const recover = safe.tracks.fielders.find((cue) => cue.who === "RF" && cue.phase === "recover");
+  const pickup = safe.tracks.fielders.find((cue) => cue.who === "RF" && cue.phase === "pickup");
   const batterRun = safe.tracks.batter.find((cue) => cue.phase === "batter-run");
   assert.equal(safe.meta.fielding.resolution, "safe-fly-drop", "뜬공 안타가 안전 낙하 판정으로 표시되지 않습니다.");
   assert.equal(safeFlight?.flightProfile, "hang", "뜬공 안타 타구가 체공 없이 땅볼처럼 직선 이동합니다.");
@@ -621,9 +645,9 @@ function verifyFlyBallResolution() {
   );
   assert(postLandingDirectionDot(safe.points) > 0, "뜬공 안타가 착지 후 홈 쪽으로 역주행합니다.");
   assert.equal(safe.meta.fielding.fieldingStyle, "run-through", "일반 뜬공 안타가 불필요한 다이빙으로 분류됩니다.");
-  assert.deepEqual(approach?.path, ["CF", "miss"], "일반 뜬공 안타 수비수가 낙하 순간 포구 반경을 침범합니다.");
+  assert.deepEqual(approach?.path, ["RF", "miss"], "일반 뜬공 안타 수비수가 낙하 순간 포구 반경을 침범합니다.");
   assert.deepEqual(recover?.path, ["miss", "pickup"], "일반 뜬공 안타 수비수가 떨어진 공을 회수하지 않습니다.");
-  assert(!safe.tracks.fielders.some((cue) => cue.who === "CF" && cue.anim === "dive"), "일반 뜬공 안타 수비수가 강제로 다이빙합니다.");
+  assert(!safe.tracks.fielders.some((cue) => cue.who === "RF" && cue.anim === "dive"), "일반 뜬공 안타 수비수가 강제로 다이빙합니다.");
   assert.equal(pickup?.at, "pickup", "뜬공 안타 픽업 동작이 공 위치와 다릅니다.");
   assert(Number(pickup?.t) > Number(safe.meta.fielding.ballLandingT), "뜬공 안타 수비수가 낙하 전에 포구 동작을 합니다.");
   assert(batterRun && batterRun.out !== true, "뜬공 안타 타자 주루가 이어지지 않습니다.");

@@ -101,7 +101,7 @@ const PLAYER_LEGACY_ANIMATIONS = {
   catcher: { frames: ["catcher"], durations: [160] }
 };
 const SPRITE_ASSET_ROOT = "./assets/gamecast";
-export const GAMECAST_SPRITE_ASSET_REVISION = "20260715-force-clarity-5";
+export const GAMECAST_SPRITE_ASSET_REVISION = "20260716-jamsil-only-6";
 export const GAMECAST_THROW_BALL_SIZE = 1.25;
 export const GAMECAST_BALL_MIN_RENDER_SCALE = 1.2;
 

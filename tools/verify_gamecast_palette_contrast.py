@@ -36,7 +36,7 @@ from build_gamecast_sprites import (
 ROOT = Path(__file__).resolve().parents[1]
 FIELD_DIR = ROOT / "assets" / "gamecast2"
 ATLAS_DIR = ROOT / "assets" / "gamecast"
-FIELD_NAMES = ("field-gocheok-dome", "field-jamsil-day", "field-jamsil-night")
+FIELD_NAMES = ("field-jamsil-day",)
 ANCHOR_NAMES = ("home", "first", "second", "third", "mound", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF")
 POSES = (
     ("FIELD", "field", "1B"),
@@ -188,8 +188,8 @@ def load_atlas(png_path: Path, json_path: Path) -> Tuple[Image.Image, Mapping[st
 
 
 def render_contact_sheet(args: argparse.Namespace) -> None:
-    field = Image.open(FIELD_DIR / "field-gocheok-dome.png").convert("RGBA")
-    anchors = read_json(FIELD_DIR / "field-gocheok-dome.anchors.json")["anchors"]
+    field = Image.open(FIELD_DIR / "field-jamsil-day.png").convert("RGBA")
+    anchors = read_json(FIELD_DIR / "field-jamsil-day.anchors.json")["anchors"]
     rows = []
     if args.before_home and args.before_home_json and args.before_away and args.before_away_json:
         rows.extend((
@@ -233,7 +233,7 @@ def main() -> None:
     surfaces = sampled_field_colors()
     current_metrics = palette_metrics(CURRENT_PALETTE, surfaces)
     previous_metrics = palette_metrics(BEFORE_PALETTE, surfaces)
-    print("field palette contrast (minimum across 3 fields):")
+    print("field palette contrast (active Jamsil day field):")
     for name in CURRENT_PALETTE:
         distance, contrast, nearest = current_metrics[name]
         old_distance, old_contrast, _old_nearest = previous_metrics.get(name, (0.0, 0.0, (0, 0, 0)))

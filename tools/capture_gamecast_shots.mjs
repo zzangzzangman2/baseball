@@ -18,9 +18,9 @@ const OUT = MODE === "burst"
     ? (process.argv[3] ?? "reports/gamecast-anchors")
     : (process.argv[2] ?? "reports/gamecast-shots");
 const BASE = MODE === "burst"
-  ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=v2&field=field-gocheok-dome&team=lg&days=3&fullscreen=1&holds=0&speed=1&fps=1")
+  ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=v2&field=field-jamsil-day&team=lg&days=3&fullscreen=1&holds=0&speed=1&fps=1")
   : MODE === "anchors"
-    ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=v2&debug=anchors&field=field-gocheok-dome&team=kiwoom&days=3&fullscreen=1&holds=0&speed=1")
+    ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=v2&debug=anchors&field=field-jamsil-day&team=lg&days=3&fullscreen=1&holds=0&speed=1")
     : (process.argv[3] ?? "http://127.0.0.1:5177/gamecast-lab.html");
 const PORT = 9223;
 mkdirSync(OUT, { recursive: true });
@@ -264,6 +264,7 @@ if (MODE === "anchors") {
     return {
       engine: screen?.dataset?.gamecastEngineCurrent ?? "",
       field: screen?.dataset?.gamecast2Field ?? "",
+      fieldLocked: screen?.dataset?.gamecast2FieldLocked === "1",
       anchorCount: Number(screen?.dataset?.gamecast2AnchorCount ?? 0),
       defenderCount: Number(screen?.dataset?.gamecast2DefenderCount ?? 0),
       playerCount: Number(screen?.dataset?.gamecast2PlayerCount ?? 0),
@@ -281,7 +282,7 @@ if (MODE === "anchors") {
       canvasPixelH: Number(canvas?.dataset?.pixelH ?? 0)
     };
   `));
-  if (meta.engine !== "v2" || meta.anchorCount < 15 || meta.defenderCount !== 9 || meta.playerCount < 10 || meta.canvasPixelW !== 960 || meta.canvasPixelH !== 720 || meta.motion.positionViolationFrames > 0) {
+  if (meta.engine !== "v2" || meta.field !== "field-jamsil-day" || !meta.fieldLocked || meta.anchorCount < 15 || meta.defenderCount !== 9 || meta.playerCount < 10 || meta.canvasPixelW !== 960 || meta.canvasPixelH !== 720 || meta.motion.positionViolationFrames > 0) {
     throw new Error(`Gamecast v2 anchors failed: ${JSON.stringify(meta)}`);
   }
   writeFileSync(path.join(OUT, "anchors-summary.json"), JSON.stringify(meta, null, 2));
