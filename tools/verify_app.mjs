@@ -13,6 +13,7 @@ import {
   gamecastSpriteAssetUrl
 } from "../src/gamecastPhaser.js";
 import { getGamecast2RunnerStartMs } from "../src/gamecast2/timeline.js";
+import { gamecast2TimelineCacheKey } from "../src/gamecast2/scene.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -327,6 +328,8 @@ async function main() {
   await runCheck("GM 데스크 데이터 실행", checkFrontOfficeData);
   await runCheck("JSON 저장 roundtrip", checkSaveRoundtrip);
 
+  await runCheck("10-game Gamecast event/cache identity", checkGamecastTimelineEventIdentity);
+
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const report = buildReport();
@@ -409,6 +412,14 @@ async function checkModuleImports() {
   assertExport(engineModule, "buildLineup", MODULE_PATHS.engine);
   assertExport(engineModule, "buildPitchingSnapshot", MODULE_PATHS.engine);
   assertExport(uiModule, "mountApp", MODULE_PATHS.ui);
+  assertExport(uiModule, "gamecastResultDisplayText", MODULE_PATHS.ui);
+  assertExport(uiModule, "gamecastOutcomeClass", MODULE_PATHS.ui);
+  assertExport(uiModule, "gamecastRunnerTransitions", MODULE_PATHS.ui);
+  assertExport(uiModule, "gamecastRunnerTransitionTiming", MODULE_PATHS.ui);
+  assertExport(uiModule, "buildBatterSprite", MODULE_PATHS.ui);
+  assertExport(uiModule, "buildBallSprite", MODULE_PATHS.ui);
+  assertExport(uiModule, "buildGamecastDefenseSprites", MODULE_PATHS.ui);
+  assertExport(uiModule, "buildGamecastThrowLines", MODULE_PATHS.ui);
   assertExport(systemsModule, "getRosterSummary", MODULE_PATHS.systems);
   assertExport(systemsModule, "getContractSummary", MODULE_PATHS.systems);
   assertExport(systemsModule, "getScoutBoard", MODULE_PATHS.systems);
@@ -894,6 +905,196 @@ function checkNextUserGameFlow() {
   return `프리시즌 차단 후 ${preview.date} ${preview.awayShortName}@${preview.homeShortName}, Gamecast PA ${focused.plateAppearanceEvents.length}개 포커스`;
 }
 
+function checkGamecastTimelineEventIdentity() {
+  ensureImportsReady();
+  const state = dataModule.createInitialState();
+  state.selectedTeamId = "lg";
+  advanceToRegularSeason(state);
+
+  const games = [];
+  for (let index = 0; index < 10; index += 1) {
+    const result = engineModule.simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
+    assert(result.ok && result.game, `10-game Gamecast audit stopped at game ${index + 1}: ${result.message}`, MODULE_PATHS.engine);
+    games.push(result.game);
+  }
+
+  const ids = new Set();
+  const cache = new Map();
+  const legacyCache = new Map();
+  const positions = new Set();
+  let plateAppearances = 0;
+  let stealEvents = 0;
+  let stolenBaseEvents = 0;
+  let caughtStealingEvents = 0;
+  let cacheCollisions = 0;
+  let wrongTimelineReuse = 0;
+  let legacyCollisions = 0;
+  const stealSides = new Set();
+  let boxStolenBases = 0;
+  let boxCaughtStealing = 0;
+
+  for (const game of games) {
+    boxStolenBases += safeInteger(game.boxScore?.totals?.stolenBases);
+    boxCaughtStealing += safeInteger(game.boxScore?.totals?.caughtStealing);
+    const gameEvents = game.plateAppearanceEvents ?? [];
+    const sortedEvents = uiModule.sortGamecastEvents(gameEvents);
+    assert(
+      sortedEvents.map((event) => event.id).join("|") === gameEvents.map((event) => event.id).join("|"),
+      `Gamecast chronological sort changed engine order for ${game.id}`,
+      MODULE_PATHS.engine
+    );
+    for (const [eventIndex, event] of gameEvents.entries()) {
+      const isSteal = event.type === "stolenBase";
+      if (isSteal) {
+        stealEvents += 1;
+        stolenBaseEvents += event.outcome === "stolenBase" ? 1 : 0;
+        caughtStealingEvents += event.outcome === "caughtStealing" ? 1 : 0;
+        stealSides.add(event.side);
+      } else {
+        plateAppearances += 1;
+      }
+      const idKind = isSteal ? "steal" : "pa";
+      const expectedId = `${game.id}:${idKind}:${event.half}:${event.inning}:${event.sequence}`;
+      assert(event.id === expectedId, `unstable Gamecast event id ${event.id}/${expectedId}`, MODULE_PATHS.engine);
+      assert(!ids.has(event.id), `duplicate Gamecast event id ${event.id}`, MODULE_PATHS.engine);
+      ids.add(event.id);
+
+      if (isSteal) {
+        const previous = gameEvents[eventIndex - 1];
+        assert(
+          previous?.type === "plateAppearance"
+            && previous.sequence === event.sequence
+            && previous.inning === event.inning
+            && previous.side === event.side
+            && previous.eventOrder === 0
+            && event.eventOrder === 1,
+          `steal event was not ordered immediately after its PA ${event.id}`,
+          MODULE_PATHS.engine
+        );
+        assert(["stolenBase", "caughtStealing"].includes(event.outcome), `invalid steal outcome ${event.outcome}`, MODULE_PATHS.engine);
+        const expectedStealLabel = event.outcome === "stolenBase" ? "도루 성공" : "도루자 아웃";
+        const expectedStealClass = event.outcome === "stolenBase" ? "is-hit" : "is-out";
+        assert(uiModule.gamecastResultDisplayText(event) === expectedStealLabel, `steal result label mismatch ${event.id}`, MODULE_PATHS.ui);
+        assert(uiModule.gamecastOutcomeClass(event.outcome) === expectedStealClass, `steal result class mismatch ${event.id}`, MODULE_PATHS.ui);
+        assert(event.gameId === game.id && event.half === (event.side === "home" ? "bottom" : "top"), `steal game/half mismatch ${event.id}`, MODULE_PATHS.engine);
+        assert(Boolean(event.runnerId) && Boolean(event.runnerName), `steal runner identity missing ${event.id}`, MODULE_PATHS.engine);
+        assert(!event.hitterId && !event.hitterName, `steal event incorrectly duplicates runner as batter ${event.id}`, MODULE_PATHS.engine);
+        const stealTransitions = uiModule.gamecastRunnerTransitions(event);
+        assert(stealTransitions.length === 1, `steal must animate exactly one runner ${event.id}`, MODULE_PATHS.ui);
+        const [stealTransition] = stealTransitions;
+        assert(
+          stealTransition.role === "runner"
+            && stealTransition.id === event.runnerId
+            && stealTransition.fromBase === event.fromBase
+            && stealTransition.toBase === event.toBase,
+          `steal runner transition mismatch ${event.id}`,
+          MODULE_PATHS.ui
+        );
+        assert(stealTransition.out === !event.success, `steal transition out flag mismatch ${event.id}`, MODULE_PATHS.ui);
+        const stealTiming = uiModule.gamecastRunnerTransitionTiming(event, stealTransition);
+        assert(
+          stealTiming.startT >= 0 && stealTiming.endT > stealTiming.startT && stealTiming.endT <= 1,
+          `steal runner timing invalid ${event.id}`,
+          MODULE_PATHS.ui
+        );
+        const palette = {
+          runner: "#f45b2a",
+          runnerL: "#ffb08f",
+          uniform: "#f8fafc",
+          uniformSh: "#cbd5e1",
+          defender: "#58111a",
+          defenderL: "#f2e7db"
+        };
+        const stealSamples = Array.from({ length: 61 }, (_, sampleIndex) => 0.24 + sampleIndex * 0.011);
+        const throwSample = stealSamples.find((sampleProgress) => uiModule.buildBallSprite(event, sampleProgress)?.kind === "throw");
+        assert(Number.isFinite(throwSample), `steal throw ball never appears ${event.id}`, MODULE_PATHS.ui);
+        assert(uiModule.buildGamecastThrowLines(event, throwSample).length === 1, `steal throw line missing ${event.id}`, MODULE_PATHS.ui);
+        const stealDefense = uiModule.buildGamecastDefenseSprites(event, throwSample, palette);
+        const stealDefenseKeys = new Set(stealDefense.map((sprite) => sprite.fieldingKey));
+        assert(stealDefenseKeys.has(event.toBase === 4 ? "P" : "C"), `steal thrower missing ${event.id}`, MODULE_PATHS.ui);
+        assert(stealDefenseKeys.size >= 2, `steal base cover missing ${event.id}`, MODULE_PATHS.ui);
+        const plateBatter = uiModule.buildBatterSprite(event, 0.5, palette);
+        assert(plateBatter?.pose === "stance" && !plateBatter?.playerId, `steal plate batter reused runner identity ${event.id}`, MODULE_PATHS.ui);
+        assert(event.success === (event.outcome === "stolenBase"), `steal success flag mismatch ${event.id}`, MODULE_PATHS.engine);
+        assert(event.caught === !event.success && event.out === !event.success, `steal caught/out flags mismatch ${event.id}`, MODULE_PATHS.engine);
+        assert(isBooleanTriple(event.basesBefore) && isBooleanTriple(event.basesAfter), `steal bases schema mismatch ${event.id}`, MODULE_PATHS.engine);
+        assert(isStringTriple(event.baseRunnerIdsBefore) && isStringTriple(event.baseRunnerIdsAfter), `steal runner bases schema mismatch ${event.id}`, MODULE_PATHS.engine);
+        assert(event.baseRunnerIdsBefore[event.fromBase - 1] === event.runnerId, `steal source base mismatch ${event.id}`, MODULE_PATHS.engine);
+        if (event.success) {
+          assert(event.baseRunnerIdsAfter[event.toBase - 1] === event.runnerId, `successful steal destination mismatch ${event.id}`, MODULE_PATHS.engine);
+          assert(event.outsAfter === event.outsBefore, `successful steal changed outs ${event.id}`, MODULE_PATHS.engine);
+        } else {
+          assert(!event.baseRunnerIdsAfter.includes(event.runnerId), `caught runner remains on base ${event.id}`, MODULE_PATHS.engine);
+          assert(event.outsAfter === event.outsBefore + 1, `caught stealing out delta mismatch ${event.id}`, MODULE_PATHS.engine);
+        }
+      }
+
+      const semanticSignature = JSON.stringify([
+        event.type,
+        event.outcome,
+        event.battedBallType,
+        event.fieldingPosition,
+        event.defensiveThrowTarget,
+        event.outsBefore,
+        event.outsAfter,
+        event.baseRunnerIdsBefore,
+        event.baseRunnerIdsAfter,
+        event.scoredRunners,
+        event.runnerId,
+        event.success,
+        event.eventOrder
+      ]);
+      const key = gamecast2TimelineCacheKey("field-gocheok-dome", event);
+      if (cache.has(key)) {
+        cacheCollisions += 1;
+        if (cache.get(key) !== semanticSignature) wrongTimelineReuse += 1;
+      } else {
+        cache.set(key, semanticSignature);
+      }
+
+      const { id: _eventId, ...legacyEvent } = event;
+      const legacyKey = gamecast2TimelineCacheKey("field-gocheok-dome", legacyEvent);
+      if (legacyCache.has(legacyKey)) legacyCollisions += 1;
+      else legacyCache.set(legacyKey, semanticSignature);
+
+      const position = String(event.fieldingPosition ?? "").toUpperCase();
+      if (position) positions.add(position);
+    }
+  }
+
+  const requiredPositions = ["1B", "2B", "3B", "SS", "LF", "CF", "RF"];
+  const missingPositions = requiredPositions.filter((position) => !positions.has(position));
+  const halfCoverageSides = new Set(stealSides);
+  let halfCoverageGames = games.length;
+  for (const game of state.lastGames ?? []) {
+    halfCoverageGames += games.some((entry) => entry.id === game.id) ? 0 : 1;
+    for (const event of game.plateAppearanceEvents ?? []) {
+      if (event.type === "stolenBase") halfCoverageSides.add(event.side);
+    }
+  }
+  for (let index = 0; index < 20 && halfCoverageSides.size < 2; index += 1) {
+    const result = engineModule.simulateNextUserGame(state, { teamId: state.selectedTeamId, mode: "watch" });
+    assert(result.ok && result.game, `steal half coverage stopped after ${halfCoverageGames} games: ${result.message}`, MODULE_PATHS.engine);
+    halfCoverageGames += 1;
+    for (const event of result.game.plateAppearanceEvents ?? []) {
+      if (event.type === "stolenBase") halfCoverageSides.add(event.side);
+    }
+  }
+  assert(games.length === 10 && plateAppearances >= 600, `Gamecast audit coverage ${games.length} games/${plateAppearances} PA`, MODULE_PATHS.engine);
+  assert(stealEvents === boxStolenBases + boxCaughtStealing, `10-game steal event/box score mismatch ${stealEvents}/${boxStolenBases + boxCaughtStealing}`, MODULE_PATHS.engine);
+  assert(stolenBaseEvents === boxStolenBases, `10-game SB event/box score mismatch ${stolenBaseEvents}/${boxStolenBases}`, MODULE_PATHS.engine);
+  assert(caughtStealingEvents === boxCaughtStealing, `10-game CS event/box score mismatch ${caughtStealingEvents}/${boxCaughtStealing}`, MODULE_PATHS.engine);
+  assert(stealEvents >= 2, `10-game audit produced only ${stealEvents} steal event(s)`, MODULE_PATHS.engine);
+  assert(halfCoverageSides.has("away") && halfCoverageSides.has("home"), `steal half coverage missing after ${halfCoverageGames} games: ${[...halfCoverageSides].join(",")}`, MODULE_PATHS.engine);
+  assert(cacheCollisions === 0, `new Gamecast cache keys collided ${cacheCollisions} time(s)`, MODULE_PATHS.engine);
+  assert(wrongTimelineReuse === 0, `Gamecast reused ${wrongTimelineReuse} wrong timeline(s)`, MODULE_PATHS.engine);
+  assert(legacyCollisions === 0, `legacy Gamecast cache keys collided ${legacyCollisions} time(s)`, MODULE_PATHS.engine);
+  assert(!positions.has("IF") && !positions.has("OF"), `generic Gamecast fielding positions remain: ${[...positions].join(",")}`, MODULE_PATHS.engine);
+  assert(missingPositions.length === 0, `Gamecast fielding slots missing from 10 games: ${missingPositions.join(",")}`, MODULE_PATHS.engine);
+
+  return `${games.length} games/${plateAppearances} PA; steals ${stolenBaseEvents} SB/${caughtStealingEvents} CS exact match, chronological order; top+bottom covered in ${halfCoverageGames} games; cache collision 0, wrong reuse 0, positions ${requiredPositions.join("/")}`;
+}
+
 function checkPlayerSeasonStats() {
   ensureImportsReady();
   const state = dataModule.createInitialState();
@@ -997,7 +1198,9 @@ function checkGameBoxScoreEventLog() {
     const lineHome = boxScore?.linescore?.home;
     const awayBatting = Array.isArray(boxScore?.batting?.away) ? boxScore.batting.away : [];
     const homeBatting = Array.isArray(boxScore?.batting?.home) ? boxScore.batting.home : [];
-    const paEvents = Array.isArray(game.plateAppearanceEvents) ? game.plateAppearanceEvents : [];
+    const paEvents = Array.isArray(game.plateAppearanceEvents)
+      ? game.plateAppearanceEvents.filter((event) => event?.type === "plateAppearance")
+      : [];
     const scoringEvents = Array.isArray(game.scoringEvents) ? game.scoringEvents : [];
     const gamecast = game.gamecast;
     const playersById = gamecast?.playersById && typeof gamecast.playersById === "object" ? gamecast.playersById : {};
@@ -1247,7 +1450,10 @@ function checkGameBoxScoreEventLog() {
     MODULE_PATHS.engine
   );
 
-  const totalPaEvents = sumNumbers(state.lastGames, (game) => game.plateAppearanceEvents.length);
+  const totalPaEvents = sumNumbers(
+    state.lastGames,
+    (game) => game.plateAppearanceEvents.filter((event) => event?.type === "plateAppearance").length
+  );
   const totalErrors = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.errors);
   const totalDoublePlays = sumNumbers(state.lastGames, (game) => game.boxScore?.totals?.doublePlays);
   return `game.final ${state.eventLog.length}개, 박스스코어 ${state.lastGames.length}경기, PA 이벤트 ${totalPaEvents}개, 정상 외야 장타 ${legalExtraBaseHits}개, 실책 ${totalErrors}, 병살 ${totalDoublePlays}`;
@@ -2090,9 +2296,11 @@ function checkPitchingSnapshotUsage() {
       const starters = lines.filter((line) => line.role === "SP");
       const battersFaced = sumArray(lines.map((line) => line.battersFaced));
       const paEvents = (game.plateAppearanceEvents ?? []).filter((event) =>
-        side === "away"
-          ? event.defenseTeamId === game.awayTeamId
-          : event.defenseTeamId === game.homeTeamId
+        event?.type === "plateAppearance" && (
+          side === "away"
+            ? event.defenseTeamId === game.awayTeamId
+            : event.defenseTeamId === game.homeTeamId
+        )
       ).length;
 
       const expectedOuts = expectedPitchingOutsForSide(game, side);

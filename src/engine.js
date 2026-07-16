@@ -6069,6 +6069,7 @@ function simulateHalfInning(runtime, { inning, isBottom, defenseRuns, walkOffTar
       pitcher,
       inning,
       half: isBottom ? "bottom" : "top",
+      sequence: plateAppearance,
       outcome,
       advancement,
       outsBefore: outsBeforePlay,
@@ -6092,6 +6093,8 @@ function simulateHalfInning(runtime, { inning, isBottom, defenseRuns, walkOffTar
       break;
     }
 
+    const outsBeforeSteal = runtime.outs;
+    const basesBeforeSteal = [...bases];
     const steal = maybeAttemptSteal({
       bases,
       pitcher,
@@ -6100,11 +6103,29 @@ function simulateHalfInning(runtime, { inning, isBottom, defenseRuns, walkOffTar
       side: runtime.side,
       gamePlan: runtime.gamePlan
     });
-    const outsBeforeSteal = runtime.outs;
     runtime.outs += steal.outs;
     inningOuts += steal.outs;
     applyGameStealEvent(result, steal);
     creditPitcherOuts(pitcher, result, steal.outs, runtime.pitchingPlan);
+    addStealEvent(result, {
+      gameId: runtime.gameId,
+      side: runtime.side,
+      offense: runtime.offense,
+      defense: runtime.defense,
+      pitcher,
+      inning,
+      half: isBottom ? "bottom" : "top",
+      sequence: plateAppearance,
+      steal,
+      outsBefore: outsBeforeSteal,
+      outsAfter: runtime.outs,
+      basesBefore: basesBeforeSteal,
+      basesAfter: [...bases],
+      inningEnded: inningOuts >= 3 || inningEnded(outsBeforeSteal, runtime.outs),
+      ballpark: runtime.weather?.ballpark,
+      scoreBefore: scoreAfter,
+      scoreAfter
+    });
     if (inningOuts >= 3 || inningEnded(outsBeforeSteal, runtime.outs)) {
       result.leftOnBase += countOccupiedBases(bases);
       clearBases(bases);
@@ -6327,6 +6348,7 @@ function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitc
       pitcher,
       inning: inningIndex + 1,
       half: side === "home" ? "bottom" : "top",
+      sequence: result.plateAppearances,
       outcome,
       advancement,
       outsBefore: outsBeforePlay,
@@ -6344,6 +6366,8 @@ function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitc
     }
 
     if (outs < 27) {
+      const basesBeforeSteal = [...bases];
+      const outsBeforeSteal = outs;
       const steal = maybeAttemptSteal({
         bases,
         pitcher,
@@ -6352,10 +6376,26 @@ function simulateOffense({ gameId, offense, defense, lineup, defenseLineup, pitc
         side,
         gamePlan
       });
-      const outsBeforeSteal = outs;
       outs += steal.outs;
       applyGameStealEvent(result, steal);
       creditPitcherOuts(pitcher, result, steal.outs, pitchingPlan);
+      addStealEvent(result, {
+        gameId,
+        side,
+        offense,
+        defense,
+        pitcher,
+        inning: inningIndex + 1,
+        half: side === "home" ? "bottom" : "top",
+        sequence: result.plateAppearances,
+        steal,
+        outsBefore: outsBeforeSteal,
+        outsAfter: outs,
+        basesBefore: basesBeforeSteal,
+        basesAfter: [...bases],
+        inningEnded: inningEnded(outsBeforeSteal, outs),
+        ballpark: weather?.ballpark
+      });
       if (inningEnded(outsBeforeSteal, outs)) {
         result.leftOnBase += countOccupiedBases(bases);
         clearBases(bases);
@@ -7167,12 +7207,19 @@ function getGameBatterLine(result, player) {
 }
 
 function addPlateAppearanceEvent(result, input) {
+  const sequence = safeNumber(
+    input.sequence,
+    result.plateAppearanceEvents.filter((event) => event?.type === "plateAppearance").length + 1
+  );
+  const half = input.half ?? (input.side === "home" ? "bottom" : "top");
   const event = {
+    id: `${String(input.gameId ?? "game")}:pa:${half}:${safeNumber(input.inning)}:${sequence}`,
     type: "plateAppearance",
     gameId: input.gameId,
     side: input.side,
     inning: input.inning,
-    sequence: result.plateAppearanceEvents.length + 1,
+    sequence,
+    eventOrder: 0,
     offenseTeamId: input.offense.id,
     defenseTeamId: input.defense.id,
     hitterId: input.hitter?.id ?? "",
@@ -7182,7 +7229,7 @@ function addPlateAppearanceEvent(result, input) {
     outcome: input.outcome.type,
     battedBallType: input.outcome.battedBallType ?? "",
     fieldingPosition: input.outcome.fieldingPosition ?? "",
-    half: input.half ?? (input.side === "home" ? "bottom" : "top"),
+    half,
     defenderId: input.outcome.defender?.id ?? "",
     defenderName: input.outcome.defender?.name ?? "",
     doublePlay: Boolean(input.outcome.doublePlay),
@@ -7217,6 +7264,77 @@ function addPlateAppearanceEvent(result, input) {
   if (event.runs > 0) {
     result.scoringEvents.push(event);
   }
+}
+
+function addStealEvent(result, input) {
+  const steal = input.steal;
+  if (!steal?.attempted || !steal.runner) return;
+
+  const sequence = safeNumber(input.sequence, result.plateAppearances);
+  const half = input.half ?? (input.side === "home" ? "bottom" : "top");
+  const success = steal.success === true;
+  const runnerId = String(steal.runner?.id ?? steal.runner?.name ?? "");
+  const runnerName = String(steal.runner?.name ?? "");
+  const before = Array.isArray(input.basesBefore) ? input.basesBefore : [];
+  const after = Array.isArray(input.basesAfter) ? input.basesAfter : [];
+  const fromIndex = before.findIndex((runner) => String(runner?.id ?? runner?.name ?? "") === runnerId);
+  const afterIndex = after.findIndex((runner) => String(runner?.id ?? runner?.name ?? "") === runnerId);
+  const event = {
+    id: `${String(input.gameId ?? "game")}:steal:${half}:${safeNumber(input.inning)}:${sequence}`,
+    type: "stolenBase",
+    gameId: input.gameId,
+    side: input.side,
+    inning: input.inning,
+    half,
+    sequence,
+    eventOrder: 1,
+    offenseTeamId: input.offense?.id ?? "",
+    defenseTeamId: input.defense?.id ?? "",
+    // A steal is a standalone baserunning event, not a plate appearance. Keep
+    // the runner identity separate so renderers never create a second,
+    // bat-carrying copy of the runner from home plate.
+    hitterId: "",
+    hitterName: "",
+    runnerId,
+    runnerName,
+    pitcherId: input.pitcher?.id ?? "",
+    pitcherName: input.pitcher?.name ?? "",
+    defenderId: "",
+    defenderName: "",
+    outcome: success ? "stolenBase" : "caughtStealing",
+    success,
+    caught: !success,
+    out: !success,
+    fromBase: fromIndex >= 0 ? fromIndex + 1 : 1,
+    toBase: afterIndex >= 0 ? afterIndex + 1 : Math.min(4, (fromIndex >= 0 ? fromIndex + 1 : 1) + 1),
+    battedBallType: "",
+    fieldingPosition: "C",
+    defensiveThrowTarget: null,
+    doublePlay: false,
+    reachedOnError: false,
+    ballparkId: input.ballpark?.parkId ?? "",
+    ballparkName: input.ballpark?.name ?? "",
+    runs: 0,
+    earnedRuns: 0,
+    rbi: 0,
+    outsBefore: safeNumber(input.outsBefore),
+    outsAfter: safeNumber(input.outsAfter),
+    basesBefore: toBaseOccupancy(before),
+    basesAfter: toBaseOccupancy(after),
+    baseRunnerIdsBefore: toBaseRunnerIds(before),
+    baseRunnerIdsAfter: toBaseRunnerIds(after),
+    scoredRunners: [],
+    inningEnded: Boolean(input.inningEnded),
+    scoreBefore: input.scoreBefore ?? null,
+    scoreAfter: input.scoreAfter ?? null,
+    leverage: null,
+    saveSituation: false,
+    pinchHit: null,
+    sacrifice: false,
+    walkOff: false
+  };
+
+  result.plateAppearanceEvents.push(event);
 }
 
 const DEFENSIVE_THROW_BASE_BY_INDEX = Object.freeze([null, "first", "second", "third", "home"]);
@@ -7405,7 +7523,7 @@ function maybeCallSacrificeBunt({ gamePlan, hitter, bases, inningOuts, inning, o
   const roll = rollUnit(seed, side, "sacrifice-bunt", plateAppearance, hitter?.id ?? hitter?.name ?? "");
   if (roll >= chance) return null;
 
-  const fielding = chooseFieldingTarget(defenseContext, "infield", seed, plateAppearance, hitter, "IF");
+  const fielding = chooseBuntFieldingTarget(defenseContext, seed, plateAppearance, hitter);
   return {
     type: "sacrificeBunt",
     isAtBat: false,
@@ -7537,7 +7655,7 @@ function buildDefenseContext(team, lineup = null) {
 function topFielders(players, predicate, fallbackPosition, count) {
   const pool = players.filter(predicate);
   const candidates = pool.length ? pool : players;
-  return [...candidates]
+  const selected = [...candidates]
     .map((player) => ({
       position: normalizeDefensePosition(player, fallbackPosition),
       defender: player,
@@ -7545,6 +7663,44 @@ function topFielders(players, predicate, fallbackPosition, count) {
     }))
     .sort((a, b) => safeNumber(b.quality) - safeNumber(a.quality) || safeNumber(b.defender?.ovr) - safeNumber(a.defender?.ovr))
     .slice(0, count);
+  return assignGenericDefenseSlots(selected, fallbackPosition);
+}
+
+function chooseBuntFieldingTarget(defenseContext, seed, plateAppearance, hitter) {
+  const corners = (defenseContext?.infield ?? []).filter((entry) =>
+    ["1B", "3B"].includes(String(entry?.position ?? "").toUpperCase())
+  );
+  const options = [...corners, ...(defenseContext?.catcher ?? [])];
+  if (!options.length) {
+    return chooseFieldingTarget(defenseContext, "infield", seed, plateAppearance, hitter, "IF");
+  }
+  const index = hashParts(seed, plateAppearance, hitter?.id ?? "", "bunt-fielding-target") % options.length;
+  return options[index];
+}
+
+function assignGenericDefenseSlots(entries, fallbackPosition) {
+  const slots = fallbackPosition === "IF"
+    ? ["SS", "2B", "3B", "1B"]
+    : fallbackPosition === "OF"
+      ? ["CF", "LF", "RF"]
+      : [];
+  if (!slots.length) return entries;
+
+  const assignedPositions = new Array(entries.length).fill("");
+  const available = new Set(slots);
+  for (let index = 0; index < entries.length; index += 1) {
+    const position = String(entries[index]?.position ?? "").toUpperCase();
+    if (!available.has(position)) continue;
+    assignedPositions[index] = position;
+    available.delete(position);
+  }
+
+  const remaining = slots.filter((position) => available.has(position));
+  let cursor = 0;
+  return entries.map((entry, index) => ({
+    ...entry,
+    position: assignedPositions[index] || remaining[cursor++] || entry.position
+  }));
 }
 
 function normalizeDefensePosition(player, fallbackPosition) {
@@ -7627,6 +7783,7 @@ function buildBoxScore({ away, home, awayPitchingPlan, homePitchingPlan, awayOff
       pitches: awayOffense.pitches + homeOffense.pitches,
       homeRuns: awayOffense.homeRuns + homeOffense.homeRuns,
       stolenBases: awayOffense.stolenBases + homeOffense.stolenBases,
+      caughtStealing: awayOffense.caughtStealing + homeOffense.caughtStealing,
       reachedOnErrors: awayOffense.reachedOnErrors + homeOffense.reachedOnErrors,
       doublePlays: awayOffense.doublePlays + homeOffense.doublePlays,
       errors: awayOffense.defenseErrors + homeOffense.defenseErrors,
@@ -7762,7 +7919,9 @@ function mergeGameEvents(...eventGroups) {
       if (inningDiff !== 0) return inningDiff;
       const halfDiff = (a.side === "home" ? 1 : 0) - (b.side === "home" ? 1 : 0);
       if (halfDiff !== 0) return halfDiff;
-      return safeNumber(a.sequence) - safeNumber(b.sequence);
+      const sequenceDiff = safeNumber(a.sequence) - safeNumber(b.sequence);
+      if (sequenceDiff !== 0) return sequenceDiff;
+      return safeNumber(a.eventOrder) - safeNumber(b.eventOrder);
     });
 }
 

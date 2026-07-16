@@ -10,7 +10,14 @@ import {
   GAMECAST2_ATLAS_ANIMATION_KEYS,
   GAMECAST2_TIMELINE_TEMPLATES
 } from "../src/gamecast2/timeline.js";
-import { derivePlateActor, gamecast2FlyResolutionCue, gamecast2TimelineCueFacing } from "../src/gamecast2/scene.js";
+import {
+  buildTimelineVisualPlay,
+  derivePlateActor,
+  GAMECAST2_THROW_GLOVE_LIFT,
+  gamecast2FlyResolutionCue,
+  gamecast2TimelineCueFacing,
+  timelineBallPoint
+} from "../src/gamecast2/scene.js";
 import { gamecastEventPlayDuration, gamecastPlaybackPosition, gamecastTotalDuration } from "../src/ui.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -113,12 +120,80 @@ export function verifyGamecastTimeline() {
   verifyPlaybackClock();
   verifyDefensiveRotation(compiled);
   verifyFlyBallResolution();
+  verifyBuntChoreography();
   verifyFielderPositionMatrix();
   verifyThrowTargetRegressionCases();
   verifyArmDrivenThrows();
+  verifyStealVisualActors();
   verifyPurity(cases[3].event);
 
   return `${compiled.length}개 플레이, ${GAMECAST2_TIMELINE_TEMPLATES.length * DEFENSE_POSITIONS.length}개 수비 조합, atlas anim ${GAMECAST2_ATLAS_ANIMATION_KEYS.length}키`;
+}
+
+function verifyStealVisualActors() {
+  const runtime = { anchors: { anchors: ANCHORS } };
+  for (const [label, outcome] of [["success", "stolenBase"], ["caught", "caughtStealing"]]) {
+    const success = outcome === "stolenBase";
+    const event = {
+      ...BASE_EVENT,
+      type: "stolenBase",
+      outcome,
+      success,
+      caught: !success,
+      out: !success,
+      runnerId: "r1",
+      hitterId: "",
+      hitterName: "",
+      basesBefore: [true, false, false],
+      baseRunnerIdsBefore: ["r1", "", ""],
+      basesAfter: success ? [false, true, false] : [false, false, false],
+      baseRunnerIdsAfter: success ? ["", "r1", ""] : ["", "", ""]
+    };
+    const timeline = compilePlayTimeline(event, { anchors: ANCHORS });
+    const beforeResult = [0, 0.1, 0.2, 0.4, Math.max(0, timeline.resultAt - 0.001)];
+
+    for (const progress of beforeResult) {
+      const play = buildTimelineVisualPlay(runtime, event, progress, timeline);
+      assert.notEqual(
+        play.actors.get("batter")?.visible,
+        false,
+        `Steal visual (${label}) incorrectly removes the real plate batter at progress ${progress}.`
+      );
+      assert(
+        play.actors.has("runner:r1") && play.actors.get("runner:r1")?.visible !== false,
+        `Steal runner (${label}) is missing at progress ${progress}.`
+      );
+    }
+  }
+}
+
+function verifyBuntChoreography() {
+  const timeline = compilePlayTimeline({
+    ...BASE_EVENT,
+    outcome: "sacrificeBunt",
+    battedBallType: "bunt",
+    fieldingPosition: "3B",
+    defensiveThrowTarget: "first",
+    outsAfter: 1,
+    basesBefore: [true, false, false],
+    baseRunnerIdsBefore: ["r1", "", ""],
+    basesAfter: [false, true, false],
+    baseRunnerIdsAfter: ["", "r1", ""]
+  }, { anchors: ANCHORS });
+  const contact = timeline.tracks.batter.find((cue) => cue.phase === "bunt-contact");
+  const flight = timeline.tracks.ball.find((cue) => cue.phase === "batted");
+  assert(contact, "Sacrifice bunt does not use the short bat-presentation cue.");
+  assert(Number(flight?.arc) <= 0.02, `Sacrifice bunt arc is too high (${flight?.arc}).`);
+  assert.notEqual(flight?.flightProfile, "hang", "Sacrifice bunt incorrectly uses a fly-ball hang profile.");
+  assert(
+    Math.hypot(timeline.points.landing.x - timeline.points.home.x, timeline.points.landing.y - timeline.points.home.y)
+      < Math.hypot(timeline.points["3B"].x - timeline.points.home.x, timeline.points["3B"].y - timeline.points.home.y),
+    "Sacrifice bunt does not die in front of the plate."
+  );
+  assert(
+    timeline.tracks.fielders.filter((cue) => cue.path?.length > 1).length <= 4,
+    "Sacrifice bunt still sends too many defenders into motion."
+  );
 }
 
 function verifyFieldAnchorContract() {
@@ -261,9 +336,14 @@ function verifyFieldingArrival(name, timeline) {
   assert(fielder, `${name}: 수비 접근 cue가 없습니다.`);
   assert.equal(ball.path.at(-1), fielding.ballPoint ?? fielding.landingPoint, `${name}: 타구 도착지점 불일치`);
   if (fielding.resolution === "safe-fly-drop") {
-    assert.equal(fielder.path.at(-1), fielding.missPoint, `${name}: 뜬공 안타 수비수가 헛동작 지점으로 향하지 않습니다.`);
+    const expectedDestination = fielding.fieldingStyle === "dive" ? fielding.missPoint : fielding.pickupPoint;
+    assert.equal(fielder.path.at(-1), expectedDestination, `${name}: 뜬공 안타 수비 접근 경로가 상황별 처리 지점과 다릅니다.`);
     assert.equal(ball.endT, fielding.ballLandingT, `${name}: 뜬공 안타 낙하 시점 메타가 타구 cue와 다릅니다.`);
     assert(fielding.fielderArrivalT > fielding.ballLandingT, `${name}: 뜬공 안타 수비수가 공이 떨어지기 전에 도착합니다.`);
+  } else if (String(fielding.resolution).startsWith("safe-line-")) {
+    assert.equal(fielder.path.at(-1), fielding.pickupPoint, `${name}: 직선타 안타 수비수가 픽업 지점으로 향하지 않습니다.`);
+    assert.equal(ball.endT, fielding.ballLandingT, `${name}: 직선타 안타의 지면 도달 시점이 타구 cue와 다릅니다.`);
+    assert(fielding.fielderArrivalT > fielding.ballLandingT, `${name}: 직선타 안타 수비수가 공이 땅에 닿기 전에 포구합니다.`);
   } else {
     assert.equal(fielder.path.at(-1), fielding.landingPoint, `${name}: 수비수 도착지점 불일치`);
     assert.equal(ball.endT, fielder.endT, `${name}: 공 낙하와 수비수 도착 시점 불일치`);
@@ -271,7 +351,7 @@ function verifyFieldingArrival(name, timeline) {
   assert.equal(fielding.ballArrivalT, fielding.fielderArrivalT, `${name}: fielding 메타 시점 불일치`);
   assert.equal(timeline.meta.invariants.fieldingArrivalMatchesBall, true, `${name}: fielding 도착 불변식 실패`);
 
-  const field = timeline.tracks.fielders.find((cue) => ["field", "catch", "pickup", "misplay"].includes(cue.phase) && cue.who === fielding.fielder);
+  const field = timeline.tracks.fielders.find((cue) => ["field", "catch", "pickup", "trap", "short-hop", "misplay"].includes(cue.phase) && cue.who === fielding.fielder);
   assert(field && field.t >= fielder.endT, `${name}: 포구/실책 동작이 수비 도착보다 빠릅니다.`);
   const fieldThrow = timeline.tracks.fielders.find((cue) => cue.phase === "throw" && cue.who === fielding.fielder);
   if (fieldThrow) assert(fieldThrow.t >= field.endT, `${name}: 송구가 포구보다 빠릅니다.`);
@@ -303,6 +383,33 @@ function verifyFlyBallResolution() {
     fieldingPosition: "RF",
     outsAfter: 1
   }, { anchors: ANCHORS });
+  const safeLine = compilePlayTimeline({
+    ...BASE_EVENT,
+    sequence: 804,
+    outcome: "single",
+    battedBallType: "lineDrive",
+    fieldingPosition: "2B",
+    basesAfter: [true, false, false],
+    baseRunnerIdsAfter: ["batter", "", ""]
+  }, { anchors: ANCHORS });
+  const challengingFly = compilePlayTimeline({
+    ...BASE_EVENT,
+    sequence: 805,
+    outcome: "triple",
+    battedBallType: "flyBall",
+    fieldingPosition: "CF",
+    basesAfter: [false, false, true],
+    baseRunnerIdsAfter: ["", "", "batter"]
+  }, { anchors: ANCHORS });
+  const challengingLine = compilePlayTimeline({
+    ...BASE_EVENT,
+    sequence: 806,
+    outcome: "triple",
+    battedBallType: "lineDrive",
+    fieldingPosition: "RF",
+    basesAfter: [false, false, true],
+    baseRunnerIdsAfter: ["", "", "batter"]
+  }, { anchors: ANCHORS });
 
   const caughtFlight = caught.tracks.ball.find((cue) => cue.phase === "batted");
   const caughtField = caught.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "catch");
@@ -325,22 +432,73 @@ function verifyFlyBallResolution() {
   assert.equal(caughtLineFlight?.caughtDirectly, true, "직선타 아웃이 직접 포구로 표시되지 않습니다.");
   assert(!caughtLine.tracks.ball.some((cue) => cue.bounce === true), "직선타 아웃에 바운드 cue가 섞였습니다.");
 
+  const safeLineFlight = safeLine.tracks.ball.find((cue) => cue.phase === "batted");
+  const safeLineSettle = safeLine.tracks.ball.find((cue) => cue.phase === "line-settle");
+  const safeLineShortHop = safeLine.tracks.fielders.find((cue) => cue.who === "2B" && cue.phase === "short-hop");
+  assert.equal(safeLine.meta.fielding.resolution, "safe-line-short-hop", "일반 직선타 안타가 숏바운드 처리로 표시되지 않습니다.");
+  assert.equal(safeLine.meta.fielding.fieldingStyle, "short-hop", "일반 직선타 안타가 불필요한 다이빙으로 분류됩니다.");
+  assert.equal(safeLineFlight?.path?.at(-1), "landing", "직선타 안타가 지면에 먼저 도달하지 않습니다.");
+  assert.equal(safeLineFlight?.caughtDirectly, false, "직선타 안타가 직접 포구로 잘못 표시됩니다.");
+  assert.deepEqual(safeLineSettle?.path, ["landing", "pickup"], "직선타 안타의 짧은 지면 이동 경로가 없습니다.");
+  assert.equal(safeLineSettle?.grounded, true, "직선타 안타의 착지 후 이동이 지면 이동이 아닙니다.");
+  assert.equal(safeLineShortHop?.anim, "catch", "일반 직선타 안타 수비수가 숏바운드 처리 동작을 하지 않습니다.");
+  assert(
+    !safeLine.tracks.fielders.some((cue) => cue.who === "2B" && cue.anim === "dive"),
+    "일반 직선타 안타 수비수가 강제로 다이빙합니다."
+  );
+  assert(
+    Number(safeLine.meta.fielding.ballLandingT) < Number(safeLineShortHop?.t),
+    "직선타 안타가 땅에 닿기 전에 수비수가 숏바운드를 처리합니다."
+  );
+  assert(
+    Math.hypot(
+      Number(safeLine.points.pickup?.x) - Number(safeLine.points.landing?.x),
+      Number(safeLine.points.pickup?.y) - Number(safeLine.points.landing?.y)
+    ) <= 8,
+    "직선타 안타가 착지 후 너무 멀리 이동합니다."
+  );
+
   const safeFlight = safe.tracks.ball.find((cue) => cue.phase === "batted");
-  const bounce = safe.tracks.ball.find((cue) => cue.phase === "safe-bounce");
-  const miss = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "miss");
-  const recover = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "recover");
+  const settle = safe.tracks.ball.find((cue) => cue.phase === "safe-settle");
+  const approach = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "approach");
   const pickup = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "pickup");
   const batterRun = safe.tracks.batter.find((cue) => cue.phase === "batter-run");
   assert.equal(safe.meta.fielding.resolution, "safe-fly-drop", "뜬공 안타가 안전 낙하 판정으로 표시되지 않습니다.");
+  assert.equal(safeFlight?.flightProfile, "hang", "뜬공 안타 타구가 체공 없이 땅볼처럼 직선 이동합니다.");
   assert.equal(safeFlight?.path?.at(-1), "landing", "뜬공 안타가 땅에 먼저 떨어지지 않습니다.");
-  assert.equal(bounce?.path?.[0], "landing", "뜬공 안타 바운드가 낙하지점에서 시작하지 않습니다.");
-  assert.equal(bounce?.path?.at(-1), "pickup", "뜬공 안타 바운드가 픽업 지점으로 이어지지 않습니다.");
-  assert.equal(bounce?.bounce, true, "뜬공 안타 바운드 시각 효과 플래그가 없습니다.");
-  assert.equal(miss?.anim, "dive", "뜬공 안타 수비수가 헛동작을 하지 않습니다.");
-  assert.deepEqual(recover?.path, ["miss", "pickup"], "뜬공 안타 수비수가 뒤늦게 공으로 회복하지 않습니다.");
+  assert.equal(settle?.path?.[0], "landing", "뜬공 안타의 착지 후 이동이 낙하지점에서 시작하지 않습니다.");
+  assert.equal(settle?.path?.at(-1), "pickup", "뜬공 안타의 착지 후 이동이 픽업 지점으로 이어지지 않습니다.");
+  assert.equal(settle?.grounded, true, "뜬공 안타의 착지 후 이동이 지면 이동으로 표시되지 않습니다.");
+  assert(
+    !safe.tracks.ball.some((cue) => cue.bounce === true || String(cue.phase).includes("bounce")),
+    "뜬공 안타가 외야수 앞에서 다시 튀어 땅볼처럼 보입니다."
+  );
+  assert(
+    Math.hypot(
+      Number(safe.points.pickup?.x) - Number(safe.points.landing?.x),
+      Number(safe.points.pickup?.y) - Number(safe.points.landing?.y)
+    ) <= 8,
+    "뜬공 안타가 착지 후 외야수 쪽으로 너무 멀리 이동합니다."
+  );
+  assert.equal(safe.meta.fielding.fieldingStyle, "run-through", "일반 뜬공 안타가 불필요한 다이빙으로 분류됩니다.");
+  assert.deepEqual(approach?.path, ["CF", "pickup"], "일반 뜬공 안타 수비수가 떨어진 공까지 달려가지 않습니다.");
+  assert(!safe.tracks.fielders.some((cue) => cue.who === "CF" && cue.anim === "dive"), "일반 뜬공 안타 수비수가 강제로 다이빙합니다.");
   assert.equal(pickup?.at, "pickup", "뜬공 안타 픽업 동작이 공 위치와 다릅니다.");
+  assert(Number(pickup?.t) > Number(safe.meta.fielding.ballLandingT), "뜬공 안타 수비수가 낙하 전에 포구 동작을 합니다.");
   assert(batterRun && batterRun.out !== true, "뜬공 안타 타자 주루가 이어지지 않습니다.");
   assert(Number(safe.meta.fielding.fielderArrivalT) > Number(safe.meta.fielding.ballLandingT), "뜬공 안타 수비수가 낙하보다 늦게 도착하지 않습니다.");
+
+  const challengingFlyMiss = challengingFly.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "miss");
+  const challengingFlyRecover = challengingFly.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "recover");
+  assert.equal(challengingFly.meta.fielding.fieldingStyle, "dive", "어려운 뜬공 안타에 다이빙 판단이 없습니다.");
+  assert.equal(challengingFlyMiss?.anim, "dive", "어려운 뜬공 안타 수비수가 다이빙하지 않습니다.");
+  assert.deepEqual(challengingFlyRecover?.path, ["miss", "pickup"], "다이빙한 수비수가 공으로 회복하지 않습니다.");
+
+  const challengingLineTrap = challengingLine.tracks.fielders.find((cue) => cue.who === "RF" && cue.phase === "trap");
+  assert.equal(challengingLine.meta.fielding.resolution, "safe-line-trap", "어려운 직선타 안타가 다이빙 트랩으로 표시되지 않습니다.");
+  assert.equal(challengingLine.meta.fielding.fieldingStyle, "dive", "어려운 직선타 안타에 다이빙 판단이 없습니다.");
+  assert.equal(challengingLineTrap?.anim, "dive", "어려운 직선타 안타 수비수가 다이빙하지 않습니다.");
+  assert(Number(challengingLineTrap?.t) > Number(challengingLine.meta.fielding.ballLandingT), "직선타 다이빙 트랩이 착지 전에 시작됩니다.");
 
   assert.equal(gamecast2FlyResolutionCue(caught, caught.meta.fielding.ballLandingT + 0.02)?.label, "OUT", "뜬공 아웃 현장 cue가 없습니다.");
   assert.equal(gamecast2FlyResolutionCue(safe, safe.meta.fielding.ballLandingT + 0.02)?.label, "SAFE HIT", "뜬공 안타 현장 cue가 없습니다.");
@@ -700,7 +858,8 @@ function verifyFielderCueIntervals(name, timeline) {
 
 function verifyDefensiveRotation(compiled) {
   const fielded = compiled.filter(({ timeline }) => timeline.meta.fielding);
-  for (const { name, timeline } of fielded) {
+  for (const { name, event, timeline } of fielded) {
+    verifyRoleBasedDefensiveMotion(name, event, timeline);
     const throwBall = timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw");
     if (!throwBall) continue;
     const target = throwBall.path?.at(-1);
@@ -713,12 +872,31 @@ function verifyDefensiveRotation(compiled) {
   const infieldOut = compiled.find(({ name }) => name === "infield-out")?.timeline;
   const firstCover = infieldOut?.tracks.fielders.find((cue) => cue.who === "1B" && cue.phase === "cover-first");
   assert.deepEqual(firstCover?.path, ["1B", "first"], "내야 땅볼에서 1루수가 1루 포구 위치로 움직이지 않습니다.");
-  const supportKeys = new Set(
+  const infieldSupportRoles = new Set(
     infieldOut?.tracks.fielders
-      .filter((cue) => cue.phase === "defensive-shift")
-      .map((cue) => cue.who)
+      .filter((cue) => ["relay", "base-cover", "backup"].includes(cue.assignment))
+      .map((cue) => cue.assignment)
   );
-  assert(supportKeys.size >= 5, `내야 땅볼 커버 수비가 부족합니다: ${[...supportKeys].join(", ")}`);
+  assert(infieldSupportRoles.has("backup"), "내야 땅볼에 베이스/타구 백업 역할이 없습니다.");
+  const firstBackup = infieldOut?.tracks.fielders.find((cue) => cue.assignment === "backup" && cue.supportTarget === "first");
+  const firstBackupDestination = infieldOut?.points?.[firstBackup?.arrivesAt];
+  assert.equal(firstBackup?.who, "P", "1루 백업 가능 상황에서 투수가 아닌 먼 야수를 먼저 선택합니다.");
+  assert(
+    pointDistance(firstBackupDestination, infieldOut?.points?.first) <= 14.1,
+    "투수의 1루 백업 동선이 베이스 근처까지 도달하지 않습니다."
+  );
+  const incomingToFirst = {
+    x: Number(infieldOut?.points?.first?.x) - Number(infieldOut?.points?.[firstBackup?.toward]?.x),
+    y: Number(infieldOut?.points?.first?.y) - Number(infieldOut?.points?.[firstBackup?.toward]?.y)
+  };
+  const firstToBackup = {
+    x: Number(firstBackupDestination?.x) - Number(infieldOut?.points?.first?.x),
+    y: Number(firstBackupDestination?.y) - Number(infieldOut?.points?.first?.y)
+  };
+  assert(
+    incomingToFirst.x * firstToBackup.x + incomingToFirst.y * firstToBackup.y > 0,
+    "투수의 1루 백업 위치가 송구 연장선 뒤쪽이 아닙니다."
+  );
 
   const doublePlay = compiled.find(({ name }) => name === "double-play")?.timeline;
   assert(
@@ -731,6 +909,73 @@ function verifyDefensiveRotation(compiled) {
     relayBall && relayReceive && relayReceive.t <= relayBall.endT && relayReceive.endT >= relayBall.endT,
     "병살 1루 포구 cue가 릴레이 공 도착 시점을 감싸지 않습니다."
   );
+}
+
+function verifyRoleBasedDefensiveMotion(name, event, timeline) {
+  if (!timeline?.meta?.fielding) return;
+  const supportRoles = new Set(["relay", "base-cover", "backup"]);
+  const supports = timeline.tracks.fielders.filter((cue) => supportRoles.has(cue.assignment));
+  const supportActors = new Set();
+  for (const cue of supports) {
+    assert(!supportActors.has(cue.who), `${name}: ${cue.who} has multiple support assignments.`);
+    supportActors.add(cue.who);
+    assert.equal(cue.path?.length, 2, `${name}: ${cue.who} ${cue.assignment} route is not purposeful.`);
+    assert.equal(cue.arrivesAt, cue.path?.at(-1), `${name}: ${cue.who} ${cue.assignment} has no explicit destination.`);
+    assert(timeline.points?.[cue.arrivesAt], `${name}: ${cue.who} ${cue.assignment} destination is missing.`);
+    assert(cue.supportTarget && timeline.points?.[cue.supportTarget], `${name}: ${cue.who} ${cue.assignment} has no baseball target.`);
+    const routeDistance = pointDistance(timeline.points?.[cue.path?.[0]], timeline.points?.[cue.arrivesAt]);
+    assert(routeDistance >= 13.9, `${name}: ${cue.who} ${cue.assignment} route moves only ${routeDistance.toFixed(2)}px.`);
+    const baseBackup = cue.assignment === "backup" && ["home", "first", "second", "third"].includes(cue.supportTarget);
+    if (["backup", "relay"].includes(cue.assignment) && !baseBackup) {
+      assert(routeDistance >= 17.9, `${name}: ${cue.who} ${cue.assignment} route is not visibly meaningful.`);
+    }
+    if (baseBackup) {
+      const targetDistance = pointDistance(timeline.points?.[cue.arrivesAt], timeline.points?.[cue.supportTarget]);
+      assert(
+        targetDistance <= 42.01,
+        `${name}: ${cue.who} backs up ${cue.supportTarget} from ${targetDistance.toFixed(2)}px away.`
+      );
+    }
+  }
+
+  if (supports.length > 1) {
+    const schedules = new Set(supports.map((cue) => `${cue.t}:${cue.endT}`));
+    assert.equal(
+      schedules.size,
+      supports.length,
+      `${name}: support defenders still start and stop as one synchronized group.`
+    );
+  }
+
+  const moving = timeline.tracks.fielders.filter((cue) => cue.path?.length > 1);
+  const boundaries = [...new Set(moving.flatMap((cue) => [Number(cue.t), Number(cue.endT)]))]
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  let maximumConcurrent = 0;
+  for (let index = 1; index < boundaries.length; index += 1) {
+    const sampleT = (boundaries[index - 1] + boundaries[index]) / 2;
+    const activeActors = new Set(
+      moving
+        .filter((cue) => sampleT >= Number(cue.t) && sampleT <= Number(cue.endT))
+        .map((cue) => cue.who)
+    );
+    maximumConcurrent = Math.max(maximumConcurrent, activeActors.size);
+  }
+  assert(
+    maximumConcurrent <= 4,
+    `${name}: ${maximumConcurrent} defenders move at once; role rotation must stay at four or fewer.`
+  );
+
+  const catcherSupport = supports.find((cue) => cue.who === "C");
+  if (catcherSupport) {
+    assert(
+      String(event?.battedBallType ?? "").toLowerCase().includes("bunt"),
+      `${name}: catcher abandons home on a non-bunt support route.`
+    );
+  }
+  for (const pitcherSupport of supports.filter((cue) => cue.who === "P")) {
+    assert.equal(pitcherSupport.assignment, "backup", `${name}: pitcher is not assigned to a backup route.`);
+  }
 }
 
 function verifyFielderPositionMatrix() {
@@ -748,6 +993,7 @@ function verifyFielderPositionMatrix() {
       verifyTimelineContract({ name: label, timeline });
       verifyThrowChains(label, timeline);
       verifyThrowTargetSemantics(label, event, timeline);
+      verifyRoleBasedDefensiveMotion(label, event, timeline);
       verifyMovementCoverage(label, playName, timeline);
       verifyDefenderEndpoints(label, timeline, ANCHORS);
       if (playName === "double-play" && fieldingPosition === "1B") {
@@ -773,6 +1019,7 @@ function verifyFielderPositionMatrix() {
         verifyFielderCueIntervals(label, timeline);
         verifyThrowChains(label, timeline);
         verifyThrowTargetSemantics(label, event, timeline);
+        verifyRoleBasedDefensiveMotion(label, event, timeline);
         verifyDefenderEndpoints(label, timeline, anchors);
       }
     }
@@ -824,6 +1071,18 @@ function verifyThrowChains(name, timeline) {
   for (const ball of ballThrows) {
     const from = ball.path?.[0];
     const target = ball.path?.at(-1);
+    const visualStart = timelineBallPoint(ball, timeline.points, 0);
+    const visualEnd = timelineBallPoint(ball, timeline.points, 1);
+    if (["fielding-throw", "relay-throw"].includes(ball.phase)) {
+      assert(
+        Number(timeline.points?.[from]?.y) - Number(visualStart?.y) >= GAMECAST2_THROW_GLOVE_LIFT - 0.01,
+        `${name}: ${ball.phase} still launches from the fielder's feet.`
+      );
+    }
+    assert(
+      Number(timeline.points?.[target]?.y) - Number(visualEnd?.y) >= GAMECAST2_THROW_GLOVE_LIFT - 0.01,
+      `${name}: ${ball.phase} still arrives at the receiver's feet.`
+    );
     const thrower = actorThrows.find((cue) => {
       const cueFrom = cue.at === "C" ? "home" : cue.at;
       const end = Number(cue.endT ?? cue.t);
@@ -861,7 +1120,7 @@ function verifyThrowTargetSemantics(name, event, timeline) {
       `${name}: single throw must follow the lead existing runner; empty bases require no competitive throw.`
     );
     const batterRun = timeline.tracks.batter.find((cue) => cue.phase === "batter-run");
-    const field = timeline.tracks.fielders.find((cue) => ["field", "pickup"].includes(cue.phase));
+    const field = timeline.tracks.fielders.find((cue) => ["field", "pickup", "trap", "short-hop"].includes(cue.phase));
     const outfieldSingle = OUTFIELD_POSITIONS.has(String(timeline.meta.fielding?.fielder ?? ""));
     assert(batterRun && field, `${name}: single has no batter-run/fielding cues.`);
     if (outfieldSingle) {
@@ -1325,6 +1584,26 @@ function verifyThrowTargetRegressionCases() {
       "third",
       `Regression: steal of third (${label}) was thrown to second.`
     );
+    const runnerArrivalT = Math.max(
+      ...stealThird.timeline.tracks.runners.map((cue) => Number(cue.endT ?? cue.t))
+    );
+    const throwArrivalT = Number(
+      stealThird.timeline.tracks.ball.find((cue) => cue.phase === "steal-throw")?.endT
+    );
+    const tagEndT = Number(
+      stealThird.timeline.tracks.fielders.find((cue) => ["tag", "late-tag"].includes(cue.phase))?.endT
+    );
+    if (label === "success") {
+      assert(
+        runnerArrivalT < throwArrivalT && runnerArrivalT < tagEndT,
+        `Regression: successful steal runner did not beat throw/tag (${runnerArrivalT}/${throwArrivalT}/${tagEndT}).`
+      );
+    } else {
+      assert(
+        throwArrivalT < runnerArrivalT && tagEndT < runnerArrivalT,
+        `Regression: caught stealing runner beat ball/tag (${runnerArrivalT}/${throwArrivalT}/${tagEndT}).`
+      );
+    }
     verifyThrowChains(`regression-steal-third-${label}`, stealThird.timeline);
     verifyThrowTargetSemantics(`regression-steal-third-${label}`, stealThird.event, stealThird.timeline);
   }
@@ -1362,7 +1641,8 @@ function verifyCueFacing(name, cue, points, role) {
 function verifyMovementCoverage(name, playName, timeline) {
   const movers = new Set(timeline.tracks.fielders.filter((cue) => (cue.path?.length ?? 0) > 1).map((cue) => cue.who));
   if (["single", "double", "triple", "infield-out", "outfield-out", "double-play", "error"].includes(playName)) {
-    assert(movers.size >= 7, `${name}: chained defense moves only ${movers.size} players.`);
+    assert(movers.size >= 2, `${name}: the primary fielder has no receiver or purposeful backup movement.`);
+    assert(movers.size <= 6, `${name}: ${movers.size} defenders are still scripted into the same play.`);
   }
   if (playName === "home-run") {
     const chaser = timeline.tracks.fielders.find((cue) => cue.phase === "warning-track");
@@ -1461,6 +1741,10 @@ function loadedBases(overrides) {
 
 function allCues(timeline) {
   return Object.values(timeline.tracks).flat();
+}
+
+function pointDistance(a, b) {
+  return Math.hypot(Number(a?.x ?? 0) - Number(b?.x ?? 0), Number(a?.y ?? 0) - Number(b?.y ?? 0));
 }
 
 function deepFreeze(value) {

@@ -118,17 +118,19 @@ Real salary/military/FA data is not claimed unless `source.kind` is `official` o
       away: { starter, bullpen, starterTargetOuts, starterPitchLimit },
       home: { starter, bullpen, starterTargetOuts, starterPitchLimit }
     },
-    totals: { plateAppearances, pitches, homeRuns, stolenBases, reachedOnErrors, doublePlays, errors, pitchersUsed }
+    totals: { plateAppearances, pitches, homeRuns, stolenBases, caughtStealing, reachedOnErrors, doublePlays, errors, pitchersUsed }
   },
   plateAppearanceEvents: [
     {
-      outcome: "single" | "double" | "triple" | "homeRun" | "walk" | "strikeout" | "out" | "error",
+      id, type: "plateAppearance" | "stolenBase", sequence, eventOrder,
+      outcome: "single" | "double" | "triple" | "homeRun" | "walk" | "strikeout" | "out" | "error" | "stolenBase" | "caughtStealing",
       battedBallType: "" | "groundBall" | "lineDrive" | "flyBall",
       fieldingPosition, defenderId, defenderName,
       doublePlay, reachedOnError,
       ballparkId, ballparkName,
       earnedRuns,
-      basesBefore, basesAfter, inningEnded
+      basesBefore, basesAfter, baseRunnerIdsBefore, baseRunnerIdsAfter, inningEnded,
+      runnerId, runnerName, success, caught, out
     }
   ],
   scoringEvents: [],

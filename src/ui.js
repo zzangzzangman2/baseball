@@ -68,14 +68,14 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-arm-pitch-20260715-r15";
+} from "./gamecastPhaser.js?v=gamecast-motion-ai-20260716-r16";
 
 import {
   canUseGamecast2,
   getGamecast2PlayDurationMs,
   getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-arm-pitch-20260715-r15";
+} from "./gamecast2/index.js?v=gamecast-motion-ai-20260716-r16";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },
@@ -5345,6 +5345,7 @@ function renderGamecastPanel(state) {
   const away = normalizeGameTeam(game.away ?? game.awayTeamId, state);
   const home = normalizeGameTeam(game.home ?? game.homeTeamId, state);
   const events = Array.isArray(game.plateAppearanceEvents) ? game.plateAppearanceEvents : [];
+  const plateAppearanceCount = events.filter((event) => event?.type !== "stolenBase").length;
   const sequence = hydrateGamecastSequence(buildGamecastSequence(game, state));
   latestGamecastSequence = sequence;
   const gamecastEngine = normalizeGamecastEngine(state.ui?.gamecastEngine);
@@ -5366,7 +5367,7 @@ function renderGamecastPanel(state) {
         <div class="gamecast-head-actions">
           ${renderGamecastEngineToggle(gamecastEngine)}
           ${game ? `<button class="button button-soft gamecast-expand-button" data-action="open-gamecast-broadcast" type="button">큰 화면</button>` : ""}
-          <span class="pill">${sequence.mode === "watch" ? "LIVE" : `${formatNumber(events.length)} PA`}</span>
+          <span class="pill">${sequence.mode === "watch" ? "LIVE" : `${formatNumber(plateAppearanceCount)} PA`}</span>
         </div>
       </div>
       <div class="gamecast-layout">
@@ -5523,7 +5524,7 @@ function gamecastMatchupResult(event) {
   if (["single", "double", "triple"].includes(event.outcome)) {
     return `${gamecastResultDisplayText(event)}${runs > 0 ? ` +${formatNumber(runs)}` : ""}`;
   }
-  if (["walk", "strikeout", "error", "sacrificeBunt"].includes(event.outcome)) {
+  if (["walk", "strikeout", "error", "sacrificeBunt", "stolenBase", "caughtStealing"].includes(event.outcome)) {
     return gamecastResultDisplayText(event);
   }
   if (event.outcome === "out") {
@@ -5546,6 +5547,8 @@ export function gamecastResultDisplayText(event) {
   if (event.outcome === "walk") return "볼넷";
   if (event.outcome === "error") return "실책";
   if (event.outcome === "sacrificeBunt") return "희생번트";
+  if (event.outcome === "stolenBase") return "도루 성공";
+  if (event.outcome === "caughtStealing") return "도루자 아웃";
   if (event.outcome === "out") {
     if (battedBallType.includes("fly")) return "뜬공 아웃";
     if (battedBallType.includes("line")) return "직선타 아웃";
@@ -5557,6 +5560,8 @@ export function gamecastResultDisplayText(event) {
 
 function gamecastLivePhaseLabel(event, progress) {
   if (!event) return "대기";
+  if (event.outcome === "stolenBase") return progress < 0.68 ? "도루 시도" : "세이프";
+  if (event.outcome === "caughtStealing") return progress < 0.68 ? "도루 시도" : "태그 아웃";
   const pitchEnd = gamecastPitchEnd(event);
   if (progress < pitchEnd - 0.04) return "투구";
   if (progress < pitchEnd + 0.08) return "컨택";
@@ -5868,11 +5873,12 @@ function getGamecastPlaybackView(sequence, fallbackEvents, state) {
   };
 }
 
-function sortGamecastEvents(events) {
+export function sortGamecastEvents(events) {
   return [...(events ?? [])].sort((a, b) =>
     (Number(a?.inning ?? 0) - Number(b?.inning ?? 0)) ||
     ((a?.side === "home" ? 1 : 0) - (b?.side === "home" ? 1 : 0)) ||
-    (Number(a?.sequence ?? 0) - Number(b?.sequence ?? 0))
+    (Number(a?.sequence ?? 0) - Number(b?.sequence ?? 0)) ||
+    (Number(a?.eventOrder ?? 0) - Number(b?.eventOrder ?? 0))
   );
 }
 
@@ -5914,16 +5920,23 @@ function normalizeGamecastEvent(event, state, gamecastContext = null) {
   const defenseJerseyShadow = side === "home" ? "#364154" : "#cad5e1";
 
   return {
-    id: `${event?.gameId ?? "game"}-${side}-${inning}-${sequence}-${event?.outcome ?? "idle"}`,
+    id: String(event?.id ?? `${event?.gameId ?? "game"}-${side}-${inning}-${sequence}-${event?.outcome ?? "idle"}`),
+    type: String(event?.type ?? "plateAppearance"),
     outcome: String(event?.outcome ?? "out"),
     inning,
     side,
     sequence,
+    eventOrder: Number(event?.eventOrder ?? 0),
     offenseTeamId: event?.offenseTeamId ?? "",
     defenseTeamId: event?.defenseTeamId ?? "",
     offenseLabel: eventTeamLabel(event, state),
     hitterId,
     hitterName: String(event?.hitterName ?? "타자"),
+    runnerId: String(event?.runnerId ?? ""),
+    runnerName: String(event?.runnerName ?? ""),
+    success: event?.success === true,
+    caught: event?.caught === true,
+    out: event?.out === true,
     pitcherId,
     pitcherName: String(event?.pitcherName ?? "투수"),
     defenderId,
@@ -6211,6 +6224,13 @@ function gamecastFrameNowDetail(frame) {
   if (!event) return "타석 이벤트 대기";
   if (gamecastFrameResultRevealed(frame)) return gamecastBroadcastSentence(event);
   const progress = Number(frame.progress ?? 0);
+  if (event.outcome === "stolenBase" || event.outcome === "caughtStealing") {
+    const runner = event.runnerName || event.hitterName || "주자";
+    if (progress < 0.68) return `${runner} 주자가 다음 베이스로 스타트를 끊었습니다.`;
+    return event.outcome === "stolenBase"
+      ? `${runner} 주자가 송구보다 먼저 베이스에 들어갑니다.`
+      : `${runner} 주자에게 태그가 먼저 들어갑니다.`;
+  }
   const pitchEnd = gamecastPitchEnd(event);
   if (progress < pitchEnd - 0.04) {
     return `${event.pitcherName || "투수"} 와인드업, ${event.hitterName || "타자"}가 타이밍을 잡습니다.`;
@@ -6241,6 +6261,13 @@ function gamecastBroadcastSentence(event) {
   const scoring = runs > 0 ? ` ${formatNumber(runs)}득점이 들어옵니다.` : "";
   const lane = gamecastHitLane(event);
   const pick = (items) => items[gamecastEventNoise(event, 11) % items.length];
+
+  if (event.outcome === "stolenBase") {
+    return `${event.runnerName || hitter} 주자가 송구보다 먼저 베이스에 도착해 도루에 성공합니다.`;
+  }
+  if (event.outcome === "caughtStealing") {
+    return `${event.runnerName || hitter} 주자가 포수 송구에 걸려 태그 아웃됩니다.`;
+  }
 
   if (event.doublePlay) {
     return pick([
@@ -6315,11 +6342,13 @@ function battedBallTypeLabel(type) {
   return "";
 }
 
-function gamecastOutcomeClass(outcome) {
+export function gamecastOutcomeClass(outcome) {
   if (outcome === "homeRun") return "is-homer";
   if (["single", "double", "triple"].includes(outcome)) return "is-hit";
   if (outcome === "walk") return "is-walk";
   if (outcome === "error") return "is-error";
+  if (outcome === "stolenBase") return "is-hit";
+  if (outcome === "caughtStealing") return "is-out";
   if (outcome === "strikeout" || outcome === "out" || outcome === "sacrificeBunt") return "is-out";
   return "is-ball";
 }
@@ -8644,7 +8673,9 @@ function gamecastDefensiveAlignment() {
 function gamecastStaticDefenseSnapshot(frame) {
   const movingFielders = new Set(frame?.activeFielders ?? []);
   const activeProgress = Number(frame?.progress ?? 0);
-  const pitchingNow = frame?.event && activeProgress <= gamecastPitchEnd(frame.event) + 0.11;
+  const pitchingNow = frame?.event
+    && !isGamecastStealEvent(frame.event)
+    && activeProgress <= gamecastPitchEnd(frame.event) + 0.11;
   return gamecastDefensiveAlignment()
     .filter((fielder) => !movingFielders.has(fielder.key) && !(pitchingNow && fielder.key === "P"))
     .map((fielder) => {
@@ -9142,8 +9173,24 @@ function gamecastFieldingAbilityForEvent(event, key) {
   return event?.defenseAbilityByPosition?.[fieldingKey] ?? null;
 }
 
-function buildBatterSprite(event, progress, palette) {
-  if (!event || progress >= 0.72) return null;
+export function buildBatterSprite(event, progress, palette) {
+  if (!event) return null;
+  if (isGamecastStealEvent(event)) {
+    if (progress >= 0.96) return null;
+    return {
+      position: { ...gamecastHomePlateCluster().batter },
+      color: event.teamColor ?? palette.runner,
+      jerseyColor: event.teamJerseyColor ?? palette.uniform,
+      jerseyShadow: event.teamJerseyShadow ?? palette.uniformSh,
+      accentColor: event.teamAccentColor ?? event.teamColor ?? palette.runner,
+      uniformNumber: "",
+      pose: "stance",
+      animationKey: null,
+      animationT: 0,
+      runFrame: 2
+    };
+  }
+  if (progress >= 0.72) return null;
   const advance = gamecastAdvanceCount(event.outcome);
   const pitchEnd = gamecastPitchEnd(event);
   const batted = isBattedBallOutcome(event.outcome);
@@ -9207,6 +9254,27 @@ function buildGamecastPlayerLabel(event, progress, runners, defenseSprites = [])
       x: Math.max(gamecastX(10), Math.min(gamecastX(110), position.x)),
       y: Math.max(gamecastY(10), Math.min(gamecastY(96), position.y - gamecastSize(16))),
       opacity: fadeOut,
+      scoring: false
+    };
+  }
+  if (isGamecastStealEvent(event)) {
+    const transition = gamecastStealTransition(event);
+    const timing = gamecastRunnerTransitionTiming(event, transition);
+    const movingRunner = runners.find((runner) => runner.role === "runner") ?? null;
+    const bases = gamecastBasePositions();
+    const from = gamecastBasePoint(transition.fromBase, bases);
+    const to = gamecastBasePoint(transition.toBase, bases);
+    const position = movingRunner?.position
+      ?? (progress < timing.startT ? from : to);
+    const fadeIn = Math.min(1, Math.max(0, progress / 0.08));
+    const fadeOut = progress > 0.86 ? Math.max(0, (0.98 - progress) / 0.12) : 1;
+    const opacity = Math.max(0, Math.min(1, fadeIn * fadeOut));
+    return {
+      visible: opacity > 0.08,
+      text: shortenGamecastPlayerName(event.runnerName),
+      x: Math.max(gamecastX(10), Math.min(gamecastX(110), position.x)),
+      y: Math.max(gamecastY(10), Math.min(gamecastY(102), position.y - gamecastSize(12))),
+      opacity,
       scoring: false
     };
   }
@@ -9316,8 +9384,74 @@ function buildRunnerSprites(event, progress, palette) {
   return runners;
 }
 
+function isGamecastStealEvent(event) {
+  return event?.type === "stolenBase"
+    || event?.outcome === "stolenBase"
+    || event?.outcome === "caughtStealing";
+}
+
+function gamecastStealTransition(event) {
+  const fromBase = Math.max(1, Math.min(3, Math.floor(Number(event?.fromBase) || 1)));
+  const toBase = Math.max(fromBase + 1, Math.min(4, Math.floor(Number(event?.toBase) || fromBase + 1)));
+  return {
+    id: String(event?.runnerId ?? "steal-runner"),
+    role: "runner",
+    fromBase,
+    toBase,
+    out: event?.outcome === "caughtStealing" || event?.caught === true || event?.out === true
+  };
+}
+
+function gamecastBasePoint(base, bases = gamecastBasePositions()) {
+  const key = ["home", "first", "second", "third", "home"][Math.max(0, Math.min(4, Number(base) || 0))];
+  return { ...(bases[key] ?? bases.home) };
+}
+
+function gamecastStealThrowTiming(event) {
+  const transition = gamecastStealTransition(event);
+  const runnerTiming = gamecastRunnerTransitionTiming(event, transition);
+  const success = !transition.out;
+  const endT = Math.max(0.46, Math.min(0.92, runnerTiming.endT + (success ? 0.03 : -0.025)));
+  return {
+    startT: Math.max(0.26, endT - 0.2),
+    endT,
+    transition,
+    runnerTiming
+  };
+}
+
+function gamecastStealBallPoint(from, to, t) {
+  const eased = easeOutCubic(Math.max(0, Math.min(1, t)));
+  return {
+    x: Math.round(lerp(from.x, to.x, eased)),
+    y: Math.round(lerp(from.y, to.y, eased) - Math.sin(eased * Math.PI) * gamecastSize(10))
+  };
+}
+
+function gamecastStealThrowState(event, progress) {
+  if (!isGamecastStealEvent(event)) return null;
+  const timing = gamecastStealThrowTiming(event);
+  if (progress < timing.startT || progress > timing.endT) return null;
+  const bases = gamecastBasePositions();
+  const from = timing.transition.toBase === 4
+    ? { ...bases.mound }
+    : { ...gamecastHomePlateCluster().catcher };
+  const to = gamecastBasePoint(timing.transition.toBase, bases);
+  const rawT = Math.max(0, Math.min(1, (progress - timing.startT) / Math.max(0.01, timing.endT - timing.startT)));
+  return {
+    ...timing,
+    from,
+    to,
+    rawT,
+    current: gamecastStealBallPoint(from, to, rawT),
+    previous: gamecastStealBallPoint(from, to, Math.max(0, rawT - 0.08))
+  };
+}
+
 export function gamecastRunnerTransitions(event) {
-  if (!event || event.outcome === "strikeout") return [];
+  if (!event) return [];
+  if (isGamecastStealEvent(event)) return [gamecastStealTransition(event)];
+  if (event.outcome === "strikeout") return [];
   const beforeIds = Array.from({ length: 3 }, (_, index) => String(event.baseRunnerIdsBefore?.[index] ?? ""));
   const afterIds = Array.from({ length: 3 }, (_, index) => String(event.baseRunnerIdsAfter?.[index] ?? ""));
   const afterBaseById = new Map();
@@ -9454,8 +9588,17 @@ function makeRunnerSprite(path, eased, color, trailColor, moveT, role = "runner"
   };
 }
 
-function buildBallSprite(event, progress) {
+export function buildBallSprite(event, progress) {
   const bases = gamecastBasePositions();
+  if (isGamecastStealEvent(event)) {
+    const stealThrow = gamecastStealThrowState(event, progress);
+    if (!stealThrow) return null;
+    return withGamecastBallVector(stealThrow.current, stealThrow.previous, {
+      kind: "throw",
+      size: gamecastBallDisplaySize("throw", event),
+      opacity: 1
+    });
+  }
   const pitchEnd = gamecastPitchEnd(event);
   if (event.outcome === "walk") {
     const pitch = gamecastWalkPitchState(progress);
@@ -9518,6 +9661,16 @@ export function gamecastBallDisplaySize(phase, event = null) {
 }
 
 function buildBallTrail(event, progress) {
+  if (isGamecastStealEvent(event)) {
+    const stealThrow = gamecastStealThrowState(event, progress);
+    if (!stealThrow) return [];
+    return [0.07, 0.13, 0.19].map((offset, index) => ({
+      ...gamecastStealBallPoint(stealThrow.from, stealThrow.to, Math.max(0, stealThrow.rawT - offset)),
+      size: Math.max(1.1, 2 - index * 0.25),
+      opacity: Math.max(0.18, 0.64 - index * 0.14),
+      color: index % 2 ? "#fff8d7" : "#fffefb"
+    }));
+  }
   const pitchEnd = gamecastPitchEnd(event);
   const bases = gamecastBasePositions();
   if (event.outcome === "walk") {
@@ -9604,7 +9757,8 @@ function buildGamecastContactBurst(event, progress) {
   };
 }
 
-function buildGamecastDefenseSprites(event, progress, palette) {
+export function buildGamecastDefenseSprites(event, progress, palette) {
+  if (isGamecastStealEvent(event)) return buildGamecastStealDefenseSprites(event, progress, palette);
   const pitchEnd = gamecastPitchEnd(event);
   const sprites = [];
   if (progress < pitchEnd + 0.09) {
@@ -9832,6 +9986,55 @@ function gamecastSupportFielderSprite(event, palette, key, position, pose = "fie
   };
 }
 
+function buildGamecastStealDefenseSprites(event, progress, palette) {
+  const timing = gamecastStealThrowTiming(event);
+  const bases = gamecastBasePositions();
+  const plate = gamecastHomePlateCluster();
+  const targetBase = timing.transition.toBase;
+  const targetKey = targetBase === 1
+    ? "1B"
+    : targetBase === 2
+      ? (gamecastEventNoise(event, 89) >= 0 ? "SS" : "2B")
+      : targetBase === 3 ? "3B" : "C";
+  const sprites = [];
+
+  if (targetBase === 4) {
+    const pitcherPose = progress >= timing.startT && progress <= timing.endT ? "throw" : "field";
+    sprites.push(gamecastSupportFielderSprite(event, palette, "P", {
+      x: bases.mound.x,
+      y: bases.mound.y - gamecastSize(4)
+    }, pitcherPose, 1));
+    sprites.push(gamecastSupportFielderSprite(event, palette, "C", plate.catcher,
+      progress >= timing.endT - 0.06 ? "catch" : "catcher", 1));
+    return sprites;
+  }
+
+  const catcherPose = progress >= timing.startT - 0.04 && progress <= timing.endT
+    ? "throw"
+    : "catcher";
+  sprites.push(gamecastSupportFielderSprite(event, palette, "C", plate.catcher, catcherPose, 1));
+
+  const start = gamecastDefensiveAlignment().find((fielder) => fielder.key === targetKey)?.position
+    ?? gamecastBasePoint(targetBase, bases);
+  const base = gamecastBasePoint(targetBase, bases);
+  const target = {
+    x: base.x + gamecastSize(targetKey === "SS" || targetKey === "3B" ? -3 : 3),
+    y: base.y - gamecastSize(1)
+  };
+  const coverStart = Math.max(0.08, timing.startT - 0.24);
+  const coverEnd = Math.max(coverStart + 0.1, timing.endT - 0.035);
+  const coverT = easeOutCubic(Math.max(0, Math.min(1, (progress - coverStart) / Math.max(0.01, coverEnd - coverStart))));
+  const position = {
+    x: Math.round(lerp(start.x, target.x, coverT)),
+    y: Math.round(lerp(start.y, target.y, coverT))
+  };
+  const receiverPose = progress < coverEnd - 0.035
+    ? "run"
+    : progress <= timing.endT + 0.08 ? "catch" : "field";
+  sprites.push(gamecastSupportFielderSprite(event, palette, targetKey, position, receiverPose, Math.floor(coverT * 8) % 4));
+  return sprites;
+}
+
 function buildGamecastDoublePlaySprites(event, progress, palette, catchProgress) {
   const bases = gamecastBasePositions();
   const leadKey = normalizeFieldingPosition(event.fieldingPosition);
@@ -9856,7 +10059,20 @@ function buildGamecastDoublePlaySprites(event, progress, palette, catchProgress)
   return sprites;
 }
 
-function buildGamecastThrowLines(event, progress) {
+export function buildGamecastThrowLines(event, progress) {
+  if (isGamecastStealEvent(event)) {
+    const stealThrow = gamecastStealThrowState(event, progress);
+    if (!stealThrow) return [];
+    const armScore = gamecastThrowArmScore(event, "C");
+    return [{
+      from: stealThrow.from,
+      to: stealThrow.to,
+      t: stealThrow.rawT,
+      opacity: 1 - Math.max(0, stealThrow.rawT - 0.76) / 0.24,
+      armScore,
+      throwClass: armScore >= 150 ? "strong" : armScore <= 75 ? "weak" : "average"
+    }];
+  }
   if (!isBattedBallOutcome(event?.outcome)) return [];
   if (!["out", "error", "single", "double", "triple"].includes(event.outcome)) return [];
   const canonicalThrowTarget = gamecastCanonicalThrowTargetKey(event);
@@ -11803,6 +12019,8 @@ function outcomeLabel(outcome) {
   if (outcome === "walk") return "볼넷";
   if (outcome === "error") return "실책 출루";
   if (outcome === "strikeout") return "삼진";
+  if (outcome === "stolenBase") return "도루 성공";
+  if (outcome === "caughtStealing") return "도루자 아웃";
   return "타구";
 }
 

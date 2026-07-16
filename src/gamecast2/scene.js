@@ -6,9 +6,9 @@ import {
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-arm-pitch-20260715-r15";
-import { compilePlayTimeline } from "./timeline.js?v=gamecast-arm-pitch-20260715-r15";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-arm-pitch-20260715-r15";
+} from "./assets.js?v=gamecast-motion-ai-20260716-r16";
+import { compilePlayTimeline } from "./timeline.js?v=gamecast-motion-ai-20260716-r16";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-motion-ai-20260716-r16";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -19,6 +19,7 @@ const PLAYER_ATLAS_BASELINE_Y = 120;
 const PLAYER_ATLAS_NATIVE_DISPLAY_SIZE = 80;
 export const GAMECAST2_BALL_TEXTURE_SIZE = 20;
 export const GAMECAST2_BALL_MIN_RENDER_SCALE = 0.95;
+export const GAMECAST2_THROW_GLOVE_LIFT = 24;
 const PLAYER_ATLAS_VISUAL_SCALE = 7 / 6;
 const PLAYER_SCALE_CENTER = 0.9;
 const PLAYER_SCALE_COMPRESSION = 0.25;
@@ -842,7 +843,7 @@ function buildVisualPlay(runtime, frame = null) {
 
 function getCompiledPlayTimeline(runtime, event, anchors) {
   if (!event || !anchors?.home) return null;
-  const key = `${runtime.field?.id ?? "field"}|${event.id ?? event.sequence ?? event.outcome ?? "play"}`;
+  const key = gamecast2TimelineCacheKey(runtime.field?.id, event);
   runtime.timelineCache ??= new Map();
   if (runtime.timelineCache.has(key)) return runtime.timelineCache.get(key);
   try {
@@ -856,7 +857,20 @@ function getCompiledPlayTimeline(runtime, event, anchors) {
   }
 }
 
-function buildTimelineVisualPlay(runtime, event, progress, timeline) {
+export function gamecast2TimelineCacheKey(fieldId, event) {
+  const field = String(fieldId ?? "field");
+  const explicitId = String(event?.id ?? "").trim();
+  if (explicitId) return `${field}|id:${explicitId}`;
+
+  // Older saves do not have plate-appearance ids. Sequence alone is unsafe
+  // because each offense numbers its own events from one, so top/bottom plays
+  // routinely share it. The complete serialized event is both stable for a
+  // loaded save and guarantees that semantically different legacy plays never
+  // reuse one another's compiled choreography.
+  return `${field}|legacy:${JSON.stringify(event ?? {})}`;
+}
+
+export function buildTimelineVisualPlay(runtime, event, progress, timeline) {
   const actors = new Map();
   const batted = isBattedBallOutcome(event.outcome);
   const pitcher = activeTimelineCue(timeline.tracks.pitcher, progress);
@@ -893,13 +907,10 @@ function buildTimelineVisualPlay(runtime, event, progress, timeline) {
   let movingDefenseCount = 0;
   for (const [key, cues] of fieldersByKey) {
     if (!key || !runtime.anchors?.anchors?.[key]) continue;
-    const finalCue = cues.reduce((latest, entry) => (
-      !latest || Number(entry.t ?? 0) > Number(latest.t ?? 0) ? entry : latest
-    ), null);
-    // Keep a final receiver planted through the result card. Other defenders
-    // may reset normally, avoiding a held throw/run pose after the play ends.
-    const holdUntil = finalCue?.assignment === "receiver" ? 1 : timeline.resultAt;
-    const cue = heldTimelineCue(cues, progress, holdUntil);
+    // Keep every completed route at its baseball destination through the play.
+    // Resetting non-receivers at resultAt teleported them back to their lineup
+    // anchors while the result card was still visible.
+    const cue = heldTimelineCue(cues, progress, 1);
     if (!cue) continue;
     const state = timelineActorState(cue, timeline, progress, "fielder");
     actors.set(key, state);
@@ -979,30 +990,52 @@ function timelineCueSample(cue, progress) {
   const end = Math.max(start, Number(cue.endT ?? start));
   return {
     cue,
-    localT: end > start ? clamp01((progress - start) / (end - start)) : 1
+    localT: end > start ? clamp01((progress - start) / (end - start)) : 1,
+    completed: progress > end + 0.000001
   };
 }
 
 function timelineActorState(sample, timeline, progress, role) {
-  const { cue, localT } = sample;
+  const { cue, localT, completed = false } = sample;
   const position = timelineCuePosition(cue, timeline.points, localT, role);
   const animation = String(cue.anim ?? "idle");
   let pose = animation;
-  if (animation === "swing") pose = localT < 0.22 ? "load" : localT < 0.75 ? "swing" : "follow";
+  let animationKey = animation;
+  let animationT = localT;
+  if (animation === "swing" && cue.phase === "bunt-contact") {
+    // Reuse only the load/contact portion of the authored batting motion. A
+    // sacrifice bunt should present the bat, not finish with a full follow-through.
+    pose = localT < 0.55 ? "load" : "swing";
+    animationT = 0.18 + localT * 0.24;
+  } else if (animation === "swing") pose = localT < 0.22 ? "load" : localT < 0.75 ? "swing" : "follow";
   else if (animation === "run" || animation === "walk") pose = Math.floor((progress + localT) * (animation === "walk" ? 12 : 22)) % 2 ? "run1" : "run2";
   else if (animation === "catcher") pose = "catch";
   else if (animation === "catch") pose = "catch";
   else if (animation === "dive") pose = "catch";
   else if (animation === "slide") pose = "run2";
   else if (animation === "throw") pose = "throw";
+  let shadowPose = animation === "slide" || animation === "dive" ? animation : animation === "run" ? "run" : pose;
+  if (completed && role === "fielder") {
+    // A route endpoint is a planted ready stance, never an endlessly looping
+    // run frame or a throw-release pose frozen in place.
+    pose = "ready";
+    animationKey = "";
+    animationT = 0;
+    shadowPose = "ready";
+  } else if (completed && ["batter", "runner"].includes(role) && ["run", "walk"].includes(animation)) {
+    pose = "idle";
+    animationKey = "";
+    animationT = 0;
+    shadowPose = "idle";
+  }
   return {
     pose,
     position,
     angle: timelineCueAngle(cue, timeline.points, localT),
     facing: gamecast2TimelineCueFacing(cue, timeline.points, localT, role),
-    shadowPose: animation === "slide" || animation === "dive" ? animation : animation === "run" ? "run" : pose,
-    animationKey: animation,
-    animationT: localT,
+    shadowPose,
+    animationKey,
+    animationT,
     transientRole: role
   };
 }
@@ -1579,7 +1612,7 @@ function buildTimelineBallState(timeline, progress, event) {
   };
 }
 
-function timelineBallPoint(cue, points, localT) {
+export function timelineBallPoint(cue, points, localT) {
   const route = (cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
   if (route.length === 0) return cue.at && points?.[cue.at] ? { ...points[cue.at] } : null;
   const routeT = cue.flightProfile === "hang"
@@ -1594,6 +1627,16 @@ function timelineBallPoint(cue, points, localT) {
   const arc = Math.max(0, Number(cue.arc ?? 0));
   if (arc > 0 && route.length >= 2) {
     point.y -= Math.sin(routeT * Math.PI) * Math.min(190, 8 + arc * 132);
+  }
+  const phase = String(cue.phase ?? "");
+  if (["fielding-throw", "relay-throw"].includes(phase)) {
+    // Timeline anchors are feet/base coordinates. Lift throws into the hand and
+    // receiving-glove plane so a hard throw never appears to roll base-to-base.
+    point.y -= GAMECAST2_THROW_GLOVE_LIFT;
+  } else if (phase === "steal-throw") {
+    // `home` already sits above the catcher's feet; blend only the receiving
+    // end upward instead of launching the ball above the catcher's head.
+    point.y -= GAMECAST2_THROW_GLOVE_LIFT * routeT;
   }
   return point;
 }

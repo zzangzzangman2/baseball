@@ -18,7 +18,7 @@ const OUT = MODE === "burst"
     ? (process.argv[3] ?? "reports/gamecast-anchors")
     : (process.argv[2] ?? "reports/gamecast-shots");
 const BASE = MODE === "burst"
-  ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=phaser&team=lg&days=3&fullscreen=1&holds=0&speed=1&fps=1")
+  ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=v2&field=field-gocheok-dome&team=lg&days=3&fullscreen=1&holds=0&speed=1&fps=1")
   : MODE === "anchors"
     ? (process.argv[4] ?? "http://127.0.0.1:5177/gamecast-lab.html?engine=v2&debug=anchors&field=field-gocheok-dome&team=kiwoom&days=3&fullscreen=1&holds=0&speed=1")
     : (process.argv[3] ?? "http://127.0.0.1:5177/gamecast-lab.html");

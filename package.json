@@ -9,11 +9,12 @@
     "dev": "electron .",
     "start": "electron .",
     "build:gamecast-motion": "python tools/build_gamecast_motion_v3.py",
-    "verify": "node tools/verify_app.mjs && npm run verify:sprites",
+    "verify": "node tools/verify_app.mjs && npm run verify:gamecast-games && npm run verify:sprites",
     "verify:sprites": "python tools/verify_gamecast_sprite_frames.py --all-variants --no-contact-sheets",
     "verify:electron": "node tools/verify_browser.mjs",
     "verify:browser": "node tools/verify_browser.mjs",
     "verify:balance": "node tools/verify_balance.mjs",
+    "verify:gamecast-games": "node tools/verify_gamecast_10games.mjs",
     "package": "electron-builder --win --x64",
     "package:dir": "electron-builder --dir",
     "dist": "electron-builder --win --x64"

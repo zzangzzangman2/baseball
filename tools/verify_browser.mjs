@@ -1605,10 +1605,12 @@ async function checkGamecastLab() {
   assert(afterToggle.engine === "canvas", `엔진 토글 후 Canvas가 아닙니다: ${afterToggle.engine}`, "src/ui.js");
 
   loadEvent = cdp.once("Page.loadEventFired");
-  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fullscreen=1&speed=4&qa=lab-fast-${Date.now()}` });
+  await cdp.send("Page.navigate", { url: `${labUrl}?engine=phaser&team=lg&days=3&fullscreen=1&speed=4&holds=0&qa=lab-fast-${Date.now()}` });
   await loadEvent;
   await waitForGamecastLabModal();
-  const fastDeadline = Date.now() + 15000;
+  // Critical pitch/contact phases intentionally cap x4 playback below 4x, so
+  // allow the deterministic fourth result to clear the real-time boundary.
+  const fastDeadline = Date.now() + 25000;
   let fastProbe = null;
   while (Date.now() < fastDeadline) {
     fastProbe = await evaluateInBrowser(`
