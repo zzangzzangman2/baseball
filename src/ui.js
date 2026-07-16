@@ -41,7 +41,7 @@ import {
   simulateSecondaryDraft,
   setSecondaryDraftProtection,
   runAutonomousOffseason
-} from "./engine.js?v=gamecast-ground-role-20260716-r22";
+} from "./engine.js?v=gamecast-trajectory-20260716-r23";
 
 import {
   getContractSummary,
@@ -68,14 +68,14 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-ground-role-20260716-r22";
+} from "./gamecastPhaser.js?v=gamecast-trajectory-20260716-r23";
 
 import {
   canUseGamecast2,
   getGamecast2PlayDurationMs,
   getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-ground-role-20260716-r22";
+} from "./gamecast2/index.js?v=gamecast-trajectory-20260716-r23";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },
@@ -5956,10 +5956,17 @@ export function normalizeGamecastEvent(event, state, gamecastContext = null) {
     battedBallType: String(event?.battedBallType ?? ""),
     fieldingPosition,
     recordedFieldingPosition: String(event?.fieldingPosition ?? ""),
+    attemptedFieldingPosition: String(event?.attemptedFieldingPosition ?? ""),
+    attemptedDefenderId: String(event?.attemptedDefenderId ?? ""),
+    attemptedDefenderName: String(event?.attemptedDefenderName ?? ""),
     fieldingZone: String(event?.fieldingZone ?? ""),
     fieldingLane: event?.fieldingLane === null || event?.fieldingLane === ""
       ? null
       : Number.isFinite(Number(event?.fieldingLane)) ? Number(event.fieldingLane) : null,
+    sprayLane: event?.sprayLane === null || event?.sprayLane === ""
+      ? null
+      : Number.isFinite(Number(event?.sprayLane)) ? Number(event.sprayLane) : null,
+    hitTrajectory: String(event?.hitTrajectory ?? ""),
     defensiveThrowTarget,
     doublePlay: Boolean(event?.doublePlay),
     reachedOnError: Boolean(event?.reachedOnError),

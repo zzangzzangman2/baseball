@@ -38,9 +38,12 @@ const DEFENDER_MOVE_ZONES = Object.freeze({
   "2B": { x: 132, yTop: 80, yBottom: 80 },
   "3B": { x: 54, yTop: 42, yBottom: 45 },
   SS: { x: 184, yTop: 80, yBottom: 80 },
-  LF: { x: 96, yTop: 58, yBottom: 160 },
-  CF: { x: 116, yTop: 62, yBottom: 84 },
-  RF: { x: 96, yTop: 58, yBottom: 160 }
+  // A gap hit can legitimately pull an outfielder much farther laterally than
+  // a routine catch. These limits still reject a corner outfielder crossing
+  // most of the field because the engine selected the wrong spray-side actor.
+  LF: { x: 240, yTop: 90, yBottom: 180 },
+  CF: { x: 190, yTop: 90, yBottom: 120 },
+  RF: { x: 240, yTop: 90, yBottom: 180 }
 });
 
 export function verifyGamecastTenGames() {
@@ -74,6 +77,13 @@ export function verifyGamecastTenGames() {
     safeFlyRunThroughs: 0,
     safeLineDives: 0,
     safeLineShortHops: 0,
+    safeHits: 0,
+    safeHitMisses: 0,
+    safeHitGates: 0,
+    safeHitReactionChecks: 0,
+    groundThrough: 0,
+    infieldChoppers: 0,
+    lineThroughSingles: 0,
     baseBackups: 0,
     behindBaseBackups: 0,
     groundZones: Object.fromEntries(Object.keys(GROUND_ZONE_PRIMARY).map((zone) => [zone, 0])),
@@ -94,6 +104,7 @@ export function verifyGamecastTenGames() {
 
       const label = `${game.id}/${event.id ?? `${event.half}:${event.inning}:${event.sequence}`}`;
       auditDefenseSlot(label, game, event, problems);
+      auditHitTrajectorySemantics(label, event, coverage, problems);
       let timeline;
       try {
         timeline = compilePlayTimeline(event, GOCHEOK_ANCHORS);
@@ -114,6 +125,9 @@ export function verifyGamecastTenGames() {
     assert(coverage[key] > 0, `10-game audit did not cover ${key}.`);
   }
   for (const key of ["safeFlyDives", "safeFlyRunThroughs", "safeLineDives", "safeLineShortHops"]) {
+    assert(coverage[key] > 0, `10-game audit did not cover ${key}.`);
+  }
+  for (const key of ["safeHits", "safeHitMisses", "safeHitGates", "safeHitReactionChecks", "groundThrough", "infieldChoppers", "lineThroughSingles"]) {
     assert(coverage[key] > 0, `10-game audit did not cover ${key}.`);
   }
   assert(coverage.baseBackups > 0, "10-game audit did not exercise a base-backup route.");
@@ -181,6 +195,59 @@ function auditDefenseSlot(label, game, event, problems) {
   }
 }
 
+function auditHitTrajectorySemantics(label, event, coverage, problems) {
+  if (event.type !== "plateAppearance") return;
+  const outcome = canonicalOutcome(event);
+  if (!["single", "double", "triple"].includes(outcome)) return;
+
+  const type = normalizedToken(event.battedBallType);
+  if (!type) return;
+  const finalFielder = normalizePosition(event.fieldingPosition);
+  const attemptedFielder = normalizePosition(event.attemptedFieldingPosition);
+  const trajectory = normalizedToken(event.hitTrajectory);
+  const sprayLane = Number(event.sprayLane);
+
+  if (!Number.isFinite(sprayLane) || sprayLane < -1 || sprayLane > 1) {
+    problems.push(`${label}: safe hit has invalid sprayLane ${String(event.sprayLane)}.`);
+  }
+
+  if (outcome === "single" && type.includes("line")) {
+    if (!OUTFIELD_POSITIONS.has(finalFielder)) {
+      problems.push(`${label}: safe line single is finally fielded by infielder ${finalFielder || "(missing)"}.`);
+    }
+    if (trajectory === "linethrough") {
+      coverage.lineThroughSingles += 1;
+      if (!INFIELD_POSITIONS.has(attemptedFielder) || attemptedFielder === "C") {
+        problems.push(`${label}: line-through single has no valid attempted infielder (${attemptedFielder || "missing"}).`);
+      }
+    } else if (attemptedFielder) {
+      problems.push(`${label}: line single records attempted ${attemptedFielder} but trajectory is ${event.hitTrajectory || "missing"}.`);
+    }
+  }
+
+  if (outcome === "single" && type.includes("ground")) {
+    if (trajectory === "groundthrough") {
+      coverage.groundThrough += 1;
+      if (!OUTFIELD_POSITIONS.has(finalFielder)) {
+        problems.push(`${label}: ground-through single is finally fielded by ${finalFielder || "missing"}, expected an outfielder.`);
+      }
+      if (!INFIELD_POSITIONS.has(attemptedFielder) || attemptedFielder === "C") {
+        problems.push(`${label}: ground-through single has no valid attempted infielder (${attemptedFielder || "missing"}).`);
+      }
+    } else if (trajectory === "infieldchopper") {
+      coverage.infieldChoppers += 1;
+      if (!INFIELD_POSITIONS.has(finalFielder) || finalFielder === "C") {
+        problems.push(`${label}: infield-chopper single is finally fielded by ${finalFielder || "missing"}.`);
+      }
+      if (attemptedFielder) {
+        problems.push(`${label}: infield chopper incorrectly separates attempted ${attemptedFielder} from final ${finalFielder}.`);
+      }
+    } else {
+      problems.push(`${label}: ground single has unsupported hitTrajectory ${event.hitTrajectory || "missing"}.`);
+    }
+  }
+}
+
 function auditTimeline(label, event, timeline, coverage, problems) {
   const type = normalizedToken(event.battedBallType);
   const canonical = canonicalOutcome(event);
@@ -220,7 +287,9 @@ function auditTimeline(label, event, timeline, coverage, problems) {
   }
 
   const batted = timeline.tracks?.ball?.find((cue) => cue.phase === "batted");
+  const safeTrajectory = String(timeline.meta?.fielding?.resolution ?? "").startsWith("safe-");
   if (isAir && canonical === "out") auditCaughtAirBall(label, timeline, batted, problems);
+  if (safeTrajectory) auditSafeHitTrajectory(label, event, timeline, batted, coverage, problems);
   if (isFly && safeAir) auditSafeFlyBall(label, timeline, batted, coverage, problems);
   if (isLine && safeAir) auditSafeLineDrive(label, timeline, batted, coverage, problems);
   if (isGround && batted) auditGroundBall(label, batted, problems);
@@ -271,6 +340,93 @@ function auditCaughtAirBall(label, timeline, batted, problems) {
   }
 }
 
+function auditSafeHitTrajectory(label, event, timeline, batted, coverage, problems) {
+  coverage.safeHits += 1;
+  const fielding = timeline.meta?.fielding ?? {};
+  const primary = fielding.fielder;
+  const landing = timeline.points?.landing;
+  const miss = timeline.points?.miss;
+  const pickup = timeline.points?.pickup;
+  const home = timeline.points?.home;
+  const landingT = Number(fielding.ballLandingT ?? batted?.endT);
+  const separation = pointDistance(miss, landing);
+  const reportedSeparation = Number(fielding.landingSeparationPx);
+
+  if (!batted) {
+    problems.push(`${label}: safe hit has no batted-ball cue.`);
+    return;
+  }
+  if (!landing || !miss || !pickup) {
+    problems.push(`${label}: safe hit lacks landing/miss/pickup geometry.`);
+    return;
+  }
+  if (!Number.isFinite(separation) || separation < 41.5) {
+    problems.push(`${label}: fielder is only ${Number.isFinite(separation) ? separation.toFixed(2) : "NaN"}px from the safe-hit landing (minimum 41.5px).`);
+  } else {
+    coverage.safeHitMisses += 1;
+  }
+  if (!Number.isFinite(reportedSeparation) || Math.abs(reportedSeparation - separation) > 0.51) {
+    problems.push(`${label}: reported landing separation ${String(fielding.landingSeparationPx)} disagrees with geometry ${separation.toFixed(2)}.`);
+  }
+
+  const arrival = timeline.tracks.fielders.find((cue) => (
+    cue.who === primary
+    && cue.path?.at(-1) === "miss"
+    && Math.abs(Number(cue.endT) - landingT) <= 0.001001
+  ));
+  if (!arrival) {
+    problems.push(`${label}: ${primary} does not finish at the miss point when the ball lands.`);
+  }
+  const recovery = timeline.tracks.fielders.find((cue) => (
+    cue.who === primary
+    && cue.phase === "recover"
+    && cue.path?.[0] === "miss"
+    && cue.path?.at(-1) === "pickup"
+  ));
+  if (!recovery || Number(recovery.t) + 0.001001 < landingT || Number(recovery.endT) <= landingT) {
+    problems.push(`${label}: ${primary} does not recover miss-to-pickup after landing.`);
+  }
+  const settle = timeline.tracks.ball.find((cue) => (
+    cue.grounded === true
+    && cue.path?.[0] === "landing"
+    && cue.path?.at(-1) === "pickup"
+  ));
+  if (!settle || Math.abs(Number(settle.t) - landingT) > 0.001001 || Number(settle.endT) <= landingT) {
+    problems.push(`${label}: safe-hit ball does not continue landing-to-pickup after touching down.`);
+  }
+
+  const incoming = pointVector(home, landing);
+  const outgoing = pointVector(landing, pickup);
+  const outwardDot = normalizedDot(incoming, outgoing);
+  if (!Number.isFinite(outwardDot) || outwardDot <= 0) {
+    problems.push(`${label}: post-landing ball reverses toward home (direction dot ${Number.isFinite(outwardDot) ? outwardDot.toFixed(3) : "NaN"}).`);
+  }
+
+  const firstReaction = timeline.tracks.fielders
+    .filter((cue) => cue.who === primary && Array.isArray(cue.path) && cue.path.length > 1)
+    .sort((left, right) => Number(left.t) - Number(right.t))[0];
+  const reactionMs = (Number(firstReaction?.t) - Number(batted.t)) * Number(timeline.durationMs);
+  if (!Number.isFinite(reactionMs) || reactionMs < 119.5) {
+    problems.push(`${label}: ${primary} reacts in ${Number.isFinite(reactionMs) ? reactionMs.toFixed(1) : "NaN"}ms (minimum 120ms).`);
+  } else {
+    coverage.safeHitReactionChecks += 1;
+  }
+
+  const trajectory = normalizedToken(event.hitTrajectory);
+  const type = normalizedToken(event.battedBallType);
+  const needsGate = trajectory === "groundthrough" || type.includes("line") || type.includes("fly");
+  if (needsGate) {
+    const gateIndex = batted.path?.indexOf("infieldGate") ?? -1;
+    const landingIndex = batted.path?.indexOf("landing") ?? -1;
+    const gate = timeline.points?.infieldGate;
+    if (gateIndex <= 0 || landingIndex <= gateIndex || !isFinitePoint(gate)) {
+      problems.push(`${label}: through/drop trajectory lacks a finite home-to-gate-to-landing path.`);
+    } else {
+      coverage.safeHitGates += 1;
+    }
+  }
+}
+
 function auditSafeFlyBall(label, timeline, batted, coverage, problems) {
   const primary = timeline.meta?.fielding?.fielder;
   const style = timeline.meta?.fielding?.fieldingStyle;
@@ -293,7 +449,11 @@ function auditSafeFlyBall(label, timeline, batted, coverage, problems) {
   } else if (style === "run-through") {
     coverage.safeFlyRunThroughs += 1;
     if (primaryDives.length > 0) problems.push(`${label}: routine safe fly forces a dive.`);
-    if (approach?.path?.at(-1) !== "pickup") problems.push(`${label}: routine safe fly does not run through to pickup.`);
+    if (approach?.path?.at(-1) !== "miss") problems.push(`${label}: routine safe fly does not stop outside catch range at landing.`);
+    const recovery = timeline.tracks.fielders.find((cue) => cue.who === primary && cue.phase === "recover");
+    if (recovery?.path?.[0] !== "miss" || recovery?.path?.at(-1) !== "pickup") {
+      problems.push(`${label}: routine safe fly does not recover from miss to pickup.`);
+    }
   } else {
     problems.push(`${label}: safe fly has unknown fielding style ${String(style)}.`);
   }
@@ -313,7 +473,10 @@ function auditSafeLineDrive(label, timeline, batted, coverage, problems) {
   if (!settle || settle.path?.at(-1) !== "pickup") problems.push(`${label}: safe line drive has no grounded trap route.`);
   if (style === "dive") {
     coverage.safeLineDives += 1;
-    if (!trap || trap.anim !== "dive") problems.push(`${label}: challenging safe line drive has no dive trap.`);
+    const diveRecovery = timeline.tracks.fielders.find((cue) => cue.who === primary && cue.phase === "recover");
+    if (diveRecovery?.anim !== "dive" || !trap || trap.anim !== "catch") {
+      problems.push(`${label}: challenging safe line drive does not dive past the landing and then trap the ball.`);
+    }
   } else if (style === "short-hop") {
     coverage.safeLineShortHops += 1;
     if (!shortHop || shortHop.anim !== "catch") problems.push(`${label}: routine safe line drive has no short-hop fielding cue.`);
@@ -372,8 +535,8 @@ function assertShortGroundedSettle(label, timeline, settle, problems) {
   const start = timeline.points?.[settle.path?.[0]];
   const end = timeline.points?.[settle.path?.at(-1)];
   const distance = pointDistance(start, end);
-  if (!Number.isFinite(distance) || distance > 8.000001) {
-    problems.push(`${label}: grounded settle travels ${Number.isFinite(distance) ? distance.toFixed(2) : "NaN"}px (limit 8px).`);
+  if (!Number.isFinite(distance) || distance > 42.000001) {
+    problems.push(`${label}: grounded settle travels ${Number.isFinite(distance) ? distance.toFixed(2) : "NaN"}px (limit 42px).`);
   }
 }
 
@@ -386,29 +549,40 @@ function auditGroundBallResponsibility(label, event, timeline, coverage, problem
   const zone = String(event.fieldingZone ?? "").trim().toLowerCase();
   const expected = GROUND_ZONE_PRIMARY[zone];
   const actual = normalizePosition(event.fieldingPosition);
+  const attempted = normalizePosition(event.attemptedFieldingPosition);
+  const trajectory = normalizedToken(event.hitTrajectory);
+  const groundThrough = canonicalOutcome(event) === "single" && trajectory === "groundthrough";
+  const responsibilityFielder = groundThrough ? attempted : actual;
   if (!expected) {
     problems.push(`${label}: ground ball has no valid fielding zone (${String(event.fieldingZone)}).`);
     return;
   }
   coverage.groundZones[zone] += 1;
-  if (actual !== expected) problems.push(`${label}: ${zone} belongs to ${expected}, event assigned ${actual}.`);
-  if (timeline.meta?.fielding?.fielder !== expected) {
-    problems.push(`${label}: timeline primary ${timeline.meta?.fielding?.fielder}, expected ${expected} for ${zone}.`);
+  if (responsibilityFielder !== expected) {
+    problems.push(`${label}: ${zone} belongs to ${expected}, event records ${responsibilityFielder || "missing"} as the responsible infielder.`);
+  }
+  if (timeline.meta?.fielding?.fielder !== actual) {
+    problems.push(`${label}: timeline primary ${timeline.meta?.fielding?.fielder}, expected final fielder ${actual}.`);
+  }
+  if (groundThrough && timeline.meta?.fielding?.attemptedFielder !== expected) {
+    problems.push(`${label}: timeline loses attempted ${expected} on a ground-through hit.`);
   }
   const lane = Number(event.fieldingLane);
   if (!Number.isFinite(lane) || lane < -1 || lane > 1) {
     problems.push(`${label}: invalid ground-ball lane ${String(event.fieldingLane)}.`);
-  } else if (Math.abs(lane) >= 0.58 && !["1B", "3B"].includes(actual)) {
-    problems.push(`${label}: corner lane ${lane} assigned to ${actual}.`);
+  } else if (Math.abs(lane) >= 0.58 && !["1B", "3B"].includes(responsibilityFielder)) {
+    problems.push(`${label}: corner lane ${lane} assigned to ${responsibilityFielder}.`);
   }
-  const landing = timeline.points?.landing;
-  const origin = timeline.points?.[expected];
-  const routeDistance = pointDistance(landing, origin);
-  if (!Number.isFinite(routeDistance) || routeDistance > 54.01) {
-    problems.push(`${label}: ${expected} leaves its responsibility zone by ${routeDistance.toFixed(2)}px.`);
+  if (!groundThrough) {
+    const landing = timeline.points?.landing;
+    const origin = timeline.points?.[expected];
+    const routeDistance = pointDistance(landing, origin);
+    if (!Number.isFinite(routeDistance) || routeDistance > 54.01) {
+      problems.push(`${label}: ${expected} leaves its responsibility zone by ${routeDistance.toFixed(2)}px.`);
+    }
   }
 
-  if (!event.defensiveThrowTarget) {
+  if (!groundThrough && !event.defensiveThrowTarget) {
     const middleChaser = timeline.tracks.fielders.find((cue) => (
       ["SS", "2B"].includes(cue.who)
       && cue.who !== expected
@@ -417,7 +591,7 @@ function auditGroundBallResponsibility(label, event, timeline, coverage, problem
     if (middleChaser) problems.push(`${label}: non-primary ${middleChaser.who} chases a no-throw ground ball.`);
   }
 
-  if (canonicalOutcome(event) === "single" && actual === "1B") {
+  if (canonicalOutcome(event) === "single" && trajectory === "infieldchopper" && actual === "1B") {
     if (event.defensiveThrowTarget !== "first") {
       problems.push(`${label}: 1B ground-ball single throws to ${String(event.defensiveThrowTarget)} instead of first.`);
     }
@@ -650,6 +824,26 @@ function pointDistance(left, right) {
   return Math.hypot(Number(left.x) - Number(right.x), Number(left.y) - Number(right.y));
 }
 
+function pointVector(from, to) {
+  if (!isFinitePoint(from) || !isFinitePoint(to)) return null;
+  return {
+    x: Number(to.x) - Number(from.x),
+    y: Number(to.y) - Number(from.y)
+  };
+}
+
+function normalizedDot(left, right) {
+  if (!left || !right) return Number.NaN;
+  const leftLength = Math.hypot(left.x, left.y);
+  const rightLength = Math.hypot(right.x, right.y);
+  if (leftLength < 0.001 || rightLength < 0.001) return Number.NaN;
+  return (left.x * right.x + left.y * right.y) / (leftLength * rightLength);
+}
+
+function isFinitePoint(point) {
+  return Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y));
+}
+
 function normalizedToken(value) {
   return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -668,6 +862,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
       + `bunt ${coverage.bunt}, DP ${coverage.doublePlay}, safe-air ${coverage.safeAir}, fallback ${coverage.fallback}, `
       + `safe fielding fly ${coverage.safeFlyDives}/${coverage.safeFlyRunThroughs} dive/run, `
       + `line ${coverage.safeLineDives}/${coverage.safeLineShortHops} dive/short-hop, `
+      + `safe trajectory ${coverage.safeHits} hits/${coverage.safeHitMisses} misses/${coverage.safeHitGates} gates/${coverage.safeHitReactionChecks} reactions, `
+      + `ground ${coverage.groundThrough}/${coverage.infieldChoppers} through/chopper, line-through ${coverage.lineThroughSingles}, `
       + `base backups ${coverage.baseBackups} (${coverage.behindBaseBackups} behind), `
       + `position violations ${coverage.positionViolations}, max moving defenders ${coverage.maximumConcurrentDefenders}.`
   );

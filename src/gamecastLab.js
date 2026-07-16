@@ -9,8 +9,8 @@
 //   ?speed=0.5|1|1.5|2|4   시작 배속 선택
 //   ?holds=0               자동 홀드 끄기
 import { createInitialState } from "./data.js";
-import { simulateDay, resolveMailDecision } from "./engine.js?v=gamecast-ground-role-20260716-r22";
-import { mountApp } from "./ui.js?v=gamecast-ground-role-20260716-r22";
+import { simulateDay, resolveMailDecision } from "./engine.js?v=gamecast-trajectory-20260716-r23";
+import { mountApp } from "./ui.js?v=gamecast-trajectory-20260716-r23";
 
 const params = new URLSearchParams(window.location.search);
 const state = createInitialState();

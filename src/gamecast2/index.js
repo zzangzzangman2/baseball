@@ -1,4 +1,4 @@
-export { GAMECAST2_FIELDS } from "./assets.js?v=gamecast-ground-role-20260716-r22";
+export { GAMECAST2_FIELDS } from "./assets.js?v=gamecast-trajectory-20260716-r23";
 export {
   compilePlayTimeline,
   getGamecast2PlayDurationMs,
@@ -6,5 +6,5 @@ export {
   GAMECAST2_ATLAS_ANIMATION_CONTRACT,
   GAMECAST2_ATLAS_ANIMATION_KEYS,
   GAMECAST2_TIMELINE_TEMPLATES
-} from "./timeline.js?v=gamecast-ground-role-20260716-r22";
-export { canUseGamecast2, mountGamecast2 } from "./scene.js?v=gamecast-ground-role-20260716-r22";
+} from "./timeline.js?v=gamecast-trajectory-20260716-r23";
+export { canUseGamecast2, mountGamecast2 } from "./scene.js?v=gamecast-trajectory-20260716-r23";

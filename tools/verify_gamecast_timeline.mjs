@@ -120,6 +120,7 @@ export function verifyGamecastTimeline() {
   verifyPlaybackClock();
   verifyDefensiveRotation(compiled);
   verifyFlyBallResolution();
+  verifyTrajectoryRealismRegressions();
   verifyBuntChoreography();
   verifyGroundBallResponsibilityZones();
   verifyFielderPositionMatrix();
@@ -450,15 +451,18 @@ function verifyFieldingArrival(name, timeline) {
   assert(ball, `${name}: 타구 ball cue가 없습니다.`);
   assert(fielder, `${name}: 수비 접근 cue가 없습니다.`);
   assert.equal(ball.path.at(-1), fielding.ballPoint ?? fielding.landingPoint, `${name}: 타구 도착지점 불일치`);
-  if (fielding.resolution === "safe-fly-drop") {
-    const expectedDestination = fielding.fieldingStyle === "dive" ? fielding.missPoint : fielding.pickupPoint;
-    assert.equal(fielder.path.at(-1), expectedDestination, `${name}: 뜬공 안타 수비 접근 경로가 상황별 처리 지점과 다릅니다.`);
-    assert.equal(ball.endT, fielding.ballLandingT, `${name}: 뜬공 안타 낙하 시점 메타가 타구 cue와 다릅니다.`);
-    assert(fielding.fielderArrivalT > fielding.ballLandingT, `${name}: 뜬공 안타 수비수가 공이 떨어지기 전에 도착합니다.`);
-  } else if (String(fielding.resolution).startsWith("safe-line-")) {
-    assert.equal(fielder.path.at(-1), fielding.pickupPoint, `${name}: 직선타 안타 수비수가 픽업 지점으로 향하지 않습니다.`);
-    assert.equal(ball.endT, fielding.ballLandingT, `${name}: 직선타 안타의 지면 도달 시점이 타구 cue와 다릅니다.`);
-    assert(fielding.fielderArrivalT > fielding.ballLandingT, `${name}: 직선타 안타 수비수가 공이 땅에 닿기 전에 포구합니다.`);
+  if (["safe-fly-drop", "safe-line-trap", "safe-line-short-hop", "safe-ground-through"].includes(fielding.resolution)) {
+    const landingArrival = fielding.fieldingStyle === "dive" && fielding.resolution === "safe-fly-drop"
+      ? timeline.tracks.fielders.find((cue) => cue.who === fielding.fielder && cue.phase === "miss")
+      : fielder;
+    const recovery = timeline.tracks.fielders.find((cue) => cue.who === fielding.fielder && cue.phase === "recover");
+    assert.equal(landingArrival?.path?.at(-1), fielding.missPoint, `${name}: safe-hit landing enters the fielder body radius.`);
+    assert.equal(landingArrival?.endT, fielding.ballLandingT, `${name}: safe-hit miss timing does not match landing.`);
+    assert.deepEqual(recovery?.path, [fielding.missPoint, fielding.pickupPoint], `${name}: safe-hit recovery route is incomplete.`);
+    assert.equal(recovery?.endT, fielding.fielderArrivalT, `${name}: safe-hit recovery arrival does not match metadata.`);
+    assert.equal(ball.endT, fielding.ballLandingT, `${name}: safe-hit landing metadata differs from the ball cue.`);
+    assert(fielding.fielderArrivalT > fielding.ballLandingT, `${name}: safe-hit fielder controls the ball before landing.`);
+    assert(Number(fielding.landingSeparationPx) >= 41.5, `${name}: safe-hit landing separation is ${fielding.landingSeparationPx}px.`);
   } else {
     assert.equal(fielder.path.at(-1), fielding.landingPoint, `${name}: 수비수 도착지점 불일치`);
     assert.equal(ball.endT, fielder.endT, `${name}: 공 낙하와 수비수 도착 시점 불일치`);
@@ -487,6 +491,8 @@ function verifyFlyBallResolution() {
     outcome: "single",
     battedBallType: "flyBall",
     fieldingPosition: "CF",
+    hitTrajectory: "fly-bloop",
+    sprayLane: 0.04,
     basesAfter: [true, false, false],
     baseRunnerIdsAfter: ["batter", "", ""]
   }, { anchors: ANCHORS });
@@ -503,7 +509,10 @@ function verifyFlyBallResolution() {
     sequence: 804,
     outcome: "single",
     battedBallType: "lineDrive",
-    fieldingPosition: "2B",
+    fieldingPosition: "RF",
+    attemptedFieldingPosition: "2B",
+    hitTrajectory: "line-through",
+    sprayLane: 0.45,
     basesAfter: [true, false, false],
     baseRunnerIdsAfter: ["batter", "", ""]
   }, { anchors: ANCHORS });
@@ -513,6 +522,8 @@ function verifyFlyBallResolution() {
     outcome: "triple",
     battedBallType: "flyBall",
     fieldingPosition: "CF",
+    hitTrajectory: "fly-gap",
+    sprayLane: 0.55,
     basesAfter: [false, false, true],
     baseRunnerIdsAfter: ["", "", "batter"]
   }, { anchors: ANCHORS });
@@ -522,6 +533,8 @@ function verifyFlyBallResolution() {
     outcome: "triple",
     battedBallType: "lineDrive",
     fieldingPosition: "RF",
+    hitTrajectory: "line-gap",
+    sprayLane: 0.24,
     basesAfter: [false, false, true],
     baseRunnerIdsAfter: ["", "", "batter"]
   }, { anchors: ANCHORS });
@@ -549,16 +562,21 @@ function verifyFlyBallResolution() {
 
   const safeLineFlight = safeLine.tracks.ball.find((cue) => cue.phase === "batted");
   const safeLineSettle = safeLine.tracks.ball.find((cue) => cue.phase === "line-settle");
-  const safeLineShortHop = safeLine.tracks.fielders.find((cue) => cue.who === "2B" && cue.phase === "short-hop");
+  const safeLineShortHop = safeLine.tracks.fielders.find((cue) => cue.who === "RF" && cue.phase === "short-hop");
+  const safeLineRecovery = safeLine.tracks.fielders.find((cue) => cue.who === "RF" && cue.phase === "recover");
   assert.equal(safeLine.meta.fielding.resolution, "safe-line-short-hop", "일반 직선타 안타가 숏바운드 처리로 표시되지 않습니다.");
   assert.equal(safeLine.meta.fielding.fieldingStyle, "short-hop", "일반 직선타 안타가 불필요한 다이빙으로 분류됩니다.");
+  assert.equal(safeLine.meta.fielding.fielder, "RF", "직선타 안타의 실제 회수자가 외야수가 아닙니다.");
+  assert.equal(safeLine.meta.fielding.attemptedFielder, "2B", "직선타가 지나간 내야수 정보가 보존되지 않습니다.");
+  assert(safeLineFlight?.path?.includes("infieldGate"), "직선타 안타가 내야수 사이 통과점을 사용하지 않습니다.");
   assert.equal(safeLineFlight?.path?.at(-1), "landing", "직선타 안타가 지면에 먼저 도달하지 않습니다.");
   assert.equal(safeLineFlight?.caughtDirectly, false, "직선타 안타가 직접 포구로 잘못 표시됩니다.");
   assert.deepEqual(safeLineSettle?.path, ["landing", "pickup"], "직선타 안타의 짧은 지면 이동 경로가 없습니다.");
   assert.equal(safeLineSettle?.grounded, true, "직선타 안타의 착지 후 이동이 지면 이동이 아닙니다.");
   assert.equal(safeLineShortHop?.anim, "catch", "일반 직선타 안타 수비수가 숏바운드 처리 동작을 하지 않습니다.");
+  assert.deepEqual(safeLineRecovery?.path, ["miss", "pickup"], "직선타 안타 외야수가 안전거리에서 회수하지 않습니다.");
   assert(
-    !safeLine.tracks.fielders.some((cue) => cue.who === "2B" && cue.anim === "dive"),
+    !safeLine.tracks.fielders.some((cue) => cue.who === "RF" && cue.anim === "dive"),
     "일반 직선타 안타 수비수가 강제로 다이빙합니다."
   );
   assert(
@@ -569,13 +587,18 @@ function verifyFlyBallResolution() {
     Math.hypot(
       Number(safeLine.points.pickup?.x) - Number(safeLine.points.landing?.x),
       Number(safeLine.points.pickup?.y) - Number(safeLine.points.landing?.y)
-    ) <= 8,
+    ) <= 20,
     "직선타 안타가 착지 후 너무 멀리 이동합니다."
+  );
+  assert(
+    postLandingDirectionDot(safeLine.points) > 0,
+    "직선타 안타가 착지 후 홈 쪽으로 역주행합니다."
   );
 
   const safeFlight = safe.tracks.ball.find((cue) => cue.phase === "batted");
   const settle = safe.tracks.ball.find((cue) => cue.phase === "safe-settle");
   const approach = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "approach");
+  const recover = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "recover");
   const pickup = safe.tracks.fielders.find((cue) => cue.who === "CF" && cue.phase === "pickup");
   const batterRun = safe.tracks.batter.find((cue) => cue.phase === "batter-run");
   assert.equal(safe.meta.fielding.resolution, "safe-fly-drop", "뜬공 안타가 안전 낙하 판정으로 표시되지 않습니다.");
@@ -592,11 +615,13 @@ function verifyFlyBallResolution() {
     Math.hypot(
       Number(safe.points.pickup?.x) - Number(safe.points.landing?.x),
       Number(safe.points.pickup?.y) - Number(safe.points.landing?.y)
-    ) <= 8,
+    ) <= 20,
     "뜬공 안타가 착지 후 외야수 쪽으로 너무 멀리 이동합니다."
   );
+  assert(postLandingDirectionDot(safe.points) > 0, "뜬공 안타가 착지 후 홈 쪽으로 역주행합니다.");
   assert.equal(safe.meta.fielding.fieldingStyle, "run-through", "일반 뜬공 안타가 불필요한 다이빙으로 분류됩니다.");
-  assert.deepEqual(approach?.path, ["CF", "pickup"], "일반 뜬공 안타 수비수가 떨어진 공까지 달려가지 않습니다.");
+  assert.deepEqual(approach?.path, ["CF", "miss"], "일반 뜬공 안타 수비수가 낙하 순간 포구 반경을 침범합니다.");
+  assert.deepEqual(recover?.path, ["miss", "pickup"], "일반 뜬공 안타 수비수가 떨어진 공을 회수하지 않습니다.");
   assert(!safe.tracks.fielders.some((cue) => cue.who === "CF" && cue.anim === "dive"), "일반 뜬공 안타 수비수가 강제로 다이빙합니다.");
   assert.equal(pickup?.at, "pickup", "뜬공 안타 픽업 동작이 공 위치와 다릅니다.");
   assert(Number(pickup?.t) > Number(safe.meta.fielding.ballLandingT), "뜬공 안타 수비수가 낙하 전에 포구 동작을 합니다.");
@@ -610,9 +635,11 @@ function verifyFlyBallResolution() {
   assert.deepEqual(challengingFlyRecover?.path, ["miss", "pickup"], "다이빙한 수비수가 공으로 회복하지 않습니다.");
 
   const challengingLineTrap = challengingLine.tracks.fielders.find((cue) => cue.who === "RF" && cue.phase === "trap");
+  const challengingLineDive = challengingLine.tracks.fielders.find((cue) => cue.who === "RF" && cue.phase === "recover");
   assert.equal(challengingLine.meta.fielding.resolution, "safe-line-trap", "어려운 직선타 안타가 다이빙 트랩으로 표시되지 않습니다.");
   assert.equal(challengingLine.meta.fielding.fieldingStyle, "dive", "어려운 직선타 안타에 다이빙 판단이 없습니다.");
-  assert.equal(challengingLineTrap?.anim, "dive", "어려운 직선타 안타 수비수가 다이빙하지 않습니다.");
+  assert.equal(challengingLineDive?.anim, "dive", "어려운 직선타 안타 수비수가 공을 향해 다이빙하지 않습니다.");
+  assert.equal(challengingLineTrap?.anim, "catch", "다이빙 후 공을 제어하는 동작이 없습니다.");
   assert(Number(challengingLineTrap?.t) > Number(challengingLine.meta.fielding.ballLandingT), "직선타 다이빙 트랩이 착지 전에 시작됩니다.");
 
   assert.equal(gamecast2FlyResolutionCue(caught, caught.meta.fielding.ballLandingT + 0.02)?.label, "OUT", "뜬공 아웃 현장 cue가 없습니다.");
@@ -824,7 +851,8 @@ function verifyPlaybackClock() {
       legacyDurationMs: 4400,
       legacyLandingT: 0.48,
       legacyThrowEndT: 0.72,
-      fieldingDelayMs: 900
+      landingDelayMs: 250,
+      fieldingDelayMs: 1450
     },
     {
       event: {
@@ -840,8 +868,9 @@ function verifyPlaybackClock() {
       legacyDurationMs: 4800,
       legacyLandingT: 0.51,
       legacyThrowEndT: 0.76,
-      fieldingDelayMs: 1000,
-      safeFlyRecoveryMs: 300
+      landingDelayMs: 1550,
+      fieldingDelayMs: 2500,
+      safeFlyRecoveryMs: 216
     }
   ];
   const sequence = {
@@ -881,7 +910,7 @@ function verifyPlaybackClock() {
 
     const actionCues = [
       ["pitch", timeline.tracks.ball.find((cue) => cue.phase === "pitch"), 0.2 * item.legacyDurationMs],
-      ["landing", timeline.tracks.ball.find((cue) => cue.phase === "batted"), item.legacyLandingT * item.legacyDurationMs + item.fieldingDelayMs]
+      ["landing", timeline.tracks.ball.find((cue) => cue.phase === "batted"), item.legacyLandingT * item.legacyDurationMs + Number(item.landingDelayMs ?? 0)]
     ];
     if (item.legacyThrowEndT !== null) {
       actionCues.push([
@@ -927,13 +956,18 @@ function verifyPlaybackClock() {
   assert(rightFieldFlight && rightFielderRoute, "empty-bases right-field single has no RF flight/route cues.");
   const rightFieldFlightMs = (Number(rightFieldFlight.endT) - Number(rightFieldFlight.t)) * emptyBasesRightFieldSingle.durationMs;
   const rightFielderRouteMs = (Number(rightFielderRoute.endT) - Number(rightFielderRoute.t)) * emptyBasesRightFieldSingle.durationMs;
+  const rightFielderReactionMs = (Number(rightFielderRoute.t) - Number(rightFieldFlight.t)) * emptyBasesRightFieldSingle.durationMs;
   assert(
-    rightFieldFlightMs >= 1800,
-    `right-field single reaches the outfield too quickly (${rightFieldFlightMs.toFixed(0)}ms after contact).`
+    rightFieldFlightMs >= 850 && rightFieldFlightMs <= 1450,
+    `right-field line drive has an unrealistic ${rightFieldFlightMs.toFixed(0)}ms flight.`
   );
   assert(
-    rightFielderRouteMs >= 1700,
-    `right fielder gets to the ball too quickly (${rightFielderRouteMs.toFixed(0)}ms route).`
+    rightFielderRouteMs >= 650 && rightFielderRouteMs <= 1600,
+    `right fielder has an unrealistic ${rightFielderRouteMs.toFixed(0)}ms read route.`
+  );
+  assert(
+    rightFielderReactionMs >= 120 && rightFielderReactionMs <= 260,
+    `right fielder reacts ${rightFielderReactionMs.toFixed(0)}ms after contact.`
   );
 
   const expectedTotal = sequence.events.reduce((total, event) => total + event.gamecastDurationMs + sequence.gapMs, 0);
@@ -1279,8 +1313,17 @@ function verifyThrowTargetSemantics(name, event, timeline) {
 
   if (fieldingTarget === "second") {
     assert(
-      timeline.template === "doublePlay" || runnerTarget === "second" || canonicalTarget === "second",
+      timeline.template === "double"
+        || timeline.template === "doublePlay"
+        || runnerTarget === "second"
+        || canonicalTarget === "second",
       `${name}: unjustified throw to second without a double play or an actual runner destination.`
+    );
+  }
+  if (fieldingTarget === "third") {
+    assert(
+      timeline.template === "triple" || runnerTarget === "third" || canonicalTarget === "third",
+      `${name}: unjustified throw to third without a triple or an actual runner destination.`
     );
   }
 
@@ -1445,7 +1488,12 @@ function verifyThrowTargetRegressionCases() {
   const emptyBasesSingle = compile({
     outcome: "single",
     battedBallType: "groundBall",
-    fieldingPosition: "SS",
+    fieldingPosition: "RF",
+    attemptedFieldingPosition: "SS",
+    fieldingZone: "third-hole",
+    fieldingLane: -0.36,
+    sprayLane: -0.36,
+    hitTrajectory: "ground-through",
     basesAfter: [true, false, false],
     baseRunnerIdsAfter: ["batter", "", ""]
   });
@@ -1455,6 +1503,20 @@ function verifyThrowTargetRegressionCases() {
     "Regression: empty-bases single still throws to second."
   );
   verifyThrowTargetSemantics("regression-empty-bases-single", emptyBasesSingle.event, emptyBasesSingle.timeline);
+
+  const infieldChopper = compile({
+    outcome: "single",
+    battedBallType: "groundBall",
+    fieldingPosition: "SS",
+    fieldingZone: "third-hole",
+    fieldingLane: -0.36,
+    hitTrajectory: "infield-chopper",
+    basesAfter: [true, false, false],
+    baseRunnerIdsAfter: ["batter", "", ""]
+  });
+  const chopperThrow = infieldChopper.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw");
+  assert.equal(chopperThrow?.path?.at(-1), "first", "Infield hit fielder keeps the ball instead of making the late throw to first.");
+  assert.equal(chopperThrow?.ordering, "runner-safe-first", "Infield-hit throw reaches first before the recorded safe runner.");
 
   const firstToThirdSingle = compile({
     outcome: "single",
@@ -1623,8 +1685,8 @@ function verifyThrowTargetRegressionCases() {
   });
   assert.equal(
     legacyDoubleTarget.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw")?.path?.at(-1),
-    "third",
-    "Regression: legacy double inference no longer falls back to third."
+    "second",
+    "Regression: legacy double inference does not hold the batter at second."
   );
 
   for (const [label, overrides] of [
@@ -1854,12 +1916,348 @@ function loadedBases(overrides) {
   };
 }
 
+function verifyTrajectoryRealismRegressions() {
+  const sprayLanes = [-0.86, -0.58, -0.28, -0.08, 0, 0.08, 0.28, 0.58, 0.86];
+  const safeHitTypes = [
+    { type: "groundBall", trajectory: "ground-through", attempted: true },
+    { type: "lineDrive", trajectory: "line-through", attempted: true },
+    { type: "flyBall", trajectory: "fly-bloop", attempted: false }
+  ];
+  let sequence = 9100;
+  let closeInfieldAttempts = 0;
+
+  for (const spec of safeHitTypes) {
+    for (const lane of sprayLanes) {
+      const actualFielder = outfielderForSprayLane(lane);
+      const attemptedFielder = spec.attempted ? infielderForSprayLane(lane) : "";
+      const timeline = compilePlayTimeline({
+        ...BASE_EVENT,
+        sequence: sequence += 1,
+        outcome: "single",
+        battedBallType: spec.type,
+        hitTrajectory: spec.trajectory,
+        sprayLane: lane,
+        fieldingLane: lane,
+        fieldingPosition: actualFielder,
+        attemptedFieldingPosition: attemptedFielder || undefined,
+        basesAfter: [true, false, false],
+        baseRunnerIdsAfter: ["batter", "", ""]
+      }, { anchors: ANCHORS });
+      const label = `${spec.type} safe hit at spray lane ${lane}`;
+
+      assert.equal(timeline.meta.fielding?.fielder, actualFielder, `${label}: the wrong outfielder retrieves the hit.`);
+      verifyPlanViewTrajectory(label, timeline);
+
+      const preLandingDistance = pointDistance(timeline.points[actualFielder], timeline.points.miss);
+      assert(
+        preLandingDistance >= 20,
+        `${label}: ${actualFielder} moves only ${preLandingDistance.toFixed(1)}px before the ball lands.`
+      );
+      const preLandingArrival = timeline.tracks.fielders.find((cue) => (
+        cue.who === actualFielder
+        && cue.arrivesAt === "miss"
+        && Math.abs(Number(cue.endT) - Number(timeline.meta.fielding?.ballLandingT)) <= 0.0005
+      ));
+      assert(preLandingArrival, `${label}: the retrieving outfielder has no visible pre-landing approach/miss cue.`);
+
+      if (!attemptedFielder) continue;
+      assert.equal(
+        timeline.meta.fielding?.attemptedFielder,
+        attemptedFielder,
+        `${label}: the recorded infielder attempt was discarded.`
+      );
+      const distanceToBallPath = pointToSegmentDistance(
+        timeline.points[attemptedFielder],
+        timeline.points.home,
+        timeline.points.landing
+      );
+      if (distanceToBallPath > 72.25) continue;
+
+      closeInfieldAttempts += 1;
+      const missCue = timeline.tracks.fielders.find((cue) => (
+        cue.who === attemptedFielder && cue.phase === "infield-attempt-miss"
+      ));
+      assert(missCue, `${label}: a close ${attemptedFielder} attempt has no reach/miss cue.`);
+      assert(
+        Number(missCue.endT) <= Number(timeline.meta.fielding?.ballLandingT) + 0.0005,
+        `${label}: the infielder reacts only after the ball has already landed.`
+      );
+      if (pointDistance(timeline.points[attemptedFielder], timeline.points.infieldAttempt) >= 4) {
+        assert(
+          timeline.tracks.fielders.some((cue) => cue.who === attemptedFielder && cue.phase === "infield-react"),
+          `${label}: a close ${attemptedFielder} attempt has no reaction movement.`
+        );
+      }
+    }
+  }
+  assert(closeInfieldAttempts >= 12, `Only ${closeInfieldAttempts} close infield-attempt lanes were exercised.`);
+
+  for (const legacyLane of [null, ""]) {
+    const laneLabel = legacyLane === null ? "null" : "empty";
+    const legacyCases = [
+      {
+        label: `legacy ${laneLabel} line lane`,
+        type: "lineDrive",
+        trajectory: "line-through",
+        recorded: "2B",
+        expectedFielder: "RF",
+        expectedAttempt: "2B",
+        direction: 1
+      },
+      {
+        label: `legacy ${laneLabel} ground lane`,
+        type: "groundBall",
+        trajectory: "ground-through",
+        recorded: "SS",
+        expectedFielder: "LF",
+        expectedAttempt: "SS",
+        direction: -1
+      },
+      {
+        label: `legacy ${laneLabel} fly lane`,
+        type: "flyBall",
+        trajectory: "fly-bloop",
+        recorded: "RF",
+        expectedFielder: "RF",
+        expectedAttempt: "",
+        direction: 1
+      }
+    ];
+
+    for (const legacy of legacyCases) {
+      const timeline = compilePlayTimeline({
+        ...BASE_EVENT,
+        sequence: sequence += 1,
+        outcome: "single",
+        battedBallType: legacy.type,
+        hitTrajectory: legacy.trajectory,
+        sprayLane: legacyLane,
+        fieldingLane: legacyLane,
+        fieldingPosition: legacy.recorded,
+        basesAfter: [true, false, false],
+        baseRunnerIdsAfter: ["batter", "", ""]
+      }, { anchors: ANCHORS });
+
+      assert.equal(timeline.meta.fielding?.sprayLane, null, `${legacy.label}: missing sprayLane became a numeric center lane.`);
+      assert.equal(timeline.meta.fielding?.fieldingLane, null, `${legacy.label}: missing fieldingLane became a numeric center lane.`);
+      assert.equal(timeline.meta.fielding?.fielder, legacy.expectedFielder, `${legacy.label}: semantic lane fallback chose the wrong outfielder.`);
+      assert.equal(timeline.meta.fielding?.attemptedFielder, legacy.expectedAttempt, `${legacy.label}: semantic lane fallback lost the attempted infielder.`);
+      assert(
+        (Number(timeline.points.landing.x) - Number(timeline.points.home.x)) * legacy.direction > 70,
+        `${legacy.label}: a missing lane collapsed the hit into center field.`
+      );
+      verifyPlanViewTrajectory(legacy.label, timeline);
+    }
+  }
+
+  const errorCases = [
+    { position: "2B", type: "lineDrive", lane: null },
+    { position: "SS", type: "lineDrive", lane: "" },
+    { position: "3B", type: "groundBall", lane: null }
+  ];
+  for (const errorCase of errorCases) {
+    const timeline = compilePlayTimeline({
+      ...BASE_EVENT,
+      sequence: sequence += 1,
+      outcome: "error",
+      battedBallType: errorCase.type,
+      hitTrajectory: errorCase.type === "groundBall" ? "ground-through" : "line-through",
+      sprayLane: errorCase.lane,
+      fieldingLane: errorCase.lane,
+      fieldingPosition: errorCase.position,
+      basesAfter: [true, false, false],
+      baseRunnerIdsAfter: ["batter", "", ""]
+    }, { anchors: ANCHORS });
+    const label = `${errorCase.position} ${errorCase.type} error`;
+
+    assert.equal(timeline.meta.fielding?.fielder, errorCase.position, `${label}: the recorded error was rerouted to an outfielder.`);
+    assert(!OUTFIELD_POSITIONS.has(timeline.meta.fielding?.fielder), `${label}: an infield error became a safe-hit outfield pickup.`);
+    assert.equal(timeline.meta.fielding?.attemptedFielder, "", `${label}: an error was mislabeled as a through-ball attempt.`);
+    assert(
+      !["safe-fly-drop", "safe-line-trap", "safe-line-short-hop", "safe-ground-through"].includes(timeline.meta.fielding?.resolution),
+      `${label}: an error received a safe-hit resolution.`
+    );
+  }
+
+  const excessivePickupHolds = [];
+  const extraBaseCases = [
+    { outcome: "double", type: "lineDrive", trajectory: "line-gap", lane: 0.45, fielder: "RF", target: "second" },
+    { outcome: "double", type: "flyBall", trajectory: "fly-gap", lane: -0.55, fielder: "LF", target: "second" },
+    { outcome: "triple", type: "lineDrive", trajectory: "line-gap", lane: 0.55, fielder: "RF", target: "third" },
+    { outcome: "triple", type: "flyBall", trajectory: "fly-gap", lane: 0, fielder: "CF", target: "third" }
+  ];
+  for (const extraBase of extraBaseCases) {
+    const thirdBase = extraBase.outcome === "triple";
+    const timeline = compilePlayTimeline({
+      ...BASE_EVENT,
+      sequence: sequence += 1,
+      outcome: extraBase.outcome,
+      battedBallType: extraBase.type,
+      hitTrajectory: extraBase.trajectory,
+      sprayLane: extraBase.lane,
+      fieldingPosition: extraBase.fielder,
+      defensiveThrowTarget: extraBase.target,
+      basesAfter: thirdBase ? [false, false, true] : [false, true, false],
+      baseRunnerIdsAfter: thirdBase ? ["", "", "batter"] : ["", "batter", ""]
+    }, { anchors: ANCHORS });
+    const throwCue = timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw");
+    const label = `${extraBase.type} ${extraBase.outcome}`;
+
+    assert(throwCue, `${label}: the outfielder never releases the relay throw.`);
+    const pickupToReleaseMs = (
+      Number(throwCue.t) - Number(timeline.meta.fielding?.fielderArrivalT)
+    ) * Number(timeline.durationMs);
+    assert(pickupToReleaseMs >= -0.5, `${label}: the throw is released before the pickup.`);
+    if (pickupToReleaseMs > 450.5) {
+      excessivePickupHolds.push(`${label} ${pickupToReleaseMs.toFixed(1)}ms`);
+    }
+  }
+
+  const flightCases = [
+    {
+      key: "line",
+      event: { outcome: "single", battedBallType: "lineDrive", hitTrajectory: "line-through", fieldingPosition: "CF", sprayLane: 0 }
+    },
+    {
+      key: "bloop",
+      event: { outcome: "single", battedBallType: "flyBall", hitTrajectory: "fly-bloop", fieldingPosition: "CF", sprayLane: 0 }
+    },
+    {
+      key: "gap",
+      event: { outcome: "single", battedBallType: "flyBall", hitTrajectory: "fly-gap-drop", fieldingPosition: "CF", sprayLane: 0 }
+    },
+    {
+      key: "caught",
+      event: { outcome: "out", battedBallType: "flyBall", fieldingPosition: "CF", sprayLane: 0, outsAfter: 1 }
+    }
+  ];
+  const flights = Object.fromEntries(flightCases.map(({ key, event }) => {
+    const safe = event.outcome !== "out";
+    const timeline = compilePlayTimeline({
+      ...BASE_EVENT,
+      sequence: sequence += 1,
+      ...event,
+      basesAfter: safe ? [true, false, false] : [false, false, false],
+      baseRunnerIdsAfter: safe ? ["batter", "", ""] : ["", "", ""]
+    }, { anchors: ANCHORS });
+    return [key, battedFlightMetrics(timeline)];
+  }));
+
+  assert(flights.line.flightMs >= 800 && flights.line.flightMs <= 1400, `Line-drive flight is ${flights.line.flightMs.toFixed(0)}ms.`);
+  assert(flights.bloop.flightMs >= flights.line.flightMs + 350, "A bloop has no meaningful hang-time separation from a line drive.");
+  assert(flights.gap.flightMs >= flights.bloop.flightMs + 250, "A gap-drop fly has no meaningful hang-time separation from a bloop.");
+  assert(flights.caught.flightMs >= flights.gap.flightMs + 150, "A caught fly has no meaningful hang-time separation from a gap drop.");
+  assert(flights.line.arc <= 0.3, `Line-drive arc ${flights.line.arc} is too high.`);
+  assert(flights.bloop.arc >= flights.line.arc + 0.2, "A bloop arc is indistinguishable from a line drive.");
+  assert(flights.gap.arc >= flights.bloop.arc + 0.15, "A gap-drop arc is indistinguishable from a bloop.");
+  assert(flights.caught.arc >= flights.bloop.arc + 0.15, "A caught-fly arc is indistinguishable from a bloop.");
+  assert(flights.bloop.maxHeight >= flights.line.maxHeight + 25, "Bloop height is visually indistinguishable from a line drive.");
+  assert(flights.gap.maxHeight >= flights.bloop.maxHeight + 15, "Gap-drop height is visually indistinguishable from a bloop.");
+  assert(flights.caught.maxHeight >= flights.bloop.maxHeight + 15, "Caught-fly height is visually indistinguishable from a bloop.");
+  assert.equal(
+    excessivePickupHolds.length,
+    0,
+    `Extra-base pickup-to-release hold exceeds 450ms: ${excessivePickupHolds.join(", ")}`
+  );
+}
+
 function allCues(timeline) {
   return Object.values(timeline.tracks).flat();
 }
 
 function pointDistance(a, b) {
   return Math.hypot(Number(a?.x ?? 0) - Number(b?.x ?? 0), Number(a?.y ?? 0) - Number(b?.y ?? 0));
+}
+
+function outfielderForSprayLane(lane) {
+  if (lane <= -0.22) return "LF";
+  if (lane >= 0.22) return "RF";
+  return "CF";
+}
+
+function infielderForSprayLane(lane) {
+  if (lane <= -0.72) return "3B";
+  if (lane < -0.2) return "SS";
+  if (Math.abs(lane) <= 0.2) return "P";
+  if (lane < 0.72) return "2B";
+  return "1B";
+}
+
+function pointToSegmentDistance(point, from, to) {
+  const dx = Number(to?.x ?? 0) - Number(from?.x ?? 0);
+  const dy = Number(to?.y ?? 0) - Number(from?.y ?? 0);
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared < 0.001) return pointDistance(point, from);
+  const projection = Math.max(0, Math.min(1, (
+    (Number(point?.x ?? 0) - Number(from?.x ?? 0)) * dx
+    + (Number(point?.y ?? 0) - Number(from?.y ?? 0)) * dy
+  ) / lengthSquared));
+  return pointDistance(point, {
+    x: Number(from?.x ?? 0) + dx * projection,
+    y: Number(from?.y ?? 0) + dy * projection
+  });
+}
+
+function verifyPlanViewTrajectory(label, timeline) {
+  const ball = timeline.tracks.ball.find((cue) => cue.phase === "batted");
+  assert(ball, `${label}: missing batted-ball cue.`);
+  const start = timeline.points.home;
+  const end = timeline.points.landing;
+  const dx = Number(end?.x) - Number(start?.x);
+  const dy = Number(end?.y) - Number(start?.y);
+  const routeLength = Math.hypot(dx, dy);
+  assert(routeLength > 1, `${label}: batted-ball route has no plan-view distance.`);
+
+  let previousProjection = -Infinity;
+  let maxLateralDeviation = 0;
+  let finalPoint = null;
+  for (let index = 0; index <= 64; index += 1) {
+    const point = timelineBallPoint(ball, timeline.points, index / 64);
+    assert(point, `${label}: batted-ball route cannot be sampled at ${index}/64.`);
+    const groundPoint = { x: Number(point.groundX), y: Number(point.groundY) };
+    const rx = groundPoint.x - Number(start.x);
+    const ry = groundPoint.y - Number(start.y);
+    const projection = (rx * dx + ry * dy) / routeLength;
+    const lateralDeviation = Math.abs(rx * dy - ry * dx) / routeLength;
+    assert(
+      projection >= previousProjection - 0.15,
+      `${label}: plan-view direction reverses at sample ${index}/64.`
+    );
+    previousProjection = projection;
+    maxLateralDeviation = Math.max(maxLateralDeviation, lateralDeviation);
+    finalPoint = groundPoint;
+  }
+
+  assert(
+    maxLateralDeviation <= 3,
+    `${label}: plan-view route bends ${maxLateralDeviation.toFixed(1)}px away from its spray line.`
+  );
+  assert(pointDistance(finalPoint, end) <= 0.75, `${label}: plan-view flight does not finish at the landing point.`);
+}
+
+function battedFlightMetrics(timeline) {
+  const cue = timeline.tracks.ball.find((item) => item.phase === "batted");
+  assert(cue, "Flight comparison case has no batted-ball cue.");
+  let maxHeight = 0;
+  for (let index = 0; index <= 64; index += 1) {
+    maxHeight = Math.max(
+      maxHeight,
+      Number(timelineBallPoint(cue, timeline.points, index / 64)?.height ?? 0)
+    );
+  }
+  return {
+    flightMs: (Number(cue.endT) - Number(cue.t)) * Number(timeline.durationMs),
+    arc: Number(cue.arc ?? 0),
+    maxHeight
+  };
+}
+
+function postLandingDirectionDot(points) {
+  const flightX = Number(points?.landing?.x) - Number(points?.home?.x);
+  const flightY = Number(points?.landing?.y) - Number(points?.home?.y);
+  const settleX = Number(points?.pickup?.x) - Number(points?.landing?.x);
+  const settleY = Number(points?.pickup?.y) - Number(points?.landing?.y);
+  return flightX * settleX + flightY * settleY;
 }
 
 function deepFreeze(value) {

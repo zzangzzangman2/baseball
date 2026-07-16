@@ -6825,6 +6825,27 @@ export function normalizeExtraBaseHitContext(context) {
   const requestedBases = requestedType === "triple" ? 3 : requestedType === "double" ? 2 : 1;
   let resolvedBattedBallType = context?.battedBallType;
   let resolvedFielding = context?.fielding;
+  const originalFielding = context?.fielding;
+  const originalPosition = String(originalFielding?.position ?? "").trim().toUpperCase();
+  const originalToken = String(resolvedBattedBallType ?? "").toLowerCase();
+  const sprayLane = safeHitSprayLane(context, originalFielding);
+  let attemptedFielding = null;
+  let hitTrajectory = "";
+
+  if (requestedBases === 1 && originalToken.includes("ground") && isInfieldHitPosition(originalPosition)) {
+    if (shouldKeepInfieldGroundSingle(context)) {
+      hitTrajectory = "infield-chopper";
+    } else {
+      attemptedFielding = originalFielding;
+      resolvedFielding = chooseSafeHitOutfieldTarget(context, sprayLane);
+      hitTrajectory = "ground-through";
+    }
+  } else if (requestedBases === 1 && originalToken.includes("line") && isInfieldHitPosition(originalPosition)) {
+    attemptedFielding = originalFielding;
+    resolvedFielding = chooseSafeHitOutfieldTarget(context, sprayLane);
+    hitTrajectory = "line-through";
+  }
+
   const extraBaseHitAllowed = requestedBases === 1 || canProduceExtraBaseHitFromBattedBall({
     battedBallType: resolvedBattedBallType,
     fieldingPosition: resolvedFielding?.position
@@ -6834,24 +6855,116 @@ export function normalizeExtraBaseHitContext(context) {
     if (token.includes("line")) resolvedBattedBallType = "lineDrive";
     else if (token.includes("fly") || requestedType === "triple") resolvedBattedBallType = "flyBall";
     else resolvedBattedBallType = "lineDrive";
-    resolvedFielding = chooseFieldingTarget(
-      context.defenseContext,
-      "outfield",
-      context.seed,
-      context.plateAppearance,
-      context.hitter,
-      "OF"
-    );
+    // Preserve the ball's authored spray side when an extra-base hit is
+    // converted from an infield assignment. A random outfielder here could
+    // send a third-base-line drive all the way to RF and make the route cross
+    // the entire defense.
+    resolvedFielding = chooseSafeHitOutfieldTarget(context, sprayLane);
+    if (isInfieldHitPosition(originalPosition)) attemptedFielding = originalFielding;
   }
+
+  if (!hitTrajectory) {
+    const resolvedToken = String(resolvedBattedBallType ?? "").toLowerCase();
+    if (resolvedToken.includes("ground")) hitTrajectory = "ground-through";
+    else if (resolvedToken.includes("line")) hitTrajectory = requestedBases >= 2 ? "line-gap" : "line-drop";
+    else if (resolvedToken.includes("fly")) hitTrajectory = requestedBases >= 2 ? "fly-gap" : safeFlySingleTrajectory(context);
+  }
+
   return {
     type: requestedType,
     bases: requestedBases,
     battedBallType: resolvedBattedBallType,
     fieldingPosition: resolvedFielding?.position,
-    fieldingZone: resolvedFielding?.fieldingZone ?? "",
-    fieldingLane: resolvedFielding?.fieldingLane ?? null,
+    fieldingZone: originalFielding?.fieldingZone ?? resolvedFielding?.fieldingZone ?? "",
+    fieldingLane: originalFielding?.fieldingLane ?? resolvedFielding?.fieldingLane ?? null,
+    sprayLane,
+    hitTrajectory,
+    attemptedFieldingPosition: attemptedFielding?.position ?? "",
+    attemptedDefender: attemptedFielding?.defender ?? null,
     defender: resolvedFielding?.defender
   };
+}
+
+const SAFE_HIT_INFIELD_POSITIONS = new Set(["P", "1B", "2B", "3B", "SS"]);
+
+function isInfieldHitPosition(position) {
+  return SAFE_HIT_INFIELD_POSITIONS.has(String(position ?? "").trim().toUpperCase());
+}
+
+function safeHitSprayLane(context, fielding) {
+  const rawAuthoredLane = fielding?.fieldingLane;
+  const authoredLane = rawAuthoredLane === null || rawAuthoredLane === ""
+    ? Number.NaN
+    : Number(rawAuthoredLane);
+  if (Number.isFinite(authoredLane)) return Math.round(clamp(authoredLane, -1, 1) * 1000) / 1000;
+
+  const position = String(fielding?.position ?? "").trim().toUpperCase();
+  const positionLane = position === "P"
+    ? (rollUnit(
+        context?.seed,
+        "safe-hit-pitcher-side",
+        context?.plateAppearance,
+        context?.hitter?.id ?? context?.hitter?.name ?? ""
+      ) < 0.5 ? -0.12 : 0.12)
+    : ({
+    "3B": -0.72,
+    SS: -0.58,
+    LF: -0.62,
+    CF: 0,
+    "2B": 0.58,
+    "1B": 0.72,
+    RF: 0.62
+  }[position] ?? 0);
+  const jitter = (rollUnit(
+    context?.seed,
+    "safe-hit-spray-lane",
+    context?.plateAppearance,
+    context?.hitter?.id ?? context?.hitter?.name ?? "",
+    context?.requestedType ?? "single"
+  ) - 0.5) * 0.18;
+  return Math.round(clamp(positionLane + jitter, -0.95, 0.95) * 1000) / 1000;
+}
+
+function shouldKeepInfieldGroundSingle(context) {
+  const speed = safeNumber(context?.hitter?.speed, 10);
+  const rate = clamp(0.11 + (speed - 10) * 0.009, 0.07, 0.27);
+  return rollUnit(
+    context?.seed,
+    "infield-hit-variant",
+    context?.plateAppearance,
+    context?.hitter?.id ?? context?.hitter?.name ?? ""
+  ) < rate;
+}
+
+function chooseSafeHitOutfieldTarget(context, sprayLane) {
+  const desired = sprayLane <= -0.22 ? "LF" : sprayLane >= 0.22 ? "RF" : "CF";
+  const options = context?.defenseContext?.outfield ?? [];
+  const fallbackOrder = {
+    LF: ["LF", "CF", "RF"],
+    CF: ["CF", "LF", "RF"],
+    RF: ["RF", "CF", "LF"]
+  }[desired];
+  const selected = fallbackOrder
+    .map((position) => options.find((entry) => String(entry?.position ?? "").toUpperCase() === position))
+    .find(Boolean);
+  if (selected) return selected;
+  return chooseFieldingTarget(
+    context?.defenseContext,
+    "outfield",
+    context?.seed,
+    context?.plateAppearance,
+    context?.hitter,
+    desired
+  );
+}
+
+function safeFlySingleTrajectory(context) {
+  return rollUnit(
+    context?.seed,
+    "safe-fly-single-trajectory",
+    context?.plateAppearance,
+    context?.hitter?.id ?? context?.hitter?.name ?? ""
+  ) < 0.58 ? "fly-bloop" : "fly-gap-drop";
 }
 
 export function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed, plateAppearance }) {
@@ -7301,12 +7414,21 @@ function addPlateAppearanceEvent(result, input) {
     outcome: input.outcome.type,
     battedBallType: input.outcome.battedBallType ?? "",
     fieldingPosition: input.outcome.fieldingPosition ?? "",
+    attemptedFieldingPosition: input.outcome.attemptedFieldingPosition ?? "",
+    attemptedDefenderId: input.outcome.attemptedDefender?.id ?? "",
+    attemptedDefenderName: input.outcome.attemptedDefender?.name ?? "",
     fieldingZone: input.outcome.fieldingZone ?? "",
     fieldingLane: input.outcome.fieldingLane !== null
       && input.outcome.fieldingLane !== ""
       && Number.isFinite(Number(input.outcome.fieldingLane))
       ? Number(input.outcome.fieldingLane)
       : null,
+    sprayLane: input.outcome.sprayLane !== null
+      && input.outcome.sprayLane !== ""
+      && Number.isFinite(Number(input.outcome.sprayLane))
+      ? Number(input.outcome.sprayLane)
+      : null,
+    hitTrajectory: input.outcome.hitTrajectory ?? "",
     half,
     defenderId: input.outcome.defender?.id ?? "",
     defenderName: input.outcome.defender?.name ?? "",
@@ -7433,16 +7555,23 @@ export function resolveDefensiveThrowTarget(event) {
     return "first";
   }
 
-  // When the first baseman fields a ground-ball single, do not abandon the
-  // nearby batter-runner force to chase an existing runner across the diamond.
-  // The batter is already recorded safe, so Gamecast will order this throw just
-  // after the runner reaches first instead of fabricating an out.
+  const leadRunnerTarget = leadExistingRunnerThrowTarget(event);
+
+  // An authored infield hit is a late force play, not a fielder who simply
+  // gives up with the ball in hand. A first baseman keeps the nearby play at
+  // first; the other infielders take a real lead-runner force when one exists,
+  // then fall back to the batter-runner. Playback orders a safe throw just
+  // after the recorded runner arrival.
   const fieldingPosition = String(event?.fieldingPosition ?? "").trim().toUpperCase();
-  if (outcome === "single" && battedBallType.includes("ground") && fieldingPosition === "1B") {
+  if (
+    outcome === "single"
+    && battedBallType.includes("ground")
+    && SAFE_HIT_INFIELD_POSITIONS.has(fieldingPosition)
+  ) {
+    if (fieldingPosition !== "1B" && leadRunnerTarget) return leadRunnerTarget;
     return "first";
   }
 
-  const leadRunnerTarget = leadExistingRunnerThrowTarget(event);
   if (leadRunnerTarget) return leadRunnerTarget;
   if (outcome === "double") return "second";
   if (outcome === "triple") return "third";

@@ -2051,6 +2051,94 @@ function checkBattedBallExtraBaseRules() {
     { position: "RF", defender: { id: "fixture-rf", name: "Fixture RF" }, quality: 10 }
   ];
   const fixtureDefense = { outfield: fixtureOutfield, overall: 10 };
+  const lineSingleInput = {
+    requestedType: "single",
+    battedBallType: "lineDrive",
+    fielding: {
+      position: "SS",
+      defender: fixtureShortstop,
+      quality: 12,
+      fieldingLane: 0.18
+    },
+    defenseContext: fixtureDefense,
+    seed: "line-single-infield-fixture",
+    plateAppearance: 11,
+    hitter: { id: "fixture-line-single-hitter", speed: 10 }
+  };
+  const lineSingleInputBefore = JSON.stringify(lineSingleInput);
+  const normalizedLineSingle = engineModule.normalizeExtraBaseHitContext(lineSingleInput);
+  const normalizedLineSingleRepeat = engineModule.normalizeExtraBaseHitContext(lineSingleInput);
+  assert(
+    normalizedLineSingle.type === "single"
+      && normalizedLineSingle.bases === 1
+      && normalizedLineSingle.battedBallType === "lineDrive"
+      && normalizedLineSingle.hitTrajectory === "line-through"
+      && normalizedLineSingle.attemptedFieldingPosition === "SS"
+      && normalizedLineSingle.attemptedDefender?.id === fixtureShortstop.id
+      && Number.isFinite(normalizedLineSingle.sprayLane)
+      && normalizedLineSingle.sprayLane === 0.18
+      && fixtureOutfield.some((entry) => (
+        entry.position === normalizedLineSingle.fieldingPosition
+        && entry.defender.id === normalizedLineSingle.defender?.id
+      )),
+    `infield-assigned line single was not rerouted to a valid outfielder: ${JSON.stringify(normalizedLineSingle)}`,
+    MODULE_PATHS.engine
+  );
+  assert(
+    JSON.stringify(lineSingleInput) === lineSingleInputBefore
+      && JSON.stringify(normalizedLineSingle) === JSON.stringify(normalizedLineSingleRepeat),
+    "line-single safe-hit normalization mutated its input or was not deterministic",
+    MODULE_PATHS.engine
+  );
+
+  const groundSingleVariants = new Set();
+  for (let index = 0; index < 256; index += 1) {
+    const groundSingleInput = {
+      requestedType: "single",
+      battedBallType: "groundBall",
+      fielding: { position: "SS", defender: fixtureShortstop, quality: 12 },
+      defenseContext: fixtureDefense,
+      seed: `ground-single-normalization-${index}`,
+      plateAppearance: index + 1,
+      hitter: { id: `fixture-ground-single-hitter-${index}`, speed: 10 }
+    };
+    const normalizedGroundSingle = engineModule.normalizeExtraBaseHitContext(groundSingleInput);
+    const normalizedGroundSingleRepeat = engineModule.normalizeExtraBaseHitContext(groundSingleInput);
+    groundSingleVariants.add(normalizedGroundSingle.hitTrajectory);
+
+    const isInfieldChopper = normalizedGroundSingle.hitTrajectory === "infield-chopper"
+      && normalizedGroundSingle.fieldingPosition === "SS"
+      && normalizedGroundSingle.defender?.id === fixtureShortstop.id;
+    const isGroundThrough = normalizedGroundSingle.hitTrajectory === "ground-through"
+      && normalizedGroundSingle.attemptedFieldingPosition === "SS"
+      && normalizedGroundSingle.attemptedDefender?.id === fixtureShortstop.id
+      && fixtureOutfield.some((entry) => (
+        entry.position === normalizedGroundSingle.fieldingPosition
+        && entry.defender.id === normalizedGroundSingle.defender?.id
+      ));
+    assert(
+      normalizedGroundSingle.type === "single"
+        && normalizedGroundSingle.bases === 1
+        && normalizedGroundSingle.battedBallType === "groundBall"
+        && Number.isFinite(normalizedGroundSingle.sprayLane)
+        && normalizedGroundSingle.sprayLane >= -1
+        && normalizedGroundSingle.sprayLane <= 1
+        && (isInfieldChopper || isGroundThrough),
+      `ground-single normalization produced an invalid actual fielder/trajectory at seed ${index}: ${JSON.stringify(normalizedGroundSingle)}`,
+      MODULE_PATHS.engine
+    );
+    assert(
+      JSON.stringify(normalizedGroundSingle) === JSON.stringify(normalizedGroundSingleRepeat),
+      `ground-single normalization was not deterministic at seed ${index}`,
+      MODULE_PATHS.engine
+    );
+  }
+  assert(
+    groundSingleVariants.has("infield-chopper") && groundSingleVariants.has("ground-through"),
+    `deterministic ground-single coverage missed a safe-hit branch: ${JSON.stringify([...groundSingleVariants])}`,
+    MODULE_PATHS.engine
+  );
+
   const groundDoubleInput = {
     requestedType: "double",
     battedBallType: "groundBall",

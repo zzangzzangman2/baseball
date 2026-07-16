@@ -6,9 +6,9 @@ import {
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-ground-role-20260716-r22";
-import { compilePlayTimeline } from "./timeline.js?v=gamecast-ground-role-20260716-r22";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-ground-role-20260716-r22";
+} from "./assets.js?v=gamecast-trajectory-20260716-r23";
+import { compilePlayTimeline } from "./timeline.js?v=gamecast-trajectory-20260716-r23";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-trajectory-20260716-r23";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -1083,6 +1083,12 @@ function timelineCueAngle(cue, points, localT) {
 }
 
 export function gamecast2TimelineCueFacing(cue, points, localT = 0, role = "") {
+  const explicitFacing = Number(cue?.facing);
+  if (Number.isFinite(explicitFacing) && explicitFacing !== 0) return explicitFacing < 0 ? -1 : 1;
+  if (cue?.at && cue?.faceFrom && points?.[cue.at] && points?.[cue.faceFrom]) {
+    const delta = Number(points[cue.at].x) - Number(points[cue.faceFrom].x);
+    if (Math.abs(delta) >= 0.01) return delta >= 0 ? 1 : -1;
+  }
   const route = (cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
   if (route.length < 2) {
     if (cue.at && cue.toward && points?.[cue.at] && points?.[cue.toward]) {
@@ -1149,6 +1155,7 @@ function updateBallFlight(runtime, frame = null) {
   if (!ball) {
     scene.ballSprite.setVisible(false);
     runtime.screen.dataset.gamecast2BallRenderSize = "0";
+    runtime.screen.dataset.gamecast2BallHeight = "0";
     return;
   }
   const sx = runtime.metrics.drawScaleX;
@@ -1163,6 +1170,24 @@ function updateBallFlight(runtime, frame = null) {
     .setScale(scale)
     .setDepth(Math.round(ball.y * 10) + 12000);
   runtime.screen.dataset.gamecast2BallRenderSize = String(Math.round(scene.ballSprite.displayWidth));
+  runtime.screen.dataset.gamecast2BallHeight = Number(ball.height ?? 0).toFixed(2);
+  if (
+    scene.shadowGraphics
+    && Number.isFinite(Number(ball.groundX))
+    && Number.isFinite(Number(ball.groundY))
+    && !["pitch", "fielding-throw", "relay-throw", "steal-throw"].includes(String(ball.phase ?? ""))
+  ) {
+    const height = Math.max(0, Number(ball.height ?? 0));
+    const shadowScale = Math.max(0.45, 1 - height / 180);
+    const shadowAlpha = Math.max(0.1, 0.3 - height / 700);
+    scene.shadowGraphics.fillStyle(0x07120f, shadowAlpha);
+    scene.shadowGraphics.fillEllipse(
+      Number(ball.groundX) * sx,
+      Number(ball.groundY) * sy + Math.max(1, sy * 2),
+      Math.max(3, 10 * shadowScale * sx),
+      Math.max(2, 4 * shadowScale * sy)
+    );
+  }
   if (ball.trail?.length > 1) {
     const drawTrailPath = () => {
       scene.ballTrail.beginPath();
@@ -1182,7 +1207,8 @@ function updateBallFlight(runtime, frame = null) {
 export function gamecast2FlyResolutionCue(timeline, progress) {
   const fielding = timeline?.meta?.fielding;
   const resolution = String(fielding?.resolution ?? "");
-  if (!["caught-fly", "safe-fly-drop"].includes(resolution)) return null;
+  const safeResolution = ["safe-fly-drop", "safe-line-trap", "safe-line-short-hop", "safe-ground-through"].includes(resolution);
+  if (resolution !== "caught-fly" && !safeResolution) return null;
   const startT = Number(fielding?.ballLandingT ?? fielding?.ballArrivalT ?? 1);
   const pickupT = Number(fielding?.fielderArrivalT ?? startT);
   const endT = resolution === "caught-fly"
@@ -1615,35 +1641,57 @@ function buildTimelineBallState(timeline, progress, event) {
 export function timelineBallPoint(cue, points, localT) {
   const route = (cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
   if (route.length === 0) return cue.at && points?.[cue.at] ? { ...points[cue.at] } : null;
-  const routeT = cue.flightProfile === "hang"
-    ? flyBallHangProgress(localT)
-    : clamp01(localT);
-  const point = route.length === 1 ? { ...route[0] } : pointAlongTimelineRoute(route, routeT);
+  const routeT = battedBallTravelProgress(cue.flightProfile, localT);
+  // Safe-hit routes use the middle anchor as a control point around the
+  // reacting infielder. Interpolating the three anchors as two straight lines
+  // created a visible mid-flight corner; a quadratic path keeps the same
+  // clearance while reading as one continuous slice/hop off the bat.
+  const point = route.length === 1
+    ? { ...route[0] }
+    : cue.routeCurve === "quadratic" && route.length === 3
+      ? quadraticPoint(route[0], route[1], route[2], routeT)
+      : pointAlongTimelineRoute(route, routeT);
+  const groundRoute = (cue.groundPath ?? cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
+  const groundPoint = groundRoute.length <= 1
+    ? { ...(groundRoute[0] ?? point) }
+    : !cue.groundPath && cue.routeCurve === "quadratic" && groundRoute.length === 3
+      ? quadraticPoint(groundRoute[0], groundRoute[1], groundRoute[2], routeT)
+    : pointAlongTimelineRoute(groundRoute, routeT);
+  const groundX = Number(groundPoint.x);
+  const groundY = Number(groundPoint.y);
+  let height = 0;
   if (cue.bounce === true && route.length >= 2) {
     const bounceCount = Math.max(1, Number(cue.bounces ?? 1));
     const bounceHeight = Math.abs(Math.sin(clamp01(localT) * Math.PI * bounceCount));
-    point.y -= bounceHeight * (1 - clamp01(localT) * 0.72) * 16;
+    const bouncePx = Math.max(1, Number(cue.bounceHeightPx ?? 16));
+    height += bounceHeight * (1 - clamp01(localT) * 0.72) * bouncePx;
   }
   const arc = Math.max(0, Number(cue.arc ?? 0));
   if (arc > 0 && route.length >= 2) {
-    point.y -= Math.sin(routeT * Math.PI) * Math.min(190, 8 + arc * 132);
+    height += Math.sin(clamp01(localT) * Math.PI) * Math.min(190, 8 + arc * 132);
   }
   const phase = String(cue.phase ?? "");
   if (["fielding-throw", "relay-throw"].includes(phase)) {
     // Timeline anchors are feet/base coordinates. Lift throws into the hand and
     // receiving-glove plane so a hard throw never appears to roll base-to-base.
-    point.y -= GAMECAST2_THROW_GLOVE_LIFT;
+    height += GAMECAST2_THROW_GLOVE_LIFT;
   } else if (phase === "steal-throw") {
     // `home` already sits above the catcher's feet; blend only the receiving
     // end upward instead of launching the ball above the catcher's head.
-    point.y -= GAMECAST2_THROW_GLOVE_LIFT * routeT;
+    height += GAMECAST2_THROW_GLOVE_LIFT * routeT;
   }
-  return point;
+  point.y -= height;
+  const visualHeight = Math.max(0, groundY - Number(point.y));
+  return { ...point, groundX, groundY, height: visualHeight, phase };
 }
 
-function flyBallHangProgress(progress) {
+function battedBallTravelProgress(profile, progress) {
   const t = clamp01(progress);
-  return clamp01(0.5 + 4 * Math.pow(t - 0.5, 3));
+  if (profile === "ground") return t * (1.1 - 0.1 * t);
+  if (profile === "line") return t * (1.025 - 0.025 * t);
+  // A fly ball's shadow keeps moving across the field at a continuous rate.
+  // Height, not horizontal position, supplies the hang-time read.
+  return t;
 }
 
 function exposeMotionDebug(runtime, frame = null) {
@@ -1712,6 +1760,18 @@ function exposeMotionDebug(runtime, frame = null) {
   );
   runtime.screen.dataset.gamecast2FieldingLane = String(
     play.timeline?.meta?.fielding?.fieldingLane ?? frame?.event?.fieldingLane ?? ""
+  );
+  runtime.screen.dataset.gamecast2SprayLane = String(
+    play.timeline?.meta?.fielding?.sprayLane ?? frame?.event?.sprayLane ?? ""
+  );
+  runtime.screen.dataset.gamecast2HitTrajectory = String(
+    play.timeline?.meta?.fielding?.hitTrajectory || frame?.event?.hitTrajectory || ""
+  );
+  runtime.screen.dataset.gamecast2AttemptedFielder = String(
+    play.timeline?.meta?.fielding?.attemptedFielder || frame?.event?.attemptedFieldingPosition || ""
+  );
+  runtime.screen.dataset.gamecast2LandingSeparation = String(
+    Number(play.timeline?.meta?.fielding?.landingSeparationPx ?? -1).toFixed(3)
   );
   runtime.screen.dataset.gamecast2FieldingReceiver = receiverKey;
   runtime.screen.dataset.gamecast2FieldingTarget = receiverTargetKey;
