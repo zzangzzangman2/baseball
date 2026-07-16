@@ -6,9 +6,9 @@ import {
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-trajectory-20260716-r23";
-import { compilePlayTimeline } from "./timeline.js?v=gamecast-trajectory-20260716-r23";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-trajectory-20260716-r23";
+} from "./assets.js?v=gamecast-wall-impact-20260716-r24";
+import { compilePlayTimeline } from "./timeline.js?v=gamecast-wall-impact-20260716-r24";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-wall-impact-20260716-r24";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -20,6 +20,8 @@ const PLAYER_ATLAS_NATIVE_DISPLAY_SIZE = 80;
 export const GAMECAST2_BALL_TEXTURE_SIZE = 20;
 export const GAMECAST2_BALL_MIN_RENDER_SCALE = 0.95;
 export const GAMECAST2_THROW_GLOVE_LIFT = 24;
+const BATTED_BALL_TRAIL_WINDOW_MS = 120;
+const THROW_BALL_TRAIL_WINDOW_MS = 84;
 const PLAYER_ATLAS_VISUAL_SCALE = 7 / 6;
 const PLAYER_SCALE_CENTER = 0.9;
 const PLAYER_SCALE_COMPRESSION = 0.25;
@@ -1007,7 +1009,17 @@ function timelineActorState(sample, timeline, progress, role) {
     // sacrifice bunt should present the bat, not finish with a full follow-through.
     pose = localT < 0.55 ? "load" : "swing";
     animationT = 0.18 + localT * 0.24;
-  } else if (animation === "swing") pose = localT < 0.22 ? "load" : localT < 0.75 ? "swing" : "follow";
+  } else if (animation === "swing") {
+    pose = localT < 0.22 ? "load" : localT < 0.75 ? "swing" : "follow";
+    // Hold the authored contact frames across the actual bat/ball meeting.
+    // Previously localT=.59 had already advanced into follow-through when the
+    // batted-ball cue and crack SFX began, which made contact feel detached.
+    animationT = localT < 0.52
+      ? localT / 0.52 * 0.43
+      : localT < 0.64
+        ? 0.43
+        : 0.43 + (localT - 0.64) / 0.36 * 0.57;
+  }
   else if (animation === "run" || animation === "walk") pose = Math.floor((progress + localT) * (animation === "walk" ? 12 : 22)) % 2 ? "run1" : "run2";
   else if (animation === "catcher") pose = "catch";
   else if (animation === "catch") pose = "catch";
@@ -1154,8 +1166,11 @@ function updateBallFlight(runtime, frame = null) {
   scene.ballTrail.clear();
   if (!ball) {
     scene.ballSprite.setVisible(false);
+    runtime.gamecast2BallState = null;
     runtime.screen.dataset.gamecast2BallRenderSize = "0";
     runtime.screen.dataset.gamecast2BallHeight = "0";
+    runtime.screen.dataset.gamecast2BallTrailSamples = "0";
+    runtime.screen.dataset.gamecast2BallPhase = "";
     return;
   }
   const sx = runtime.metrics.drawScaleX;
@@ -1166,11 +1181,19 @@ function updateBallFlight(runtime, frame = null) {
   );
   scene.ballSprite
     .setVisible(true)
-    .setPosition(ball.x * sx, ball.y * sy)
+    .setPosition(Math.round(ball.x * sx), Math.round(ball.y * sy))
     .setScale(scale)
     .setDepth(Math.round(ball.y * 10) + 12000);
   runtime.screen.dataset.gamecast2BallRenderSize = String(Math.round(scene.ballSprite.displayWidth));
   runtime.screen.dataset.gamecast2BallHeight = Number(ball.height ?? 0).toFixed(2);
+  runtime.screen.dataset.gamecast2BallTrailSamples = String(ball.trail?.length ?? 0);
+  runtime.screen.dataset.gamecast2BallPhase = String(ball.phase ?? "");
+  runtime.gamecast2BallState = {
+    phase: String(ball.phase ?? ""),
+    height: Number(ball.height ?? 0),
+    trailSamples: Number(ball.trail?.length ?? 0),
+    clearsWall: ball.clearsWall === true
+  };
   if (
     scene.shadowGraphics
     && Number.isFinite(Number(ball.groundX))
@@ -1189,18 +1212,36 @@ function updateBallFlight(runtime, frame = null) {
     );
   }
   if (ball.trail?.length > 1) {
+    const battedFlight = ["batted", "home-run-flight"].includes(String(ball.phase ?? ""));
+    const groundedSettle = ["safe-settle", "line-settle", "ground-settle"].includes(String(ball.phase ?? ""));
     const drawTrailPath = () => {
       scene.ballTrail.beginPath();
-      scene.ballTrail.moveTo(ball.trail[0].x * sx, ball.trail[0].y * sy);
-      for (const point of ball.trail.slice(1)) scene.ballTrail.lineTo(point.x * sx, point.y * sy);
+      scene.ballTrail.moveTo(Math.round(ball.trail[0].x * sx), Math.round(ball.trail[0].y * sy));
+      for (const point of ball.trail.slice(1)) {
+        scene.ballTrail.lineTo(Math.round(point.x * sx), Math.round(point.y * sy));
+      }
       scene.ballTrail.strokePath();
     };
-    scene.ballTrail.lineStyle(Math.max(3, Math.round(5 * Math.min(sx, sy))), 0x07120f, 0.64);
-    drawTrailPath();
-    scene.ballTrail.lineStyle(Math.max(2, Math.round(2.5 * Math.min(sx, sy))), 0xffffff, 0.94);
-    drawTrailPath();
-    scene.ballTrail.lineStyle(Math.max(1, Math.round(1.2 * Math.min(sx, sy))), 0xffe39a, 1);
-    drawTrailPath();
+    if (!groundedSettle) {
+      scene.ballTrail.lineStyle(Math.max(4, Math.round((battedFlight ? 7 : 5) * Math.min(sx, sy))), 0x07120f, battedFlight ? 0.82 : 0.64);
+      drawTrailPath();
+      scene.ballTrail.lineStyle(Math.max(2, Math.round((battedFlight ? 4 : 2.5) * Math.min(sx, sy))), battedFlight ? 0xff9d2e : 0xffffff, battedFlight ? 0.98 : 0.9);
+      drawTrailPath();
+      scene.ballTrail.lineStyle(Math.max(1, Math.round((battedFlight ? 1.7 : 1.2) * Math.min(sx, sy))), 0xffffff, 1);
+      drawTrailPath();
+    }
+    const afterimages = groundedSettle ? ball.trail.slice(-2, -1) : ball.trail.slice(0, -1);
+    afterimages.forEach((point, index) => {
+      const ratio = (index + 1) / Math.max(1, afterimages.length);
+      const x = Math.round(point.x * sx);
+      const y = Math.round(point.y * sy);
+      const outer = Math.max(3, Math.round((battedFlight ? 6 : 4) * Math.min(sx, sy)));
+      const core = Math.max(1, outer - 2);
+      scene.ballTrail.fillStyle(0x07120f, 0.34 + ratio * 0.42);
+      scene.ballTrail.fillRect(x - Math.floor(outer / 2), y - Math.floor(outer / 2), outer, outer);
+      scene.ballTrail.fillStyle(battedFlight ? 0xffc15a : 0xffffff, 0.38 + ratio * 0.48);
+      scene.ballTrail.fillRect(x - Math.floor(core / 2), y - Math.floor(core / 2), core, core);
+    });
   }
 }
 
@@ -1395,22 +1436,33 @@ function updatePixelEffects(runtime, frame = null, play = null) {
   const event = frame?.event;
   const night = String(runtime.field?.id ?? "").includes("night");
   if (!event || frame?.done || runtime.prefersReducedMotion) {
+    runtime.screen.dataset.gamecast2ContactImpact = "0";
     publishParticleState(runtime, { impact: 0, dust: 0, confetti: 0 }, night);
     return;
   }
 
   const progress = clamp01(Number(frame?.progress ?? 0));
   const anchors = runtime.anchors?.anchors ?? {};
-  const countScale = night ? 0.55 : 1;
-  const alphaScale = night ? 0.52 : 1;
+  const countScale = night ? 0.78 : 1;
+  const alphaScale = night ? 0.82 : 1;
   const counts = { impact: 0, dust: 0, confetti: 0 };
   const timeline = getCompiledPlayTimeline(runtime, event, anchors);
-  const contactT = Number(timeline?.tracks?.ball?.find((cue) => cue.phase === "batted")?.t ?? pitchEndForEvent(event));
+  const contactCue = timeline?.tracks?.ball?.find((cue) => ["batted", "home-run-flight"].includes(cue.phase));
+  const contactT = Number(contactCue?.t ?? pitchEndForEvent(event));
+  const contactElapsedMs = (progress - contactT) * Math.max(1, Number(timeline?.durationMs ?? frame?.playbackDurationMs ?? 1));
+  runtime.screen.dataset.gamecast2ContactImpact = "0";
 
-  if (isBattedBallOutcome(event.outcome) && progress >= contactT - 0.015 && progress <= contactT + 0.14) {
-    const contact = derivePlateActor(anchors, "batter") ?? anchors.home;
-    const t = clamp01((progress - (contactT - 0.015)) / 0.155);
-    const total = Math.max(5, Math.round(16 * countScale));
+  if (isBattedBallOutcome(event.outcome) && contactElapsedMs >= 0 && contactElapsedMs <= 130) {
+    const batter = derivePlateActor(anchors, "batter") ?? anchors.home ?? { x: 480, y: 617 };
+    const plate = anchors.home ?? batter;
+    const contact = {
+      x: lerp(Number(plate.x ?? 480), Number(batter.x ?? plate.x ?? 480), 0.46),
+      y: Number(plate.y ?? 617) - 30
+    };
+    const t = clamp01(contactElapsedMs / 130);
+    const total = Math.max(9, Math.round(24 * countScale));
+    drawContactImpact(graphics, runtime, contact, t, night);
+    runtime.screen.dataset.gamecast2ContactImpact = (1 - t).toFixed(3);
     for (let index = 0; index < total; index += 1) {
       const noise = eventNoise(event, 200 + index);
       const angle = index * 2.399963 + noise * 0.45;
@@ -1421,8 +1473,8 @@ function updatePixelEffects(runtime, frame = null, play = null) {
       drawPixelParticle(
         graphics,
         runtime,
-        Number(contact?.x ?? anchors.home?.x ?? 480) + Math.cos(angle) * radius,
-        Number(contact?.y ?? anchors.home?.y ?? 617) - 34 + Math.sin(angle) * radius * 0.72,
+        Number(contact.x) + Math.cos(angle) * radius,
+        Number(contact.y) + Math.sin(angle) * radius * 0.72,
         index % 4 === 0 ? 3 : 2,
         color,
         Math.max(0, 1 - t * 0.72) * alphaScale
@@ -1479,6 +1531,34 @@ function updatePixelEffects(runtime, frame = null, play = null) {
   }
 
   publishParticleState(runtime, counts, night);
+}
+
+function drawContactImpact(graphics, runtime, contact, progress, night) {
+  const sx = runtime.metrics.drawScaleX;
+  const sy = runtime.metrics.drawScaleY;
+  const minScale = Math.min(sx, sy);
+  const x = Math.round(Number(contact.x) * sx);
+  const y = Math.round(Number(contact.y) * sy);
+  const fade = Math.max(0, 1 - progress);
+  const radius = Math.max(7, Math.round((10 + progress * 24) * minScale));
+  graphics.fillStyle(0xfff4b8, fade * (night ? 0.16 : 0.24));
+  graphics.fillCircle(x, y, radius);
+  graphics.lineStyle(Math.max(3, Math.round(5 * minScale)), 0x07120f, fade * 0.92);
+  graphics.strokeCircle(x, y, radius);
+  graphics.lineStyle(Math.max(2, Math.round(3 * minScale)), 0xffb13b, fade);
+  graphics.strokeCircle(x, y, Math.max(4, radius - Math.max(2, Math.round(3 * minScale))));
+  for (let index = 0; index < 8; index += 1) {
+    const angle = index * Math.PI / 4;
+    const distance = radius + Math.round((5 + progress * 14) * minScale);
+    const size = Math.max(2, Math.round((index % 2 === 0 ? 4 : 3) * minScale));
+    graphics.fillStyle(index % 2 === 0 ? 0xffffff : 0xff9d2e, fade);
+    graphics.fillRect(
+      Math.round(x + Math.cos(angle) * distance - size / 2),
+      Math.round(y + Math.sin(angle) * distance - size / 2),
+      size,
+      size
+    );
+  }
 }
 
 function drawPixelParticle(graphics, runtime, x, y, size, color, alpha) {
@@ -1620,21 +1700,34 @@ function buildBallState(runtime, frame = null) {
   };
 }
 
-function buildTimelineBallState(timeline, progress, event) {
+export function buildTimelineBallState(timeline, progress, event) {
   const sample = activeTimelineCue(timeline.tracks.ball, progress);
   if (!sample) return null;
   const point = timelineBallPoint(sample.cue, timeline.points, sample.localT);
   if (!point) return null;
+  const phase = String(sample.cue.phase ?? "");
+  const battedFlight = ["batted", "home-run-flight"].includes(phase);
+  const groundedSettle = ["safe-settle", "line-settle", "ground-settle"].includes(phase);
+  const sampleCount = battedFlight ? 7 : groundedSettle ? 2 : 5;
+  const cueDurationMs = Math.max(
+    1,
+    (Number(sample.cue.endT ?? sample.cue.t ?? 0) - Number(sample.cue.t ?? 0)) * Number(timeline.durationMs ?? 1)
+  );
+  const trailWindowMs = battedFlight
+    ? BATTED_BALL_TRAIL_WINDOW_MS
+    : groundedSettle ? 28 : THROW_BALL_TRAIL_WINDOW_MS;
+  const trailStep = trailWindowMs / Math.max(1, sampleCount - 1) / cueDurationMs;
   const trail = [];
-  for (let index = 4; index >= 0; index -= 1) {
-    const localT = Math.max(0, sample.localT - index * 0.045);
+  for (let index = sampleCount - 1; index >= 0; index -= 1) {
+    const localT = Math.max(0, sample.localT - index * trailStep);
     const trailPoint = timelineBallPoint(sample.cue, timeline.points, localT);
     if (trailPoint) trail.push(trailPoint);
   }
   return {
     ...point,
-    scale: sample.cue.phase === "pitch" ? 1.08 : event?.outcome === "homeRun" ? 1.02 : 1,
-    trail
+    scale: phase === "pitch" ? 1.08 : event?.outcome === "homeRun" ? 1.22 : battedFlight ? 1.14 : 1,
+    trail,
+    clearsWall: sample.cue.clearsWall === true
   };
 }
 
@@ -1781,6 +1874,8 @@ function exposeMotionDebug(runtime, frame = null) {
   runtime.screen.dataset.gamecast2ThrowArc = Number(throwCue?.arc ?? 0).toFixed(3);
   runtime.screen.dataset.gamecast2ThrowFlightMs = String(Number(throwCue?.flightMs ?? 0));
   runtime.screen.dataset.gamecast2ThrowOrdering = String(throwCue?.ordering ?? "none");
+  runtime.screen.dataset.gamecast2ClearsWall = play.timeline?.meta?.wall?.clearsWall === true ? "1" : "0";
+  runtime.screen.dataset.gamecast2WallClearance = Number(play.timeline?.meta?.wall?.clearancePx ?? -1).toFixed(3);
   runtime.screen.__gamecast2Frame = {
     eventId: String(frame?.event?.id ?? ""),
     outcome: String(frame?.event?.outcome ?? ""),
@@ -1802,12 +1897,14 @@ function exposeMotionDebug(runtime, frame = null) {
         flightMs: Number(throwCue.flightMs ?? 0),
         ordering: String(throwCue.ordering ?? "neutral")
       } : null,
+      wall: play.timeline.meta?.wall ?? null,
       invariants: play.timeline.meta?.invariants ?? {}
     } : null,
     ratingTokens: runtime.gamecast2RatingTokens ?? [],
     actors: actorSnapshots,
     scoreboard: runtime.scoreboardState ?? null,
     camera: runtime.gamecast2CameraState ?? { zoom: 1, active: false },
+    ball: runtime.gamecast2BallState,
     particles: runtime.gamecast2ParticleState ?? { impact: 0, dust: 0, confetti: 0, total: 0, tonedDown: false }
   };
 }
@@ -2494,17 +2591,25 @@ function makeBallTexture(scene, key, palette = {}) {
   if (scene.textures.exists(key)) return;
   const graphics = scene.make.graphics({ x: 0, y: 0, add: false });
   const center = GAMECAST2_BALL_TEXTURE_SIZE / 2;
-  graphics.fillStyle(hexToColor(palette.ballGlow ?? "#fff8d7", "#fff8d7"), 0.52);
-  graphics.fillCircle(center, center, 9);
-  graphics.fillStyle(0x07120f, 0.96);
-  graphics.fillCircle(center, center, 5);
+  // Hard pixel silhouette: no translucent halo and no antialiased circles.
+  // The high-contrast outline stays readable over both grass and infield dirt.
+  graphics.fillStyle(0x07120f, 1);
+  graphics.fillRect(center - 3, center - 6, 6, 1);
+  graphics.fillRect(center - 5, center - 5, 10, 2);
+  graphics.fillRect(center - 6, center - 3, 12, 6);
+  graphics.fillRect(center - 5, center + 3, 10, 2);
+  graphics.fillRect(center - 3, center + 5, 6, 1);
   graphics.fillStyle(0xffffff, 1);
-  graphics.fillCircle(center, center, 4);
+  graphics.fillRect(center - 3, center - 5, 6, 1);
+  graphics.fillRect(center - 4, center - 4, 8, 2);
+  graphics.fillRect(center - 5, center - 2, 10, 4);
+  graphics.fillRect(center - 4, center + 2, 8, 2);
+  graphics.fillRect(center - 3, center + 4, 6, 1);
   graphics.fillStyle(hexToColor(palette.ballGlow ?? "#fff8d7", "#fff8d7"), 1);
-  graphics.fillCircle(center - 1, center - 1, 2);
+  graphics.fillRect(center - 3, center - 3, 3, 2);
   graphics.fillStyle(hexToColor(palette.ballSeam ?? "#d92f42", "#d92f42"), 1);
-  graphics.fillRect(center - 3, center - 1, 1, 3);
-  graphics.fillRect(center + 2, center - 1, 1, 3);
+  graphics.fillRect(center - 4, center - 1, 1, 3);
+  graphics.fillRect(center + 3, center - 2, 1, 3);
   graphics.generateTexture(key, GAMECAST2_BALL_TEXTURE_SIZE, GAMECAST2_BALL_TEXTURE_SIZE);
   graphics.destroy();
 }

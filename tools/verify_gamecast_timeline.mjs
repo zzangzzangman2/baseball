@@ -11,6 +11,7 @@ import {
   GAMECAST2_TIMELINE_TEMPLATES
 } from "../src/gamecast2/timeline.js";
 import {
+  buildTimelineBallState,
   buildTimelineVisualPlay,
   derivePlateActor,
   GAMECAST2_THROW_GLOVE_LIFT,
@@ -1992,6 +1993,92 @@ function verifyTrajectoryRealismRegressions() {
   }
   assert(closeInfieldAttempts >= 12, `Only ${closeInfieldAttempts} close infield-attempt lanes were exercised.`);
 
+  const wallMatrixLanes = [-0.82, -0.42, 0, 0.42, 0.82];
+  const wallMatrixHitTypes = [
+    { type: "groundBall", trajectory: "ground-through" },
+    { type: "lineDrive", trajectory: "line-gap" },
+    { type: "flyBall", trajectory: "fly-gap" }
+  ];
+  const wallMatrixOutcomes = [
+    {
+      outcome: "single",
+      basesAfter: [true, false, false],
+      baseRunnerIdsAfter: ["batter", "", ""],
+      defensiveThrowTarget: "first"
+    },
+    {
+      outcome: "double",
+      basesAfter: [false, true, false],
+      baseRunnerIdsAfter: ["", "batter", ""],
+      defensiveThrowTarget: "second"
+    },
+    {
+      outcome: "triple",
+      basesAfter: [false, false, true],
+      baseRunnerIdsAfter: ["", "", "batter"],
+      defensiveThrowTarget: "third"
+    }
+  ];
+
+  for (const result of wallMatrixOutcomes) {
+    for (const hit of wallMatrixHitTypes) {
+      for (const lane of wallMatrixLanes) {
+        const timeline = compilePlayTimeline({
+          ...BASE_EVENT,
+          sequence: sequence += 1,
+          ...result,
+          battedBallType: hit.type,
+          hitTrajectory: hit.trajectory,
+          sprayLane: lane,
+          fieldingLane: lane,
+          fieldingPosition: outfielderForSprayLane(lane)
+        }, { anchors: ANCHORS });
+        const label = `${result.outcome} ${hit.type} at wall-matrix lane ${lane}`;
+        const wallDistance = pointDistance(timeline.points.home, timeline.points.outfieldWall);
+
+        assert(Number.isFinite(wallDistance) && wallDistance > 0, `${label}: missing outfield-wall geometry.`);
+        for (const pointName of ["landing", "pickup"]) {
+          assert(timeline.points[pointName], `${label}: missing ${pointName} point.`);
+          const clearance = wallDistance - pointDistance(timeline.points.home, timeline.points[pointName]);
+          assert(
+            clearance >= 4 - 0.01,
+            `${label}: ${pointName} is only ${clearance.toFixed(2)}px inside the outfield wall.`
+          );
+        }
+        assert.equal(timeline.meta.wall?.clearsWall, false, `${label}: a safe hit is marked as clearing the wall.`);
+        assert.equal(
+          timeline.meta.invariants?.wallOutcomeMatches,
+          true,
+          `${label}: wall/outcome invariant does not match the safe-hit result.`
+        );
+      }
+    }
+  }
+
+  const homeRunTimelines = wallMatrixLanes.map((lane) => {
+    const timeline = compilePlayTimeline({
+      ...BASE_EVENT,
+      sequence: sequence += 1,
+      outcome: "homeRun",
+      battedBallType: "flyBall",
+      hitTrajectory: "home-run",
+      sprayLane: lane,
+      fieldingLane: lane,
+      runs: 1,
+      scoredRunners: [{ id: "batter" }]
+    }, { anchors: ANCHORS });
+    const label = `home run at wall-matrix lane ${lane}`;
+    const wallDistance = pointDistance(timeline.points.home, timeline.points.outfieldWall);
+    const exitDistance = pointDistance(timeline.points.home, timeline.points.homeRunExit);
+
+    assert(exitDistance > wallDistance + 0.01, `${label}: the flight does not finish beyond the outfield wall.`);
+    assert.equal(timeline.meta.wall?.clearsWall, true, `${label}: home-run metadata does not clear the wall.`);
+    assert.equal(timeline.meta.invariants?.wallOutcomeMatches, true, `${label}: wall/outcome invariant rejects the home run.`);
+    const flightCue = timeline.tracks.ball.find((cue) => cue.phase === "home-run-flight");
+    assert.equal(flightCue?.clearsWall, true, `${label}: the home-run flight cue is not marked clearsWall.`);
+    return timeline;
+  });
+
   for (const legacyLane of [null, ""]) {
     const laneLabel = legacyLane === null ? "null" : "empty";
     const legacyCases = [
@@ -2154,10 +2241,74 @@ function verifyTrajectoryRealismRegressions() {
   assert(flights.bloop.maxHeight >= flights.line.maxHeight + 25, "Bloop height is visually indistinguishable from a line drive.");
   assert(flights.gap.maxHeight >= flights.bloop.maxHeight + 15, "Gap-drop height is visually indistinguishable from a bloop.");
   assert(flights.caught.maxHeight >= flights.bloop.maxHeight + 15, "Caught-fly height is visually indistinguishable from a bloop.");
+
+  const regularTrailTimeline = compilePlayTimeline({
+    ...BASE_EVENT,
+    sequence: sequence += 1,
+    outcome: "double",
+    battedBallType: "lineDrive",
+    hitTrajectory: "line-gap",
+    sprayLane: 0.42,
+    fieldingLane: 0.42,
+    fieldingPosition: "RF",
+    defensiveThrowTarget: "second",
+    basesAfter: [false, true, false],
+    baseRunnerIdsAfter: ["", "batter", ""]
+  }, { anchors: ANCHORS });
+  verifyBattedFlightTrail("regular batted flight", regularTrailTimeline, {
+    outcome: "double",
+    phase: "batted",
+    minimumScale: 1.14
+  });
+  verifyBattedFlightTrail("home-run batted flight", homeRunTimelines[2], {
+    outcome: "homeRun",
+    phase: "home-run-flight",
+    minimumScale: 1.22
+  });
+
   assert.equal(
     excessivePickupHolds.length,
     0,
     `Extra-base pickup-to-release hold exceeds 450ms: ${excessivePickupHolds.join(", ")}`
+  );
+}
+
+function verifyBattedFlightTrail(label, timeline, { outcome, phase, minimumScale }) {
+  const cue = timeline.tracks.ball.find((entry) => entry.phase === phase);
+  assert(cue, `${label}: missing ${phase} cue.`);
+  const localT = 0.62;
+  const progress = Number(cue.t) + (Number(cue.endT) - Number(cue.t)) * localT;
+  const state = buildTimelineBallState(timeline, progress, { outcome });
+
+  assert(state, `${label}: buildTimelineBallState returned no visible ball.`);
+  assert.equal(state.trail?.length, 7, `${label}: batted flight must expose seven trail samples.`);
+  assert(Number(state.scale) >= minimumScale, `${label}: ball scale ${state.scale} is below ${minimumScale}.`);
+  assert.equal(state.clearsWall, phase === "home-run-flight", `${label}: clearsWall state disagrees with the flight phase.`);
+
+  const cueDurationMs = (Number(cue.endT) - Number(cue.t)) * Number(timeline.durationMs);
+  const firstTrailPoint = state.trail[0];
+  let firstTrailLocalT = 0;
+  let closestDistance = Number.POSITIVE_INFINITY;
+  // Recover the first sample's authored local time from its plan-view ground
+  // coordinates so the public state, rather than a private renderer constant,
+  // proves that the visible trail spans no more than 120ms.
+  for (let index = 0; index <= 12000; index += 1) {
+    const candidateT = localT * index / 12000;
+    const candidate = timelineBallPoint(cue, timeline.points, candidateT);
+    const distance = Math.hypot(
+      Number(candidate?.groundX ?? candidate?.x) - Number(firstTrailPoint?.groundX ?? firstTrailPoint?.x),
+      Number(candidate?.groundY ?? candidate?.y) - Number(firstTrailPoint?.groundY ?? firstTrailPoint?.y)
+    );
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      firstTrailLocalT = candidateT;
+    }
+  }
+  const trailWindowMs = (localT - firstTrailLocalT) * cueDurationMs;
+  assert(closestDistance <= 0.05, `${label}: could not map the first public trail sample back to the flight cue.`);
+  assert(
+    trailWindowMs <= 120.75,
+    `${label}: seven-sample trail spans ${trailWindowMs.toFixed(2)}ms, exceeding the 120ms cap.`
   );
 }
 

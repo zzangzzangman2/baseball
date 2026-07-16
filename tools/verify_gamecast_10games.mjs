@@ -16,6 +16,8 @@ const GOCHEOK_ANCHORS = JSON.parse(fs.readFileSync(
 
 const GAME_COUNT = 10;
 const MINIMUM_EVENT_COUNT = 600;
+const SAFE_WALL_MARGIN_PX = 4;
+const HOME_RUN_WALL_CLEARANCE_PX = 8;
 const DEFENSE_POSITIONS = new Set(["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]);
 const INFIELD_POSITIONS = new Set(["P", "C", "1B", "2B", "3B", "SS"]);
 const OUTFIELD_POSITIONS = new Set(["LF", "CF", "RF"]);
@@ -84,6 +86,11 @@ export function verifyGamecastTenGames() {
     groundThrough: 0,
     infieldChoppers: 0,
     lineThroughSingles: 0,
+    safeWallEvents: 0,
+    safeWallPoints: 0,
+    homeRunWallExits: 0,
+    minimumSafeWallMarginPx: Number.POSITIVE_INFINITY,
+    minimumHomeRunWallClearancePx: Number.POSITIVE_INFINITY,
     baseBackups: 0,
     behindBaseBackups: 0,
     groundZones: Object.fromEntries(Object.keys(GROUND_ZONE_PRIMARY).map((zone) => [zone, 0])),
@@ -113,6 +120,7 @@ export function verifyGamecastTenGames() {
         continue;
       }
 
+      auditOutfieldWallSemantics(label, event, timeline, coverage, problems);
       auditTimeline(label, event, timeline, coverage, problems);
     }
   }
@@ -128,6 +136,9 @@ export function verifyGamecastTenGames() {
     assert(coverage[key] > 0, `10-game audit did not cover ${key}.`);
   }
   for (const key of ["safeHits", "safeHitMisses", "safeHitGates", "safeHitReactionChecks", "groundThrough", "infieldChoppers", "lineThroughSingles"]) {
+    assert(coverage[key] > 0, `10-game audit did not cover ${key}.`);
+  }
+  for (const key of ["safeWallEvents", "safeWallPoints", "homeRunWallExits"]) {
     assert(coverage[key] > 0, `10-game audit did not cover ${key}.`);
   }
   assert(coverage.baseBackups > 0, "10-game audit did not exercise a base-backup route.");
@@ -245,6 +256,89 @@ function auditHitTrajectorySemantics(label, event, coverage, problems) {
     } else {
       problems.push(`${label}: ground single has unsupported hitTrajectory ${event.hitTrajectory || "missing"}.`);
     }
+  }
+}
+
+function auditOutfieldWallSemantics(label, event, timeline, coverage, problems) {
+  if (event.type !== "plateAppearance") return;
+  const outcome = canonicalOutcome(event);
+  const home = timeline.points?.home ?? GOCHEOK_ANCHORS.anchors?.home;
+
+  if (outcome === "homeRun") {
+    coverage.homeRunWallExits += 1;
+    const exit = timeline.points?.homeRunExit;
+    const boundary = wallBoundaryAlongRay(home, exit);
+    const outsideBy = boundary ? boundary.distance - pointDistance(home, exit) : Number.NaN;
+    if (Number.isFinite(outsideBy)) {
+      coverage.minimumHomeRunWallClearancePx = Math.min(
+        coverage.minimumHomeRunWallClearancePx,
+        -outsideBy
+      );
+    }
+    if (!boundary || !Number.isFinite(outsideBy) || outsideBy > -HOME_RUN_WALL_CLEARANCE_PX) {
+      problems.push(`${label}: home-run exit clears its spray-lane wall by only ${Number.isFinite(outsideBy) ? (-outsideBy).toFixed(2) : "NaN"}px (minimum ${HOME_RUN_WALL_CLEARANCE_PX}px).`);
+    }
+    const flight = timeline.tracks.ball.find((cue) => cue.phase === "home-run-flight");
+    if (flight?.clearsWall !== true || flight.path?.at(-1) !== "homeRunExit") {
+      problems.push(`${label}: home-run flight does not terminate at the authored wall-clearing exit.`);
+    }
+    return;
+  }
+
+  if (!["single", "double", "triple"].includes(outcome)) return;
+  coverage.safeWallEvents += 1;
+  const landing = timeline.points?.landing;
+  const pickup = timeline.points?.pickup;
+  const actualFielder = normalizePosition(timeline.meta?.fielding?.fielder ?? event.fieldingPosition);
+  const points = [["landing", landing]];
+  if (pickup) points.push(["pickup", pickup]);
+  if (OUTFIELD_POSITIONS.has(actualFielder) && !pickup) {
+    problems.push(`${label}: outfield safe hit has no pickup point to keep inside the wall.`);
+  }
+
+  for (const [name, point] of points) {
+    coverage.safeWallPoints += 1;
+    const boundary = wallBoundaryAlongRay(home, point);
+    const margin = boundary ? boundary.distance - pointDistance(home, point) : Number.NaN;
+    if (Number.isFinite(margin)) {
+      coverage.minimumSafeWallMarginPx = Math.min(coverage.minimumSafeWallMarginPx, margin);
+    }
+    if (!boundary || !Number.isFinite(margin) || margin < SAFE_WALL_MARGIN_PX) {
+      problems.push(`${label}: safe-hit ${name} has only ${Number.isFinite(margin) ? margin.toFixed(2) : "NaN"}px inside its spray-lane wall (minimum ${SAFE_WALL_MARGIN_PX}px).`);
+      continue;
+    }
+    auditSprayLaneBand(label, event, name, home, boundary, problems);
+  }
+
+  if (landing && pickup) {
+    const sameLaneDot = normalizedDot(pointVector(home, landing), pointVector(home, pickup));
+    if (!Number.isFinite(sameLaneDot) || sameLaneDot < 0.997) {
+      problems.push(`${label}: landing and pickup diverge across spray lanes (direction dot ${Number.isFinite(sameLaneDot) ? sameLaneDot.toFixed(4) : "NaN"}).`);
+    }
+  }
+}
+
+function auditSprayLaneBand(label, event, pointName, home, boundary, problems) {
+  const lane = Number(event.sprayLane);
+  if (!Number.isFinite(lane)) return;
+  const center = GOCHEOK_ANCHORS.anchors?.CF;
+  const pole = lane < 0
+    ? GOCHEOK_ANCHORS.anchors?.leftPole
+    : GOCHEOK_ANCHORS.anchors?.rightPole;
+  if (!center || !pole) return;
+
+  const lateral = Number(boundary.point.x) - Number(center.x);
+  if (Math.abs(lane) >= 0.08 && lateral * lane <= 0) {
+    problems.push(`${label}: ${pointName} reaches the opposite wall side for sprayLane ${lane}.`);
+    return;
+  }
+  const fullSideWidth = Math.max(0.001, Math.abs(Number(pole.x) - Number(center.x)));
+  const wallBand = Math.abs(lateral) / fullSideWidth;
+  if (Math.abs(lane) <= 0.2 && wallBand > 0.32) {
+    problems.push(`${label}: ${pointName} leaves the center-field band for sprayLane ${lane} (wall band ${wallBand.toFixed(3)}).`);
+  }
+  if (Math.abs(lane) >= 0.6 && wallBand < 0.25) {
+    problems.push(`${label}: ${pointName} collapses into center field for pull sprayLane ${lane} (wall band ${wallBand.toFixed(3)}).`);
   }
 }
 
@@ -824,6 +918,45 @@ function pointDistance(left, right) {
   return Math.hypot(Number(left.x) - Number(right.x), Number(left.y) - Number(right.y));
 }
 
+function wallBoundaryAlongRay(home, point) {
+  if (!isFinitePoint(home) || !isFinitePoint(point)) return null;
+  const ray = pointVector(home, point);
+  const rayLength = Math.hypot(ray.x, ray.y);
+  if (rayLength < 0.001) return null;
+  const direction = { x: ray.x / rayLength, y: ray.y / rayLength };
+  const center = GOCHEOK_ANCHORS.anchors?.CF;
+  const left = GOCHEOK_ANCHORS.anchors?.leftPole;
+  const right = GOCHEOK_ANCHORS.anchors?.rightPole;
+  if (![center, left, right].every(isFinitePoint)) return null;
+
+  const intersections = [
+    raySegmentIntersection(home, direction, left, center),
+    raySegmentIntersection(home, direction, center, right)
+  ].filter(Boolean).sort((a, b) => a.distance - b.distance);
+  return intersections[0] ?? null;
+}
+
+function raySegmentIntersection(origin, direction, start, end) {
+  const segment = pointVector(start, end);
+  const offset = pointVector(origin, start);
+  const denominator = cross2d(direction, segment);
+  if (!segment || !offset || Math.abs(denominator) < 0.000001) return null;
+  const distance = cross2d(offset, segment) / denominator;
+  const segmentT = cross2d(offset, direction) / denominator;
+  if (distance <= 0 || segmentT < -0.000001 || segmentT > 1.000001) return null;
+  return {
+    distance,
+    point: {
+      x: Number(origin.x) + direction.x * distance,
+      y: Number(origin.y) + direction.y * distance
+    }
+  };
+}
+
+function cross2d(left, right) {
+  return Number(left?.x) * Number(right?.y) - Number(left?.y) * Number(right?.x);
+}
+
 function pointVector(from, to) {
   if (!isFinitePoint(from) || !isFinitePoint(to)) return null;
   return {
@@ -864,6 +997,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
       + `line ${coverage.safeLineDives}/${coverage.safeLineShortHops} dive/short-hop, `
       + `safe trajectory ${coverage.safeHits} hits/${coverage.safeHitMisses} misses/${coverage.safeHitGates} gates/${coverage.safeHitReactionChecks} reactions, `
       + `ground ${coverage.groundThrough}/${coverage.infieldChoppers} through/chopper, line-through ${coverage.lineThroughSingles}, `
+      + `wall ${coverage.safeWallEvents} safe events/${coverage.safeWallPoints} points (min ${coverage.minimumSafeWallMarginPx.toFixed(1)}px inside), `
+      + `HR ${coverage.homeRunWallExits} exits (min ${coverage.minimumHomeRunWallClearancePx.toFixed(1)}px outside), `
       + `base backups ${coverage.baseBackups} (${coverage.behindBaseBackups} behind), `
       + `position violations ${coverage.positionViolations}, max moving defenders ${coverage.maximumConcurrentDefenders}.`
   );

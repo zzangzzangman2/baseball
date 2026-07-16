@@ -41,7 +41,7 @@ import {
   simulateSecondaryDraft,
   setSecondaryDraftProtection,
   runAutonomousOffseason
-} from "./engine.js?v=gamecast-trajectory-20260716-r23";
+} from "./engine.js?v=gamecast-wall-impact-20260716-r24";
 
 import {
   getContractSummary,
@@ -68,14 +68,14 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-trajectory-20260716-r23";
+} from "./gamecastPhaser.js?v=gamecast-wall-impact-20260716-r24";
 
 import {
   canUseGamecast2,
   getGamecast2PlayDurationMs,
   getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-trajectory-20260716-r23";
+} from "./gamecast2/index.js?v=gamecast-wall-impact-20260716-r24";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },

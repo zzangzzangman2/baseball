@@ -64,6 +64,9 @@ const OUTFIELD_LANDING_DELAY_MS = Object.freeze({
 });
 const SAFE_HIT_LANDING_CLEARANCE_PX = 42;
 const SAFE_HIT_MIN_APPROACH_PX = 24;
+const SAFE_HIT_MAX_OUTFIELD_DEPTH = 0.92;
+const SAFE_HIT_LANDING_WALL_MARGIN_PX = 18;
+const SAFE_HIT_PICKUP_WALL_MARGIN_PX = 10;
 const INFIELDERS = Object.freeze(["SS", "2B", "3B", "1B", "P", "C"]);
 const BATTED_BALL_INFIELDERS = Object.freeze(["SS", "2B", "3B", "1B", "P"]);
 const OUTFIELDERS = Object.freeze(["CF", "LF", "RF"]);
@@ -250,6 +253,7 @@ export function compilePlayTimeline(event, anchors) {
     points,
     tracks,
     fielding: null,
+    wall: null,
     suggestedResultT: 0.8,
     durationMs: resolvedPlayDurationMs(sourceEvent, outcome, template)
   };
@@ -355,6 +359,12 @@ function buildFieldedBall(context, spec) {
   const safeFlyHit = isSafeFlyBallHit(context);
   const safeLineHit = isSafeLineDriveHit(context);
   const safeGroundHit = isSafeGroundThroughHit(context, fielderKey);
+  if (isSafeHitOutcome(context.event) && OUTFIELDERS.includes(fielderKey)) {
+    context.points.outfieldWall = outfieldWallPoint(
+      context.points,
+      eventSprayLane(context.event, fielderKey)
+    );
+  }
   context.points.landing = fieldingLandingPoint(context.event, context.points, fielderKey);
   const recordedAttemptedFielderKey = authoredAttemptedFielderKey(context.event, context.points, fielderKey);
   const attemptedFielderKey = safeHitAttemptedFielderKey(context.event, context.points, fielderKey);
@@ -664,6 +674,26 @@ function buildFieldedBall(context, spec) {
     }));
   }
 
+  const safeWallClearancePx = context.points.outfieldWall
+    ? roundCoordinate(Math.min(
+        pointDistance(context.points.home, context.points.outfieldWall)
+          - pointDistance(context.points.home, context.points.landing),
+        context.points.pickup
+          ? pointDistance(context.points.home, context.points.outfieldWall)
+            - pointDistance(context.points.home, context.points.pickup)
+          : Number.POSITIVE_INFINITY
+      ))
+    : null;
+  if (context.points.outfieldWall) {
+    context.wall = {
+      wallPoint: "outfieldWall",
+      landingPoint: "landing",
+      pickupPoint: context.points.pickup ? "pickup" : null,
+      clearsWall: false,
+      clearancePx: safeWallClearancePx
+    };
+  }
+
   context.fielding = {
     fielder: fielderKey,
     fieldingZone: normalizedGroundBallZone(context.event),
@@ -685,6 +715,9 @@ function buildFieldedBall(context, spec) {
     landingSeparationPx: context.points.miss
       ? roundCoordinate(pointDistance(context.points.miss, context.points.landing))
       : null,
+    wallPoint: context.points.outfieldWall ? "outfieldWall" : null,
+    clearsWall: context.points.outfieldWall ? false : null,
+    wallClearancePx: safeWallClearancePx,
     resolution: caughtBattedOut
       ? "caught-fly"
       : safeFlyHit
@@ -916,8 +949,18 @@ function buildHomeRun(context) {
   // Keep the warning-track chase inside the authored outfielder movement zone.
   // A larger interpolation was clamped by the scene, so the timeline endpoint
   // and the position the viewer actually saw did not agree.
+  context.points.outfieldWall = wallPoint;
   context.points.wallTrack = interpolatePoint(context.points[fielderKey], wallPoint, 0.36);
   context.points.homeRunExit = extendFromPoint(context.points.home, wallPoint, 1.08);
+  context.wall = {
+    wallPoint: "outfieldWall",
+    exitPoint: "homeRunExit",
+    clearsWall: true,
+    clearancePx: roundCoordinate(
+      pointDistance(context.points.home, context.points.homeRunExit)
+        - pointDistance(context.points.home, context.points.outfieldWall)
+    )
+  };
 
   context.tracks.ball.push(cue(actionT(0.22), actionT(0.59), {
     path: ["home", "homeRunExit"],
@@ -1867,24 +1910,25 @@ function isSafeHitOutcome(event) {
 
 function safeOutfieldLandingPoint(event, points, fielderKey) {
   const lane = eventSprayLane(event, fielderKey);
-  const wall = outfieldWallPoint(points, lane);
+  const wall = points.outfieldWall ?? outfieldWallPoint(points, lane);
   const trajectory = normalizedToken(event?.hitTrajectory);
   const outcome = canonicalOutcome(event);
-  const depth = trajectory.includes("groundthrough")
+  const desiredDepth = trajectory.includes("groundthrough")
     ? 0.78
     : trajectory.includes("flybloop")
       ? 0.79
       : trajectory.includes("flygapdrop")
         ? 0.86
         : trajectory.includes("linegap") || trajectory.includes("flygap")
-          ? outcome === "triple" ? 0.96 : 0.91
+          ? outcome === "triple" ? 0.92 : 0.89
           : normalizedToken(event?.battedBallType).includes("line")
             ? 0.84
             : 0.82;
-  const landing = interpolatePoint(points.home, wall, depth);
-  return ensurePointClearance(
+  const landing = interpolatePoint(points.home, wall, Math.min(SAFE_HIT_MAX_OUTFIELD_DEPTH, desiredDepth));
+  return ensurePointClearanceInsideWall(
     landing,
     points[fielderKey],
+    points.home,
     wall,
     (outcome === "triple" ? 54 : outcome === "double" ? 48 : SAFE_HIT_LANDING_CLEARANCE_PX)
       + SAFE_HIT_MIN_APPROACH_PX
@@ -1930,24 +1974,38 @@ function outfieldWallPoint(points, lane) {
   return interpolatePoint(center, right, Math.min(0.72, lane));
 }
 
-function ensurePointClearance(point, fielder, wall, minimumDistance) {
-  const distanceToFielder = pointDistance(point, fielder);
-  if (distanceToFielder >= minimumDistance) return point;
-  let dx = Number(point?.x ?? 0) - Number(fielder?.x ?? 0);
-  let dy = Number(point?.y ?? 0) - Number(fielder?.y ?? 0);
-  let length = Math.hypot(dx, dy);
-  if (length < 0.001) {
-    dx = Number(wall?.x ?? point?.x ?? 0) - Number(fielder?.x ?? 0);
-    dy = Number(wall?.y ?? point?.y ?? 0) - Number(fielder?.y ?? 0);
-    length = Math.max(0.001, Math.hypot(dx, dy));
-  }
-  const scale = minimumDistance / length;
-  return {
-    ...point,
-    x: roundCoordinate(Number(fielder.x) + dx * scale),
-    y: roundCoordinate(Number(fielder.y) + dy * scale),
-    scale: roundCoordinate(Number(point?.scale ?? fielder?.scale ?? 1))
-  };
+function ensurePointClearanceInsideWall(point, fielder, home, wall, minimumDistance) {
+  const wallDistance = pointDistance(home, wall);
+  if (!Number.isFinite(wallDistance) || wallDistance < 0.001) return point;
+  const maximumRadius = Math.max(0, wallDistance - SAFE_HIT_LANDING_WALL_MARGIN_PX);
+  const desiredRadius = Math.min(maximumRadius, pointDistance(home, point));
+  let candidate = interpolatePoint(home, wall, desiredRadius / wallDistance);
+  if (!fielder || pointDistance(candidate, fielder) >= minimumDistance) return candidate;
+
+  const unitX = (Number(wall.x) - Number(home.x)) / wallDistance;
+  const unitY = (Number(wall.y) - Number(home.y)) / wallDistance;
+  const fielderX = Number(fielder.x) - Number(home.x);
+  const fielderY = Number(fielder.y) - Number(home.y);
+  const projection = fielderX * unitX + fielderY * unitY;
+  const lateralSquared = Math.max(0, fielderX * fielderX + fielderY * fielderY - projection * projection);
+  const requiredSquared = minimumDistance * minimumDistance;
+  if (lateralSquared >= requiredSquared) return candidate;
+
+  // Stay on the authored spray ray. The old correction pushed the landing
+  // directly away from the fielder and could therefore carry a single/triple
+  // through the fence. Pick the nearest point outside the fielder's reach that
+  // is still visibly inside the same wall segment.
+  const radialClearance = Math.sqrt(Math.max(0, requiredSquared - lateralSquared));
+  const possibleRadii = [
+    projection - radialClearance - 0.75,
+    projection + radialClearance + 0.75
+  ].filter((radius) => radius >= 0 && radius <= maximumRadius)
+    .sort((left, right) => Math.abs(left - desiredRadius) - Math.abs(right - desiredRadius));
+  const resolvedRadius = possibleRadii[0] ?? [0, maximumRadius]
+    .sort((left, right) => pointDistance(interpolatePoint(home, wall, right / wallDistance), fielder)
+      - pointDistance(interpolatePoint(home, wall, left / wallDistance), fielder))[0];
+  candidate = interpolatePoint(home, wall, resolvedRadius / wallDistance);
+  return candidate;
 }
 
 function safeHitInfieldGatePoint(event, points, fielderKey) {
@@ -1988,11 +2046,22 @@ function safeBallPickupPoint(event, points, fielderKey, landing, trajectory) {
   const dy = Number(landing?.y ?? 0) - Number(home?.y ?? 0);
   const length = Math.max(0.001, Math.hypot(dx, dy));
   const travel = trajectory === "ground" ? 18 : trajectory === "line" ? 12 : 8;
-  return {
+  const candidate = {
     ...landing,
     x: roundCoordinate(Number(landing.x) + dx / length * travel),
     y: roundCoordinate(Number(landing.y) + dy / length * travel)
   };
+  const wall = points.outfieldWall ?? outfieldWallPoint(points, eventSprayLane(event, fielderKey));
+  return clampPointInsideOutfieldWall(candidate, home, wall, SAFE_HIT_PICKUP_WALL_MARGIN_PX);
+}
+
+function clampPointInsideOutfieldWall(point, home, wall, marginPx) {
+  const wallDistance = pointDistance(home, wall);
+  const pointRadius = pointDistance(home, point);
+  if (!Number.isFinite(wallDistance) || wallDistance < 0.001 || !Number.isFinite(pointRadius)) return point;
+  const maximumRadius = Math.max(0, wallDistance - Math.max(0, Number(marginPx) || 0));
+  if (pointRadius <= maximumRadius) return point;
+  return interpolatePoint(home, wall, maximumRadius / wallDistance);
 }
 
 function safeBallFieldingStyle(context, fielderKey, landing, trajectory) {
@@ -2238,6 +2307,10 @@ function finalizeTimeline(context) {
   const allAnimationKeysValid = allAnimationKeys(context.tracks).every((key) => GAMECAST2_ATLAS_ANIMATION_KEYS.includes(key));
   const fieldingArrivalMatchesBall = !context.fielding
     || context.fielding.ballArrivalT === context.fielding.fielderArrivalT;
+  const wallOutcomeMatches = !context.wall
+    || (context.template === "homeRun"
+      ? context.wall.clearsWall === true && Number(context.wall.clearancePx) > 0
+      : context.wall.clearsWall === false && Number(context.wall.clearancePx) >= SAFE_HIT_PICKUP_WALL_MARGIN_PX - 0.5);
 
   return {
     version: 1,
@@ -2251,10 +2324,12 @@ function finalizeTimeline(context) {
       pitchFirst: context.tracks.pitcher[0]?.t === 0,
       runningEndT,
       fielding: context.fielding,
+      wall: context.wall,
       invariants: {
         animationContract: allAnimationKeysValid,
         fieldingArrivalMatchesBall,
-        resultAfterRunning: runningEndT === 0 || resultT > runningEndT
+        resultAfterRunning: runningEndT === 0 || resultT > runningEndT,
+        wallOutcomeMatches
       }
     }
   };
