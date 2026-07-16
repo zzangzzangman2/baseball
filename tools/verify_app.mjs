@@ -305,6 +305,7 @@ async function main() {
   await runCheck("경기 박스스코어/eventLog", checkGameBoxScoreEventLog);
   await runCheck("타구별 비정상 장타/진루 차단", checkBattedBallExtraBaseRules);
   await runCheck("게임캐스트 v3 모션 아틀라스", checkGamecastMotionAtlas);
+  await runCheck("Legacy Gamecast corner fielding/base cover", checkLegacyGamecastCornerCoverage);
   await runCheck("게임캐스트 v2 선언형 타임라인", verifyGamecastTimeline);
   await runCheck("하프이닝 경기 AI/작전", checkHalfInningGameAiTactics);
   await runCheck("로테이션/불펜 운용 snapshot", checkPitchingSnapshotUsage);
@@ -420,6 +421,8 @@ async function checkModuleImports() {
   assertExport(uiModule, "buildBallSprite", MODULE_PATHS.ui);
   assertExport(uiModule, "buildGamecastDefenseSprites", MODULE_PATHS.ui);
   assertExport(uiModule, "buildGamecastThrowLines", MODULE_PATHS.ui);
+  assertExport(uiModule, "resolveGamecastDefenderFieldingKey", MODULE_PATHS.ui);
+  assertExport(uiModule, "normalizeGamecastEvent", MODULE_PATHS.ui);
   assertExport(systemsModule, "getRosterSummary", MODULE_PATHS.systems);
   assertExport(systemsModule, "getContractSummary", MODULE_PATHS.systems);
   assertExport(systemsModule, "getScoutBoard", MODULE_PATHS.systems);
@@ -903,6 +906,112 @@ function checkNextUserGameFlow() {
   assert((focused?.plateAppearanceEvents ?? []).length >= 60, `포커스 경기 PA 이벤트 부족: ${focused?.plateAppearanceEvents?.length ?? 0}`, MODULE_PATHS.engine);
 
   return `프리시즌 차단 후 ${preview.date} ${preview.awayShortName}@${preview.homeShortName}, Gamecast PA ${focused.plateAppearanceEvents.length}개 포커스`;
+}
+
+function checkLegacyGamecastCornerCoverage() {
+  ensureImportsReady();
+  const normalizedCorner = uiModule.normalizeGamecastEvent({
+    id: "normalized-first-line-grounder",
+    type: "plateAppearance",
+    outcome: "out",
+    battedBallType: "groundBall",
+    fieldingPosition: "1B",
+    fieldingZone: "first-line",
+    fieldingLane: 0.91,
+    defensiveThrowTarget: "first",
+    offenseTeamId: "lg",
+    defenseTeamId: "doosan"
+  }, dataModule.createInitialState());
+  assert(
+    normalizedCorner.fieldingZone === "first-line" && normalizedCorner.fieldingLane === 0.91,
+    `Gamecast normalization dropped the ground-ball lane (${normalizedCorner.fieldingZone}/${normalizedCorner.fieldingLane})`,
+    MODULE_PATHS.ui
+  );
+  const misplacedCornerDefender = { SS: { id: "corner-defender" } };
+  assert(
+    uiModule.resolveGamecastDefenderFieldingKey("corner-defender", misplacedCornerDefender, "1B") === "1B",
+    "specific 1B play was overwritten by a stale SS assignment",
+    MODULE_PATHS.ui
+  );
+  assert(
+    uiModule.resolveGamecastDefenderFieldingKey("corner-defender", { "2B": { id: "corner-defender" } }, "3B") === "3B",
+    "specific 3B play was overwritten by a stale 2B assignment",
+    MODULE_PATHS.ui
+  );
+  assert(
+    uiModule.resolveGamecastDefenderFieldingKey("generic-defender", { "2B": { id: "generic-defender" } }, "IF") === "2B",
+    "generic IF event did not fall back to the defender's assigned slot",
+    MODULE_PATHS.ui
+  );
+
+  const palette = {
+    defender: "#58111a",
+    defenderL: "#f2e7db",
+    uniformSh: "#cbd5e1"
+  };
+  const groundEvent = (fieldingPosition, defensiveThrowTarget, id) => ({
+    id,
+    type: "plateAppearance",
+    outcome: "out",
+    battedBallType: "groundBall",
+    fieldingPosition,
+    defensiveThrowTarget,
+    doublePlay: false,
+    basesBefore: [false, false, false],
+    basesAfter: [false, false, false],
+    baseRunnerIdsBefore: ["", "", ""],
+    baseRunnerIdsAfter: ["", "", ""],
+    scoredRunners: [],
+    hitterId: `hitter-${id}`,
+    hitterName: "fixture hitter",
+    gamecastDurationMs: 3500
+  });
+  const fieldingFrame = 0.64;
+
+  for (const corner of ["1B", "3B"]) {
+    const sprites = uiModule.buildGamecastDefenseSprites(
+      groundEvent(corner, "first", `corner-first-${corner}`),
+      fieldingFrame,
+      palette
+    );
+    const keys = sprites.map((sprite) => sprite.fieldingKey);
+    assert(keys[0] === corner, `${corner} grounder assigned primary fielder ${keys[0]}`, MODULE_PATHS.ui);
+    assert(!keys.includes("SS") && !keys.includes("2B"), `${corner} grounder sent a middle infielder after the ball: ${keys.join("/")}`, MODULE_PATHS.ui);
+    if (corner === "3B") {
+      assert(keys.includes("1B"), "3B-to-first play has no 1B receiver", MODULE_PATHS.ui);
+    } else {
+      const pitcherCover = sprites.find((sprite) => sprite.fieldingKey === "P");
+      assert(pitcherCover, `1B-to-first play has no pitcher cover: ${keys.join("/")}`, MODULE_PATHS.ui);
+      const firstBase = { x: Math.round(400 * 87 / 120), y: Math.round(360 * 75 / 108) };
+      const pitcherDistanceToFirst = Math.hypot(
+        pitcherCover.position.x - firstBase.x,
+        pitcherCover.position.y - firstBase.y
+      );
+      assert(pitcherDistanceToFirst <= 18, `pitcher did not reach first-base cover (${pitcherDistanceToFirst.toFixed(1)}px)`, MODULE_PATHS.ui);
+      const firstBaseThrow = Array.from({ length: 31 }, (_, index) => 0.45 + index * 0.01)
+        .find((sampleProgress) => uiModule.buildGamecastThrowLines(
+          groundEvent("1B", "first", "first-to-pitcher-cover"),
+          sampleProgress
+        ).length === 1);
+      assert(Number.isFinite(firstBaseThrow), "1B-to-pitcher-cover throw never appears", MODULE_PATHS.ui);
+    }
+  }
+
+  const secondBasePlay = uiModule.buildGamecastDefenseSprites(
+    groundEvent("3B", "second", "third-to-second"),
+    fieldingFrame,
+    palette
+  );
+  const primary = secondBasePlay.find((sprite) => sprite.fieldingKey === "3B");
+  const receiver = secondBasePlay.find((sprite) => sprite.fieldingKey === "SS" || sprite.fieldingKey === "2B");
+  assert(primary && receiver, `3B-to-second play missing primary/receiver: ${secondBasePlay.map((sprite) => sprite.fieldingKey).join("/")}`, MODULE_PATHS.ui);
+  const secondBase = { x: 200, y: Math.round(360 * 53 / 108) };
+  const distanceToSecond = Math.hypot(receiver.position.x - secondBase.x, receiver.position.y - secondBase.y);
+  const distanceToBall = Math.hypot(receiver.position.x - primary.position.x, receiver.position.y - primary.position.y);
+  assert(distanceToSecond <= 18, `middle infielder chased the ground ball instead of covering second (${distanceToSecond.toFixed(1)}px)`, MODULE_PATHS.ui);
+  assert(distanceToBall >= 45, `middle infielder converged on the 3B ground-ball spot (${distanceToBall.toFixed(1)}px)`, MODULE_PATHS.ui);
+
+  return "specific 1B/3B slots preserved; P/1B/second-base receivers cover the throw target";
 }
 
 function checkGamecastTimelineEventIdentity() {

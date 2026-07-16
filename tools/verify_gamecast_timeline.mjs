@@ -49,9 +49,9 @@ const DEFENDER_MOVE_ZONES = Object.freeze({
   "2B": { x: 132, yTop: 80, yBottom: 80 },
   "3B": { x: 54, yTop: 42, yBottom: 45 },
   SS: { x: 184, yTop: 80, yBottom: 80 },
-  LF: { x: 96, yTop: 58, yBottom: 74 },
+  LF: { x: 96, yTop: 58, yBottom: 160 },
   CF: { x: 116, yTop: 62, yBottom: 84 },
-  RF: { x: 96, yTop: 58, yBottom: 74 }
+  RF: { x: 96, yTop: 58, yBottom: 160 }
 });
 
 const ANCHORS = deepFreeze({
@@ -121,6 +121,7 @@ export function verifyGamecastTimeline() {
   verifyDefensiveRotation(compiled);
   verifyFlyBallResolution();
   verifyBuntChoreography();
+  verifyGroundBallResponsibilityZones();
   verifyFielderPositionMatrix();
   verifyThrowTargetRegressionCases();
   verifyArmDrivenThrows();
@@ -194,6 +195,120 @@ function verifyBuntChoreography() {
     timeline.tracks.fielders.filter((cue) => cue.path?.length > 1).length <= 4,
     "Sacrifice bunt still sends too many defenders into motion."
   );
+}
+
+function verifyGroundBallResponsibilityZones() {
+  const cases = [
+    { zone: "third-line", lane: -0.9, position: "3B", rival: "SS" },
+    { zone: "third-corner", lane: -0.68, position: "3B", rival: "SS" },
+    { zone: "third-hole", lane: -0.38, position: "SS", rival: "3B" },
+    { zone: "shortstop-middle", lane: -0.08, position: "SS", rival: "2B" },
+    { zone: "second-middle", lane: 0.08, position: "2B", rival: "SS" },
+    { zone: "first-hole", lane: 0.38, position: "2B", rival: "1B" },
+    { zone: "first-corner", lane: 0.68, position: "1B", rival: "2B" },
+    { zone: "first-line", lane: 0.9, position: "1B", rival: "2B" }
+  ];
+
+  for (const item of cases) {
+    const event = {
+      ...BASE_EVENT,
+      id: `ground-zone-${item.zone}`,
+      outcome: "single",
+      battedBallType: "groundBall",
+      fieldingPosition: item.position,
+      fieldingZone: item.zone,
+      fieldingLane: item.lane,
+      basesAfter: [true, false, false],
+      baseRunnerIdsAfter: ["batter", "", ""]
+    };
+    const timeline = compilePlayTimeline(event, { anchors: ANCHORS });
+    const primary = timeline.meta.fielding?.fielder;
+    const landing = timeline.points.landing;
+    const approach = timeline.tracks.fielders.find((cue) => cue.who === item.position && cue.phase === "approach");
+
+    assert.equal(primary, item.position, `${item.zone}: wrong primary ground-ball fielder ${primary}.`);
+    assert.equal(timeline.meta.fielding?.fieldingZone, item.zone, `${item.zone}: timeline lost the authored fielding zone.`);
+    assert.equal(approach?.path?.at(-1), "landing", `${item.zone}: primary does not own the ground-ball landing point.`);
+    assert(
+      pointDistance(landing, ANCHORS[item.position]) < pointDistance(landing, ANCHORS[item.rival]),
+      `${item.zone}: landing point is closer to ${item.rival} than assigned ${item.position}.`
+    );
+    assert(
+      pointDistance(landing, ANCHORS[item.position]) <= 54.01,
+      `${item.zone}: primary leaves its realistic corner/middle range (${pointDistance(landing, ANCHORS[item.position]).toFixed(2)}px).`
+    );
+    const middleChaser = timeline.tracks.fielders.find((cue) => (
+      ["SS", "2B"].includes(cue.who)
+      && cue.who !== item.position
+      && cue.path?.at(-1) === "landing"
+    ));
+    assert(!middleChaser, `${item.zone}: non-primary ${middleChaser?.who} still chases the same ground ball.`);
+
+    if (Math.abs(item.lane) >= 0.58) {
+      assert(["1B", "3B"].includes(primary), `${item.zone}: a line/corner grounder was not owned by 1B/3B.`);
+    }
+  }
+
+  const firstBaseOut = compilePlayTimeline({
+    ...BASE_EVENT,
+    id: "ground-zone-first-backup",
+    outcome: "out",
+    battedBallType: "groundBall",
+    fieldingPosition: "1B",
+    fieldingZone: "first-line",
+    fieldingLane: 0.9,
+    outsAfter: 1
+  }, { anchors: ANCHORS });
+  const firstBackup = firstBaseOut.tracks.fielders.find((cue) => cue.assignment === "backup" && cue.supportTarget === "first");
+  assert.equal(firstBackup?.who, "RF", "First-base backup should be RF, not P/SS/2B.");
+  const pitcherCover = firstBaseOut.tracks.fielders.find((cue) => cue.who === "P" && cue.assignment === "receiver" && cue.path?.at(-1) === "first");
+  assert(pitcherCover, "Pitcher does not cover first when 1B fields the ground ball.");
+  const pitcherCoverDistance = pointDistance(ANCHORS.P, ANCHORS.first);
+  const pitcherCoverSeconds = (Number(pitcherCover.endT) - Number(pitcherCover.t)) * firstBaseOut.durationMs / 1000;
+  assert(
+    pitcherCoverDistance / pitcherCoverSeconds <= 250,
+    `Pitcher first-base coverage is too fast (${(pitcherCoverDistance / pitcherCoverSeconds).toFixed(1)}px/s).`
+  );
+
+  const safeFirstAttempt = compilePlayTimeline({
+    ...BASE_EVENT,
+    id: "ground-zone-first-safe-attempt",
+    outcome: "single",
+    battedBallType: "groundBall",
+    fieldingPosition: "1B",
+    fieldingZone: "first-corner",
+    fieldingLane: 0.68,
+    defensiveThrowTarget: "first",
+    basesBefore: [false, true, false],
+    baseRunnerIdsBefore: ["", "r2", ""],
+    basesAfter: [true, false, true],
+    baseRunnerIdsAfter: ["batter", "", "r2"]
+  }, { anchors: ANCHORS });
+  assert.equal(safeFirstAttempt.meta.fielding?.throwTarget, "first", "1B ground-ball single throws across the diamond instead of trying first.");
+  assert.equal(safeFirstAttempt.meta.fielding?.throwOrdering, "runner-safe-first", "1B ground-ball single throw beats a batter recorded safe.");
+
+  const thirdBaseThrow = compilePlayTimeline({
+    ...BASE_EVENT,
+    id: "ground-zone-third-backup",
+    outcome: "single",
+    battedBallType: "groundBall",
+    fieldingPosition: "2B",
+    fieldingZone: "first-hole",
+    fieldingLane: 0.38,
+    defensiveThrowTarget: "third",
+    basesBefore: [false, true, false],
+    baseRunnerIdsBefore: ["", "r2", ""],
+    basesAfter: [true, false, true],
+    baseRunnerIdsAfter: ["batter", "", "r2"]
+  }, { anchors: ANCHORS });
+  const thirdBackup = thirdBaseThrow.tracks.fielders.find((cue) => cue.assignment === "backup" && cue.supportTarget === "third");
+  assert.equal(thirdBackup?.who, "LF", "Third-base backup should be LF, not P/SS/2B.");
+  for (const timeline of [firstBaseOut, thirdBaseThrow]) {
+    assert(
+      !timeline.tracks.fielders.some((cue) => cue.assignment === "backup" && ["SS", "2B"].includes(cue.who)),
+      "A middle infielder is still used as a generic base backup."
+    );
+  }
 }
 
 function verifyFieldAnchorContract() {
@@ -880,7 +995,7 @@ function verifyDefensiveRotation(compiled) {
   assert(infieldSupportRoles.has("backup"), "내야 땅볼에 베이스/타구 백업 역할이 없습니다.");
   const firstBackup = infieldOut?.tracks.fielders.find((cue) => cue.assignment === "backup" && cue.supportTarget === "first");
   const firstBackupDestination = infieldOut?.points?.[firstBackup?.arrivesAt];
-  assert.equal(firstBackup?.who, "P", "1루 백업 가능 상황에서 투수가 아닌 먼 야수를 먼저 선택합니다.");
+  assert.equal(firstBackup?.who, "RF", "1루 백업은 투수/키스톤의 횡단 질주 대신 우익수가 맡아야 합니다.");
   assert(
     pointDistance(firstBackupDestination, infieldOut?.points?.first) <= 14.1,
     "투수의 1루 백업 동선이 베이스 근처까지 도달하지 않습니다."

@@ -6496,7 +6496,18 @@ function resolvePlateAppearance({ hitter, pitcher, defenseQuality, defenseContex
 
   const errorRate = fieldingErrorRate({ fielding, hitter, battedBallType });
   if (rollUnit(seed, side, "fielding-error", plateAppearance, hitter.id, fielding.defender?.id ?? fielding.position) < errorRate) {
-    return { type: "error", isAtBat: true, bases: 1, reachedOnError: true, battedBallType, fieldingPosition: fielding.position, defender: fielding.defender, ballpark: weather?.ballpark };
+    return {
+      type: "error",
+      isAtBat: true,
+      bases: 1,
+      reachedOnError: true,
+      battedBallType,
+      fieldingPosition: fielding.position,
+      fieldingZone: fielding.fieldingZone ?? "",
+      fieldingLane: fielding.fieldingLane ?? null,
+      defender: fielding.defender,
+      ballpark: weather?.ballpark
+    };
   }
 
   const doublePlay = shouldTurnDoublePlay({ bases, outs, hitter, pitcher, defenseContext, seed, plateAppearance, side, battedBallType });
@@ -6506,6 +6517,8 @@ function resolvePlateAppearance({ hitter, pitcher, defenseQuality, defenseContex
     bases: 0,
     battedBallType,
     fieldingPosition: fielding.position,
+    fieldingZone: fielding.fieldingZone ?? "",
+    fieldingLane: fielding.fieldingLane ?? null,
     defender: fielding.defender,
     doublePlay,
     ballpark: weather?.ballpark
@@ -6599,7 +6612,64 @@ function fieldingContextForBattedBall(defenseContext, battedBallType, seed, plat
     const group = rollUnit(seed, "line-drive-zone", plateAppearance, hitter?.id ?? "") < 0.42 ? "infield" : "outfield";
     return chooseFieldingTarget(defenseContext, group, seed, plateAppearance, hitter, group === "infield" ? "IF" : "OF");
   }
-  return chooseFieldingTarget(defenseContext, "infield", seed, plateAppearance, hitter, "IF");
+  return chooseGroundBallFieldingTarget(defenseContext, seed, plateAppearance, hitter);
+}
+
+const GROUND_BALL_POSITION_PREFERENCES = Object.freeze({
+  "3B": Object.freeze(["3B", "SS", "P", "2B", "1B"]),
+  SS: Object.freeze(["SS", "3B", "2B", "P", "1B"]),
+  "2B": Object.freeze(["2B", "1B", "SS", "P", "3B"]),
+  "1B": Object.freeze(["1B", "2B", "P", "SS", "3B"])
+});
+
+/**
+ * Resolve the physical lane before selecting a defender. Previously grounders
+ * picked one of the four infield entries uniformly, so a ball that visually
+ * belonged to a corner could be authored as a shortstop/second-base play.
+ * Negative lanes are on the third-base side; positive lanes are on the
+ * first-base side. The two hole zones deliberately belong to the middle
+ * infielders, while the line/corner zones belong exclusively to 3B/1B.
+ */
+export function groundBallFieldingAssignment({ seed = "", plateAppearance = 0, hitter = null } = {}) {
+  const rawLane = rollUnit(seed, "ground-ball-lane", plateAppearance, hitter?.id ?? hitter?.name ?? "") * 2 - 1;
+  const batterHand = normalizeBatterHand(hitter);
+  const pullBias = batterHand === "L" ? 0.1 : batterHand === "R" ? -0.1 : 0;
+  const lane = clamp(rawLane * 0.9 + pullBias, -1, 1);
+  const roundedLane = Math.round(lane * 1000) / 1000;
+
+  if (lane <= -0.78) return { zone: "third-line", position: "3B", lane: roundedLane };
+  if (lane <= -0.58) return { zone: "third-corner", position: "3B", lane: roundedLane };
+  if (lane <= -0.18) return { zone: "third-hole", position: "SS", lane: roundedLane };
+  if (lane < 0) return { zone: "shortstop-middle", position: "SS", lane: roundedLane };
+  if (lane < 0.18) return { zone: "second-middle", position: "2B", lane: roundedLane };
+  if (lane < 0.58) return { zone: "first-hole", position: "2B", lane: roundedLane };
+  if (lane < 0.78) return { zone: "first-corner", position: "1B", lane: roundedLane };
+  return { zone: "first-line", position: "1B", lane: roundedLane };
+}
+
+function chooseGroundBallFieldingTarget(defenseContext, seed, plateAppearance, hitter) {
+  const assignment = groundBallFieldingAssignment({ seed, plateAppearance, hitter });
+  const options = defenseContext?.infield ?? [];
+  const preferences = GROUND_BALL_POSITION_PREFERENCES[assignment.position] ?? [assignment.position];
+  const selected = preferences
+    .map((position) => options.find((entry) => String(entry?.position ?? "").toUpperCase() === position))
+    .find(Boolean);
+
+  if (!selected) {
+    return {
+      position: assignment.position,
+      defender: null,
+      quality: safeNumber(defenseContext?.infieldQuality, defenseContext?.overall),
+      fieldingZone: assignment.zone,
+      fieldingLane: assignment.lane
+    };
+  }
+
+  return {
+    ...selected,
+    fieldingZone: assignment.zone,
+    fieldingLane: assignment.lane
+  };
 }
 
 function chooseFieldingTarget(defenseContext, group, seed, plateAppearance, hitter, fallbackPosition) {
@@ -6778,6 +6848,8 @@ export function normalizeExtraBaseHitContext(context) {
     bases: requestedBases,
     battedBallType: resolvedBattedBallType,
     fieldingPosition: resolvedFielding?.position,
+    fieldingZone: resolvedFielding?.fieldingZone ?? "",
+    fieldingLane: resolvedFielding?.fieldingLane ?? null,
     defender: resolvedFielding?.defender
   };
 }
@@ -7229,6 +7301,12 @@ function addPlateAppearanceEvent(result, input) {
     outcome: input.outcome.type,
     battedBallType: input.outcome.battedBallType ?? "",
     fieldingPosition: input.outcome.fieldingPosition ?? "",
+    fieldingZone: input.outcome.fieldingZone ?? "",
+    fieldingLane: input.outcome.fieldingLane !== null
+      && input.outcome.fieldingLane !== ""
+      && Number.isFinite(Number(input.outcome.fieldingLane))
+      ? Number(input.outcome.fieldingLane)
+      : null,
     half,
     defenderId: input.outcome.defender?.id ?? "",
     defenderName: input.outcome.defender?.name ?? "",
@@ -7352,6 +7430,15 @@ export function resolveDefensiveThrowTarget(event) {
     if (battedBallType.includes("fly") || battedBallType.includes("line")) {
       return leadExistingRunnerThrowTarget(event);
     }
+    return "first";
+  }
+
+  // When the first baseman fields a ground-ball single, do not abandon the
+  // nearby batter-runner force to chase an existing runner across the diamond.
+  // The batter is already recorded safe, so Gamecast will order this throw just
+  // after the runner reaches first instead of fabricating an out.
+  const fieldingPosition = String(event?.fieldingPosition ?? "").trim().toUpperCase();
+  if (outcome === "single" && battedBallType.includes("ground") && fieldingPosition === "1B") {
     return "first";
   }
 
@@ -7625,9 +7712,15 @@ function buildDefenseContext(team, lineup = null) {
     };
   }
 
-  const catcher = topFielders(players, (player) => player.position === "C", "C", 1);
-  const infield = topFielders(players, (player) => ["IF", "1B", "2B", "3B", "SS"].includes(player.position), "IF", 4);
-  const outfield = topFielders(players, (player) => ["OF", "LF", "CF", "RF"].includes(player.position), "OF", 3);
+  // Select the defensive eight as one lineup. Independent group selection can
+  // reuse an emergency catcher as an infielder/outfielder, after which raw play
+  // events and Gamecast's position map disagree about who actually occupied a
+  // slot. A shared used-id set keeps every defensive position unique while the
+  // preferred-position pool still wins over emergency fallbacks.
+  const assignedDefenderIds = new Set();
+  const catcher = topFielders(players, (player) => player.position === "C", "C", 1, assignedDefenderIds);
+  const infield = topFielders(players, (player) => ["IF", "1B", "2B", "3B", "SS"].includes(player.position), "IF", 4, assignedDefenderIds);
+  const outfield = topFielders(players, (player) => ["OF", "LF", "CF", "RF"].includes(player.position), "OF", 3, assignedDefenderIds);
   const defenders = uniquePlayers([...catcher, ...infield, ...outfield].map((entry) => entry.defender).filter(Boolean));
   const infieldQuality = averageNumbers(...infield.map((entry) => entry.quality));
   const outfieldQuality = averageNumbers(...outfield.map((entry) => entry.quality));
@@ -7652,17 +7745,25 @@ function buildDefenseContext(team, lineup = null) {
   };
 }
 
-function topFielders(players, predicate, fallbackPosition, count) {
-  const pool = players.filter(predicate);
-  const candidates = pool.length ? pool : players;
-  const selected = [...candidates]
+function topFielders(players, predicate, fallbackPosition, count, usedIds = new Set()) {
+  const available = players.filter((player) => {
+    const id = String(player?.id ?? player?.name ?? "");
+    return id && !usedIds.has(id);
+  });
+  const preferred = available.filter(predicate);
+  const emergency = available.filter((player) => !predicate(player));
+  const ranked = (candidates) => [...candidates]
     .map((player) => ({
       position: normalizeDefensePosition(player, fallbackPosition),
       defender: player,
       quality: playerDefenseQuality(player, fallbackPosition)
     }))
-    .sort((a, b) => safeNumber(b.quality) - safeNumber(a.quality) || safeNumber(b.defender?.ovr) - safeNumber(a.defender?.ovr))
-    .slice(0, count);
+    .sort((a, b) => safeNumber(b.quality) - safeNumber(a.quality) || safeNumber(b.defender?.ovr) - safeNumber(a.defender?.ovr));
+  const selected = [...ranked(preferred), ...ranked(emergency)].slice(0, count);
+  for (const entry of selected) {
+    const id = String(entry?.defender?.id ?? entry?.defender?.name ?? "");
+    if (id) usedIds.add(id);
+  }
   return assignGenericDefenseSlots(selected, fallbackPosition);
 }
 

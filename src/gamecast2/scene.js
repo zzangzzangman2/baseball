@@ -6,9 +6,9 @@ import {
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-motion-ai-20260716-r16";
-import { compilePlayTimeline } from "./timeline.js?v=gamecast-motion-ai-20260716-r16";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-motion-ai-20260716-r16";
+} from "./assets.js?v=gamecast-ground-role-20260716-r22";
+import { compilePlayTimeline } from "./timeline.js?v=gamecast-ground-role-20260716-r22";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-ground-role-20260716-r22";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -60,9 +60,9 @@ const DEFENDER_MOVE_ZONES = {
   "2B": { x: 132, yTop: 80, yBottom: 80 },
   "3B": { x: 54, yTop: 42, yBottom: 45 },
   SS: { x: 184, yTop: 80, yBottom: 80 },
-  LF: { x: 96, yTop: 58, yBottom: 74 },
+  LF: { x: 96, yTop: 58, yBottom: 160 },
   CF: { x: 116, yTop: 62, yBottom: 84 },
-  RF: { x: 96, yTop: 58, yBottom: 74 }
+  RF: { x: 96, yTop: 58, yBottom: 160 }
 };
 const PLAYER_TEXTURE_KEYS = {
   defense: {
@@ -1706,6 +1706,13 @@ function exposeMotionDebug(runtime, frame = null) {
   runtime.screen.dataset.gamecast2BatterBases = String(Number(batterRunCue?.basesAdvanced ?? 0));
   runtime.screen.dataset.gamecast2EventId = String(frame?.event?.id ?? "");
   runtime.screen.dataset.gamecast2Progress = Number(frame?.progress ?? 0).toFixed(4);
+  runtime.screen.dataset.gamecast2FieldingPrimary = String(play.timeline?.meta?.fielding?.fielder ?? "");
+  runtime.screen.dataset.gamecast2FieldingZone = String(
+    play.timeline?.meta?.fielding?.fieldingZone || frame?.event?.fieldingZone || ""
+  );
+  runtime.screen.dataset.gamecast2FieldingLane = String(
+    play.timeline?.meta?.fielding?.fieldingLane ?? frame?.event?.fieldingLane ?? ""
+  );
   runtime.screen.dataset.gamecast2FieldingReceiver = receiverKey;
   runtime.screen.dataset.gamecast2FieldingTarget = receiverTargetKey;
   runtime.screen.dataset.gamecast2ReceiverDistance = receiverDistance < 0 ? "-1" : receiverDistance.toFixed(3);

@@ -4,7 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createInitialState } from "../src/data.js";
-import { simulateDay, simulateNextUserGame } from "../src/engine.js";
+import { groundBallFieldingAssignment, simulateDay, simulateNextUserGame } from "../src/engine.js";
 import { compilePlayTimeline } from "../src/gamecast2/timeline.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -19,6 +19,16 @@ const MINIMUM_EVENT_COUNT = 600;
 const DEFENSE_POSITIONS = new Set(["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]);
 const INFIELD_POSITIONS = new Set(["P", "C", "1B", "2B", "3B", "SS"]);
 const OUTFIELD_POSITIONS = new Set(["LF", "CF", "RF"]);
+const GROUND_ZONE_PRIMARY = Object.freeze({
+  "third-line": "3B",
+  "third-corner": "3B",
+  "third-hole": "SS",
+  "shortstop-middle": "SS",
+  "second-middle": "2B",
+  "first-hole": "2B",
+  "first-corner": "1B",
+  "first-line": "1B"
+});
 // Keep aligned with the endpoint guard in src/gamecast2/scene.js and the
 // authored-timeline matrix in tools/verify_gamecast_timeline.mjs.
 const DEFENDER_MOVE_ZONES = Object.freeze({
@@ -28,12 +38,13 @@ const DEFENDER_MOVE_ZONES = Object.freeze({
   "2B": { x: 132, yTop: 80, yBottom: 80 },
   "3B": { x: 54, yTop: 42, yBottom: 45 },
   SS: { x: 184, yTop: 80, yBottom: 80 },
-  LF: { x: 96, yTop: 58, yBottom: 74 },
+  LF: { x: 96, yTop: 58, yBottom: 160 },
   CF: { x: 116, yTop: 62, yBottom: 84 },
-  RF: { x: 96, yTop: 58, yBottom: 74 }
+  RF: { x: 96, yTop: 58, yBottom: 160 }
 });
 
 export function verifyGamecastTenGames() {
+  verifyGroundBallAssignmentFunction();
   const state = createInitialState();
   state.selectedTeamId = "kiwoom";
   advanceToRegularSeason(state);
@@ -65,6 +76,7 @@ export function verifyGamecastTenGames() {
     safeLineShortHops: 0,
     baseBackups: 0,
     behindBaseBackups: 0,
+    groundZones: Object.fromEntries(Object.keys(GROUND_ZONE_PRIMARY).map((zone) => [zone, 0])),
     fallback: 0,
     positionViolations: 0,
     maximumConcurrentDefenders: 0
@@ -74,12 +86,14 @@ export function verifyGamecastTenGames() {
   for (const game of games) {
     const events = Array.isArray(game.plateAppearanceEvents) ? game.plateAppearanceEvents : [];
     verifyMergedEventOrder(game, events, problems);
+    auditDefenseMap(game, problems);
     for (const event of events) {
       coverage.events += 1;
       if (event.type === "plateAppearance") coverage.plateAppearances += 1;
       if (event.type === "stolenBase") coverage.steals += 1;
 
       const label = `${game.id}/${event.id ?? `${event.half}:${event.inning}:${event.sequence}`}`;
+      auditDefenseSlot(label, game, event, problems);
       let timeline;
       try {
         timeline = compilePlayTimeline(event, GOCHEOK_ANCHORS);
@@ -104,6 +118,9 @@ export function verifyGamecastTenGames() {
   }
   assert(coverage.baseBackups > 0, "10-game audit did not exercise a base-backup route.");
   assert(coverage.behindBaseBackups > 0, "10-game audit did not exercise a behind-base backup route.");
+  for (const [zone, count] of Object.entries(coverage.groundZones)) {
+    assert(count > 0, `10-game audit did not cover ground-ball zone ${zone}.`);
+  }
   assert.deepEqual(
     problems,
     [],
@@ -120,6 +137,48 @@ function advanceToRegularSeason(state) {
   }
   assert.equal(state.phase, "regular", `Could not reach the regular season (phase=${state.phase}).`);
   assert.equal(state.gamesPlayed, 0, `Preseason advancement unexpectedly played ${state.gamesPlayed} games.`);
+}
+
+function verifyGroundBallAssignmentFunction() {
+  const covered = new Set();
+  for (let index = 0; index < 1024; index += 1) {
+    const assignment = groundBallFieldingAssignment({
+      seed: `ground-zone-seed-${index % 31}`,
+      plateAppearance: index,
+      hitter: { id: `ground-zone-hitter-${index}`, bats: index % 3 === 0 ? "L" : index % 3 === 1 ? "R" : "S" }
+    });
+    covered.add(assignment.zone);
+    assert.equal(
+      assignment.position,
+      GROUND_ZONE_PRIMARY[assignment.zone],
+      `${assignment.zone}/${assignment.lane}: engine assigned the wrong primary ${assignment.position}.`
+    );
+    if (Math.abs(Number(assignment.lane)) >= 0.58) {
+      assert(
+        ["1B", "3B"].includes(assignment.position),
+        `${assignment.zone}/${assignment.lane}: corner lane assigned to ${assignment.position}.`
+      );
+    }
+  }
+  assert.deepEqual(covered, new Set(Object.keys(GROUND_ZONE_PRIMARY)), "Ground-ball assignment helper did not exercise every responsibility zone.");
+}
+
+function auditDefenseMap(game, problems) {
+  for (const [teamId, defense] of Object.entries(game.gamecast?.defenseByTeamId ?? {})) {
+    const ids = Object.values(defense ?? {}).map(String).filter(Boolean);
+    if (new Set(ids).size !== ids.length) {
+      problems.push(`${game.id}/${teamId}: Gamecast defense map reuses a player in multiple positions.`);
+    }
+  }
+}
+
+function auditDefenseSlot(label, game, event, problems) {
+  const position = normalizePosition(event.fieldingPosition);
+  const defenderId = String(event.defenderId ?? "");
+  const mappedId = String(game.gamecast?.defenseByTeamId?.[event.defenseTeamId]?.[position] ?? "");
+  if (defenderId && mappedId && defenderId !== mappedId) {
+    problems.push(`${label}: raw ${position} defender ${defenderId} disagrees with Gamecast slot ${mappedId}.`);
+  }
 }
 
 function auditTimeline(label, event, timeline, coverage, problems) {
@@ -165,6 +224,7 @@ function auditTimeline(label, event, timeline, coverage, problems) {
   if (isFly && safeAir) auditSafeFlyBall(label, timeline, batted, coverage, problems);
   if (isLine && safeAir) auditSafeLineDrive(label, timeline, batted, coverage, problems);
   if (isGround && batted) auditGroundBall(label, batted, problems);
+  if (isGround) auditGroundBallResponsibility(label, event, timeline, coverage, problems);
   if (isBunt) auditSacrificeBunt(label, event, timeline, batted, problems);
 
   auditThrowTarget(label, event, timeline, problems);
@@ -322,6 +382,66 @@ function auditGroundBall(label, batted, problems) {
   if (batted.flightProfile === "hang") problems.push(`${label}: ground ball uses the hang flight profile.`);
 }
 
+function auditGroundBallResponsibility(label, event, timeline, coverage, problems) {
+  const zone = String(event.fieldingZone ?? "").trim().toLowerCase();
+  const expected = GROUND_ZONE_PRIMARY[zone];
+  const actual = normalizePosition(event.fieldingPosition);
+  if (!expected) {
+    problems.push(`${label}: ground ball has no valid fielding zone (${String(event.fieldingZone)}).`);
+    return;
+  }
+  coverage.groundZones[zone] += 1;
+  if (actual !== expected) problems.push(`${label}: ${zone} belongs to ${expected}, event assigned ${actual}.`);
+  if (timeline.meta?.fielding?.fielder !== expected) {
+    problems.push(`${label}: timeline primary ${timeline.meta?.fielding?.fielder}, expected ${expected} for ${zone}.`);
+  }
+  const lane = Number(event.fieldingLane);
+  if (!Number.isFinite(lane) || lane < -1 || lane > 1) {
+    problems.push(`${label}: invalid ground-ball lane ${String(event.fieldingLane)}.`);
+  } else if (Math.abs(lane) >= 0.58 && !["1B", "3B"].includes(actual)) {
+    problems.push(`${label}: corner lane ${lane} assigned to ${actual}.`);
+  }
+  const landing = timeline.points?.landing;
+  const origin = timeline.points?.[expected];
+  const routeDistance = pointDistance(landing, origin);
+  if (!Number.isFinite(routeDistance) || routeDistance > 54.01) {
+    problems.push(`${label}: ${expected} leaves its responsibility zone by ${routeDistance.toFixed(2)}px.`);
+  }
+
+  if (!event.defensiveThrowTarget) {
+    const middleChaser = timeline.tracks.fielders.find((cue) => (
+      ["SS", "2B"].includes(cue.who)
+      && cue.who !== expected
+      && cue.path?.at(-1) === "landing"
+    ));
+    if (middleChaser) problems.push(`${label}: non-primary ${middleChaser.who} chases a no-throw ground ball.`);
+  }
+
+  if (canonicalOutcome(event) === "single" && actual === "1B") {
+    if (event.defensiveThrowTarget !== "first") {
+      problems.push(`${label}: 1B ground-ball single throws to ${String(event.defensiveThrowTarget)} instead of first.`);
+    }
+    if (timeline.meta?.fielding?.throwOrdering !== "runner-safe-first") {
+      problems.push(`${label}: 1B ground-ball single does not preserve batter-safe ordering (${String(timeline.meta?.fielding?.throwOrdering)}).`);
+    }
+  }
+
+  for (const cue of timeline.tracks.fielders.filter((entry) => entry.assignment === "backup")) {
+    if (["SS", "2B"].includes(cue.who)) {
+      problems.push(`${label}: middle infielder ${cue.who} is used as a generic base backup.`);
+    }
+    if (cue.supportTarget === "first" && cue.who !== "RF") {
+      problems.push(`${label}: first-base backup is ${cue.who}, expected RF.`);
+    }
+    if (cue.supportTarget === "third" && cue.who !== "LF") {
+      problems.push(`${label}: third-base backup is ${cue.who}, expected LF.`);
+    }
+    if (["first", "third"].includes(cue.supportTarget) && cue.who === "P") {
+      problems.push(`${label}: pitcher is used as a long-distance ${cue.supportTarget}-base backup.`);
+    }
+  }
+}
+
 function auditThrowTarget(label, event, timeline, problems) {
   const expected = event.defensiveThrowTarget ?? null;
   const actual = timeline.meta?.fielding?.throwTarget ?? null;
@@ -344,6 +464,15 @@ function auditReceiverArrivals(label, timeline, problems) {
     ));
     if (receiverRoutes.length === 0) {
       problems.push(`${label}: no receiver reaches ${target} before ${ball.phase} arrives at ${ball.endT}.`);
+    }
+    for (const receiver of receiverRoutes.filter((cue) => cue.who === "P" && target === "first")) {
+      const start = timeline.points?.[receiver.path?.[0]];
+      const destination = timeline.points?.[receiver.path?.at(-1)];
+      const seconds = (Number(receiver.endT) - Number(receiver.t)) * Number(timeline.durationMs) / 1000;
+      const speed = pointDistance(start, destination) / seconds;
+      if (!Number.isFinite(speed) || speed > 250.01) {
+        problems.push(`${label}: pitcher covers first at ${speed.toFixed(1)}px/s (limit 250).`);
+      }
     }
   }
 }

@@ -41,7 +41,7 @@ import {
   simulateSecondaryDraft,
   setSecondaryDraftProtection,
   runAutonomousOffseason
-} from "./engine.js";
+} from "./engine.js?v=gamecast-ground-role-20260716-r22";
 
 import {
   getContractSummary,
@@ -68,14 +68,14 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-motion-ai-20260716-r16";
+} from "./gamecastPhaser.js?v=gamecast-ground-role-20260716-r22";
 
 import {
   canUseGamecast2,
   getGamecast2PlayDurationMs,
   getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-motion-ai-20260716-r16";
+} from "./gamecast2/index.js?v=gamecast-ground-role-20260716-r22";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },
@@ -5882,7 +5882,7 @@ export function sortGamecastEvents(events) {
   );
 }
 
-function normalizeGamecastEvent(event, state, gamecastContext = null) {
+export function normalizeGamecastEvent(event, state, gamecastContext = null) {
   const side = event?.side === "home" ? "home" : "away";
   const runs = Number(event?.runs ?? 0);
   const outsBefore = Number(event?.outsBefore ?? 0);
@@ -5956,6 +5956,10 @@ function normalizeGamecastEvent(event, state, gamecastContext = null) {
     battedBallType: String(event?.battedBallType ?? ""),
     fieldingPosition,
     recordedFieldingPosition: String(event?.fieldingPosition ?? ""),
+    fieldingZone: String(event?.fieldingZone ?? ""),
+    fieldingLane: event?.fieldingLane === null || event?.fieldingLane === ""
+      ? null
+      : Number.isFinite(Number(event?.fieldingLane)) ? Number(event.fieldingLane) : null,
     defensiveThrowTarget,
     doublePlay: Boolean(event?.doublePlay),
     reachedOnError: Boolean(event?.reachedOnError),
@@ -6031,13 +6035,24 @@ function resolveGamecastDefenseProfiles(context, team, state) {
   return result;
 }
 
-function resolveGamecastDefenderFieldingKey(defenderId, profilesByPosition, recordedPosition) {
+export function resolveGamecastDefenderFieldingKey(defenderId, profilesByPosition, recordedPosition) {
+  const rawRecorded = String(recordedPosition ?? "").trim().toUpperCase();
+  const recorded = normalizeFieldingPosition(recordedPosition);
+  const genericRecorded = ["IF", "OF", "내야수", "외야수"].includes(rawRecorded);
+  const specificRecorded = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"].includes(recorded);
+
+  // A play-by-play position describes the lane that was actually fielded.
+  // The defense snapshot is only a fallback for old/generic events: a player
+  // may appear under a different slot after substitutions or roster fallback
+  // construction, and allowing that snapshot to win moves the wrong fielder.
+  if (specificRecorded && !genericRecorded) return recorded;
+
   const id = String(defenderId ?? "");
   if (id) {
     const assigned = Object.entries(profilesByPosition ?? {}).find(([, profile]) => String(profile?.id ?? "") === id);
     if (assigned?.[0]) return normalizeFieldingPosition(assigned[0]);
   }
-  return normalizeFieldingPosition(recordedPosition);
+  return recorded;
 }
 
 function resolveGamecastBaseRunnerProfiles(ids, context, state, offenseTeam) {
@@ -9801,14 +9816,22 @@ export function buildGamecastDefenseSprites(event, progress, palette) {
   const target = isHomeRun ? gamecastHomeRunFielderSpot(event, ballTarget, fieldingKey) : ballTarget;
   const routeEnd = isHomeRun ? Math.min(catchProgress, gamecastBallFlightEnd(event) - 0.03) : catchProgress;
   const fieldT = Math.max(0, Math.min(1, (progress - runStart) / Math.max(0.01, routeEnd - runStart)));
+  const canonicalThrowTarget = gamecastCanonicalThrowTargetKey(event);
+  const hasThrow = canonicalThrowTarget === undefined ? !isHomeRun : Boolean(canonicalThrowTarget);
+  const pitcherCoversFirst = fieldingKey === "1B"
+    && event.outcome === "out"
+    && !event.doublePlay
+    && (canonicalThrowTarget === "first" || canonicalThrowTarget === undefined);
+  const directFirstBaseOut = fieldingKey === "1B"
+    && event.outcome === "out"
+    && !event.doublePlay
+    && !pitcherCoversFirst
+    && !hasThrow;
   let position = gamecastClampFielderPosition(fieldingKey, gamecastFielderRoutePoint(start, target, fieldT, fieldingKey, event), event);
-  if (fieldingKey === "1B" && progress > catchProgress) {
+  if (directFirstBaseOut && progress > catchProgress) {
     position = gamecastFirstBasemanCoverPosition(event, progress);
   }
   const hardPlay = !isHomeRun && gamecastDifficultFieldingPlay(event, fieldingKey, target, start);
-  const directFirstBaseOut = fieldingKey === "1B" && event.outcome === "out" && !event.doublePlay;
-  const canonicalThrowTarget = gamecastCanonicalThrowTargetKey(event);
-  const hasThrow = canonicalThrowTarget === undefined ? !isHomeRun : Boolean(canonicalThrowTarget);
   const throwing = hasThrow && !directFirstBaseOut && progress >= gamecastThrowStartProgress(event) && progress <= gamecastThrowEndProgress(event) && !isHomeRun;
   const impactPose = isHomeRun
     ? progress < routeEnd - 0.02 ? "run" : "watch"
@@ -9852,13 +9875,9 @@ export function buildGamecastDefenseSprites(event, progress, palette) {
 
   if (event.doublePlay) {
     sprites.push(...buildGamecastDoublePlaySprites(event, progress, palette, catchProgress));
-  } else if (hasThrow && fieldingKey !== "1B" && ["out", "single", "double", "error"].includes(event.outcome) && progress >= catchProgress + 0.04 && progress <= resultReveal) {
-    const firstBase = gamecastBasePositions().first;
-    const stretchT = Math.max(0, Math.min(1, (progress - catchProgress - 0.04) / 0.22));
-    sprites.push(gamecastSupportFielderSprite(event, palette, "1B", {
-      x: Math.round(lerp(gamecastX(83), firstBase.x - gamecastSize(5), easeOutCubic(stretchT))),
-      y: Math.round(lerp(gamecastY(70), firstBase.y - gamecastSize(2), easeOutCubic(stretchT)))
-    }, progress > catchProgress + 0.18 ? "catch" : "field", 1));
+  } else if (hasThrow && ["out", "single", "double", "triple", "error"].includes(event.outcome) && progress >= runStart && progress <= resultReveal) {
+    const receiver = buildGamecastLegacyThrowReceiverSprite(event, progress, palette, fieldingKey, runStart, catchProgress);
+    if (receiver) sprites.push(receiver);
   }
 
   return sprites;
@@ -9986,6 +10005,49 @@ function gamecastSupportFielderSprite(event, palette, key, position, pose = "fie
   };
 }
 
+function buildGamecastLegacyThrowReceiverSprite(event, progress, palette, fieldingKey, runStart, catchProgress) {
+  const canonicalTarget = gamecastCanonicalThrowTargetKey(event);
+  if (canonicalTarget === null) return null;
+  const targetBase = canonicalTarget ?? (event?.outcome === "out"
+    ? "first"
+    : event?.outcome === "triple"
+      ? "third"
+      : event?.outcome === "double"
+        ? "second"
+        : "home");
+  const receiverKey = gamecastLegacyThrowReceiverKey(event, fieldingKey, targetBase);
+  if (!receiverKey || receiverKey === fieldingKey) return null;
+
+  const bases = gamecastBasePositions();
+  const base = bases[targetBase];
+  const start = gamecastDefensiveAlignment().find((fielder) => fielder.key === receiverKey)?.position;
+  if (!base || !start) return null;
+  const side = receiverKey === "SS" || receiverKey === "3B" || receiverKey === "P" ? -1 : 1;
+  const target = {
+    x: base.x + gamecastSize(targetBase === "home" ? 0 : side * 3),
+    y: base.y - gamecastSize(targetBase === "home" ? 4 : 1)
+  };
+  const coverStart = Math.min(catchProgress - 0.04, runStart + 0.03);
+  const coverEnd = Math.max(coverStart + 0.12, gamecastThrowStartProgress(event) - 0.025);
+  const coverT = easeOutCubic(Math.max(0, Math.min(1, (progress - coverStart) / Math.max(0.01, coverEnd - coverStart))));
+  const position = {
+    x: Math.round(lerp(start.x, target.x, coverT)),
+    y: Math.round(lerp(start.y, target.y, coverT))
+  };
+  const pose = progress < coverEnd - 0.025 ? "run" : progress <= gamecastThrowEndProgress(event) + 0.06 ? "catch" : "field";
+  return gamecastSupportFielderSprite(event, palette, receiverKey, position, pose, Math.floor(coverT * 8) % 4);
+}
+
+function gamecastLegacyThrowReceiverKey(event, fieldingKey, targetBase) {
+  if (targetBase === "first") return fieldingKey === "1B" ? "P" : "1B";
+  if (targetBase === "third") return "3B";
+  if (targetBase === "home") return "C";
+  if (targetBase !== "second") return null;
+  if (fieldingKey === "SS") return "2B";
+  if (fieldingKey === "2B") return "SS";
+  return gamecastEventNoise(event, 91) >= 0 ? "SS" : "2B";
+}
+
 function buildGamecastStealDefenseSprites(event, progress, palette) {
   const timing = gamecastStealThrowTiming(event);
   const bases = gamecastBasePositions();
@@ -10085,10 +10147,7 @@ export function buildGamecastThrowLines(event, progress) {
   const target = battedBallGroundPoint(event, 1);
   const bases = gamecastBasePositions();
   const fieldingKey = gamecastFieldingKeyForTarget(event, target);
-  if (fieldingKey === "1B" && event.outcome === "out" && !event.doublePlay) return [];
-  const from = fieldingKey === "1B"
-    ? gamecastFirstBasemanCoverPosition(event, startProgress)
-    : target;
+  const from = target;
   const rawT = Math.max(0, Math.min(1, (progress - startProgress) / Math.max(0.01, endProgress - startProgress)));
   if (event.doublePlay) {
     const split = 0.48;

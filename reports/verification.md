@@ -1,10 +1,10 @@
 # 검증 보고서
 
-- 실행 시각: 2026-07-16T03:08:24.302Z
+- 실행 시각: 2026-07-16T04:45:34.585Z
 - 작업 폴더: C:\Users\godho\Downloads\baseball
 - 실행 Node: C:\Program Files\nodejs\node.exe (v24.18.0)
 - 검증 범위: src ESM 앱 모듈 및 생성 상태
-- 종합 결과: 통과 (42/42 통과)
+- 종합 결과: 통과 (43/43 통과)
 
 ## 체크 결과
 
@@ -25,31 +25,32 @@
 | 개막 라인업 active 로스터 검증 | PASS | LG 타선 9명/투수 12명, 두산 타선 9명/투수 12명, KIA 타선 9명/투수 12명, 삼성 타선 9명/투수 12명, 롯데 타선 9명/투수 12명, 한화 타선 9명/투수 12명, SSG 타선 9명/투수 12명, KT 타선 9명/투수 12명, NC 타선 9명/투수 12명, 키움 타선 9명/투수 12명 모두 active 로스터, 수동 라인업 우선 적용 | - |
 | simulateDay 실행 및 하루 5경기 | PASS | 2026-03-29로 진행, 누적 5경기, 최근 경기 5건 | - |
 | 다음 경기 보기/시뮬레이션 플로우 | PASS | 프리시즌 차단 후 2026-03-28 KT@LG, Gamecast PA 76개 포커스 | - |
-| 선수 누적 기록 모델 | PASS | 타자 90명/투수 28명 기록, 득점 35, PA 387, 투수아웃 265 | - |
-| 경기 박스스코어/eventLog | PASS | game.final 5개, 박스스코어 5경기, PA 이벤트 387개, 정상 외야 장타 19개, 실책 0, 병살 4 | - |
-| 타구별 비정상 장타/진루 차단 | PASS | 100 games/8054 PA audited; empty-base OF singles {"LF":92,"CF":108,"RF":78,"OF":0}; throw/base matrix passed | - |
+| 선수 누적 기록 모델 | PASS | 타자 90명/투수 29명 기록, 득점 35, PA 391, 투수아웃 265 | - |
+| 경기 박스스코어/eventLog | PASS | game.final 5개, 박스스코어 5경기, PA 이벤트 391개, 정상 외야 장타 19개, 실책 1, 병살 3 | - |
+| 타구별 비정상 장타/진루 차단 | PASS | 100 games/8113 PA audited; empty-base OF singles {"LF":97,"CF":104,"RF":106,"OF":0}; throw/base matrix passed | - |
 | 게임캐스트 v3 모션 아틀라스 | PASS | layout v3, 고유 모션 프레임 110개, pitch 24, swing 24, throw 12 | - |
+| Legacy Gamecast corner fielding/base cover | PASS | specific 1B/3B slots preserved; P/1B/second-base receivers cover the throw target | - |
 | 게임캐스트 v2 선언형 타임라인 | PASS | 12개 플레이, 108개 수비 조합, atlas anim 9키 | - |
-| 하프이닝 경기 AI/작전 | PASS | 경기 81개, 희생번트 239, 대타 114, 세이브상황 CL 281/284, 9회말 생략 32, 끝내기 4 | - |
-| 로테이션/불펜 운용 snapshot | PASS | 7일 선발 40명, 등판 투수 102명, SU 21, CL 13, W-L 29-29, SV 16, HLD 9 | - |
+| 하프이닝 경기 AI/작전 | PASS | 경기 81개, 희생번트 208, 대타 122, 세이브상황 CL 335/335, 9회말 생략 27, 끝내기 7 | - |
+| 로테이션/불펜 운용 snapshot | PASS | 7일 선발 40명, 등판 투수 102명, SU 21, CL 10, W-L 30-30, SV 13, HLD 10 | - |
 | 수동 투수 운용 우선 적용 | PASS | 수동 nextStarter 리오스, CL 김윤식, 부상 슬롯 자동 보정 확인 | - |
 | 운영 깊이 v0: 개인성/전략/스카우트/서사 | PASS | 개인성 55명, 전략 강공, 스카우트 리포트 5건, 서사 24개 | - |
 | FM 압박 v1: 구단주/불만/약속 | PASS | 목표 가을야구 진출, 철학 rebuild, 면담 송찬의 면담 요청, 약속 fulfilled/broken, 경질 구단주 결정: 감독직 해임 통보 | - |
 | FM식 daily loop: mailbox/continue/content | PASS | mailbox 4통/open 1건, 만료 1건, camp 93통/7경기 | - |
 | simulateDays 실행 | PASS | 7일 진행 후 day=35, gamesPlayed=30 | - |
 | simulateRegularSeason 종료 상태 | PASS | 정규시즌 종료: 720/720경기, day=196, phase=complete | - |
-| 포스트시즌/시상식 자동 생성 | PASS | 삼성 라이온즈 우승, PS 16경기, MVP 페라자, GG 10명 | - |
-| 신인 드래프트 v1 | PASS | 2027 드래프트 150명 풀, 110픽, 팀당 11명, 보류권 110명, 코드형 신인 54명 roster 반영 | - |
+| 포스트시즌/시상식 자동 생성 | PASS | 삼성 라이온즈 우승, PS 16경기, MVP 올러, GG 10명 | - |
+| 신인 드래프트 v1 | PASS | 2027 드래프트 150명 풀, 110픽, 팀당 11명, 보류권 110명, 코드형 신인 55명 roster 반영 | - |
 | 신인 드래프트 유저 직접 지명 | PASS | 2027 유저팀 키움 11픽 직접 지명, reject 3종 통과 | - |
 | 2차 드래프트 v1 | PASS | 2027 2차 드래프트 보호 35명x10팀, 비보호 128명, 36/36픽, 36명 실제 이동 | - |
 | 2차 드래프트 보호명단/유저 지명 | PASS | 2027 보호명단 스왑 + 유저 2차 지명 5명, reject 3종 통과 | - |
 | 트레이드 v2 command | PASS | LG 트윈스 이용현 영입, KT 위즈 서영준 영입, 자산 player+cash+conditional+ptbnl, 자산타입 player/cash/draftPick/conditional/ptbnl, 조건부/현금/PTBNL ledger | - |
 | 트레이드 안전 게이트 23케이스 | PASS | 23개 reject 케이스 + 1개 성공 케이스 | - |
 | FA/외국인 시장 command | PASS | FA 30명/오퍼 30건, 외국인 코드 30명, roster 531명 유지 | - |
-| 자동 오프시즌/시즌 롤오버 | PASS | 자동 스토브 roster +54, 신인입단 54/보류권 110, FA 30건, CPU 트레이드 4건, 결재 0건 처리 후 2027 프리시즌 롤오버 | - |
-| 롤오버 기록실 히스토리 보존 | PASS | 2026 leagueHistory 10팀, HR 페라자, ERA 고준혁, player.history 보존 | - |
+| 자동 오프시즌/시즌 롤오버 | PASS | 자동 스토브 roster +55, 신인입단 55/보류권 110, FA 30건, CPU 트레이드 4건, 결재 0건 처리 후 2027 프리시즌 롤오버 | - |
+| 롤오버 기록실 히스토리 보존 | PASS | 2026 leagueHistory 10팀, HR 김도영, ERA 지명성, player.history 보존 | - |
 | 프런트오피스 selector 실행 | PASS | LG 트윈스 요약 55명, 스카우트 후보 24명 | - |
 | GM 데스크 데이터 실행 | PASS | LG 트윈스 시장 후보 42명, 제안 10건, 업무 6개, 알림 6건 | - |
 | JSON 저장 roundtrip | PASS | roundtrip 10팀/531명, kbo-gm-2026-03-01-day1-lg.json | - |
-| 10-game Gamecast event/cache identity | PASS | 10 games/824 PA; steals 1 SB/2 CS exact match, chronological order; top+bottom covered in 23 games; cache collision 0, wrong reuse 0, positions 1B/2B/3B/SS/LF/CF/RF | - |
+| 10-game Gamecast event/cache identity | PASS | 10 games/844 PA; steals 1 SB/2 CS exact match, chronological order; top+bottom covered in 21 games; cache collision 0, wrong reuse 0, positions 1B/2B/3B/SS/LF/CF/RF | - |
 

@@ -58,6 +58,16 @@ const OUTFIELD_FIELDING_DELAY_MS = Object.freeze({
 });
 const INFIELDERS = Object.freeze(["SS", "2B", "3B", "1B", "P", "C"]);
 const OUTFIELDERS = Object.freeze(["CF", "LF", "RF"]);
+const GROUND_BALL_ZONE_PRIMARY = Object.freeze({
+  "third-line": "3B",
+  "third-corner": "3B",
+  "third-hole": "SS",
+  "shortstop-middle": "SS",
+  "second-middle": "2B",
+  "first-hole": "2B",
+  "first-corner": "1B",
+  "first-line": "1B"
+});
 const BASE_SUPPORT_TARGETS = new Set(["home", "first", "second", "third"]);
 const BASE_BACKUP_OFFSET_PX = 14;
 const BASE_BACKUP_MAX_DISTANCE_PX = 42;
@@ -73,9 +83,9 @@ const DEFENDER_SUPPORT_MOVE_ZONES = Object.freeze({
   "2B": Object.freeze({ x: 132, yTop: 80, yBottom: 80 }),
   "3B": Object.freeze({ x: 54, yTop: 42, yBottom: 45 }),
   SS: Object.freeze({ x: 184, yTop: 80, yBottom: 80 }),
-  LF: Object.freeze({ x: 96, yTop: 58, yBottom: 74 }),
+  LF: Object.freeze({ x: 96, yTop: 58, yBottom: 160 }),
   CF: Object.freeze({ x: 116, yTop: 62, yBottom: 84 }),
-  RF: Object.freeze({ x: 96, yTop: 58, yBottom: 74 })
+  RF: Object.freeze({ x: 96, yTop: 58, yBottom: 160 })
 });
 const RESULT_BADGES = Object.freeze({
   strikeout: "삼진",
@@ -543,6 +553,10 @@ function buildFieldedBall(context, spec) {
 
   context.fielding = {
     fielder: fielderKey,
+    fieldingZone: normalizedGroundBallZone(context.event),
+    fieldingLane: context.event?.fieldingLane === null || context.event?.fieldingLane === ""
+      ? null
+      : finiteNumberOrNull(context.event?.fieldingLane),
     landingPoint: "landing",
     ballPoint: caughtBattedOut ? "catchGlove" : "landing",
     catchPoint: caughtBattedOut ? "catchGlove" : null,
@@ -947,15 +961,21 @@ function addDefensiveRotation(context, {
     throwTarget
   });
   if (!receiver) return null;
+  const pitcherCoveringFirst = receiver === "P" && throwTarget === "first";
   return addThrowReceiver(context, {
     primary,
     receiver,
     to: throwTarget,
     throwFrom: landing,
-    moveStartT: Math.max(
-      scaleActionTime(context, 0.235),
-      Math.min(scaleActionTime(context, 0.31), landingT - scaleActionTime(context, 0.1))
-    ),
+    // When 1B fields the ball, the pitcher has roughly 245px to cover the bag.
+    // Start that rotation at contact; the generic .31 start compressed the run
+    // below a second and made the pitcher visibly sprint across the diamond.
+    moveStartT: pitcherCoveringFirst
+      ? scaleActionTime(context, 0.22)
+      : Math.max(
+          scaleActionTime(context, 0.235),
+          Math.min(scaleActionTime(context, 0.31), landingT - scaleActionTime(context, 0.1))
+        ),
     throwEndT
   });
 }
@@ -1068,7 +1088,9 @@ function defensiveSupportAssignments(context, { primary, receiver, landing, thro
     }
   } else {
     add(selectInfieldBackupOutfielder(primary), "backup", landing, 0.12);
-    add(selectMiddleCoverFielder(primary, receiver), "relay", landing, 0.16);
+    // A safe corner grounder with no competitive throw only needs the adjacent
+    // outfielder backing up the play. Sending SS/2B toward the same landing
+    // point makes a second infielder look like the primary ball chaser.
   }
 
   return assignments.slice(0, supportLimit);
@@ -1098,18 +1120,17 @@ function selectMiddleCoverFielder(primary, receiver) {
 
 function selectBaseBackupFielder(points, target, primary, receiver, occupied = new Set(), toward = "") {
   const candidates = {
-    first: ["P", "2B", "RF"],
-    second: ["SS", "2B", "CF"],
-    third: ["P", "SS", "LF"],
-    home: ["P", "1B", "3B"]
+    first: ["RF"],
+    second: ["CF"],
+    third: ["LF"],
+    home: ["P"]
   }[target] ?? ["P", "CF"];
   return candidates
     .filter((key) => key !== primary && key !== receiver && !occupied.has(key) && points[key])
-    .map((key, order) => {
+    .map((key) => {
       const destination = baseBackupDestination(points, key, target, toward);
       return {
         key,
-        order,
         targetDistance: pointDistance(destination, points[target]),
         routeDistance: pointDistance(destination, points[key])
       };
@@ -1118,7 +1139,9 @@ function selectBaseBackupFielder(points, target, primary, receiver, occupied = n
       targetDistance <= BASE_BACKUP_MAX_DISTANCE_PX
       && routeDistance >= MIN_SUPPORT_ROUTE_PX
     ))
-    .sort((a, b) => a.targetDistance - b.targetDistance || a.order - b.order)[0]?.key ?? "";
+    // Preserve baseball-role priority. Sorting by geometric closeness allowed a
+    // middle infielder to beat the pitcher/outfielder and sprint behind a base.
+    [0]?.key ?? "";
 }
 
 function selectInfieldBackupOutfielder(primary) {
@@ -1139,6 +1162,9 @@ function addThrowReceiver(context, {
   const selected = receiver || selectThrowReceiver(context.points, primary, to);
   if (!selected || !context.points[selected] || !context.points[to]) return null;
   const from = selected;
+  const resolvedMoveStartT = selected === "P" && to === "first"
+    ? Math.min(moveStartT, scaleActionTime(context, 0.2))
+    : moveStartT;
   // A force at first must read as the covering fielder planting a foot on the
   // bag, not as a runner who is still drifting toward it while the ball lands.
   // Give first-base coverage a visible set interval before the catch motion;
@@ -1146,9 +1172,9 @@ function addThrowReceiver(context, {
   const firstBaseForce = to === "first";
   const arrivalLeadT = scaleActionTime(context, firstBaseForce ? 0.12 : 0.05);
   const catchLeadT = scaleActionTime(context, firstBaseForce ? 0.055 : 0.05);
-  const arrivalT = roundTime(Math.max(moveStartT + scaleActionTime(context, 0.08), throwEndT - arrivalLeadT));
+  const arrivalT = roundTime(Math.max(resolvedMoveStartT + scaleActionTime(context, 0.08), throwEndT - arrivalLeadT));
   const receiveT = roundTime(Math.max(arrivalT, throwEndT - catchLeadT));
-  context.tracks.fielders.push(cue(moveStartT, arrivalT, {
+  context.tracks.fielders.push(cue(resolvedMoveStartT, arrivalT, {
     who: selected,
     anim: ANIM.run,
     path: [from, to],
@@ -1430,6 +1456,8 @@ function transitionDistance(transition) {
 }
 
 function selectFielderKey(event, points) {
+  const zonedPrimary = groundBallZonePrimary(event);
+  if (zonedPrimary && points[zonedPrimary]) return zonedPrimary;
   const explicit = normalizeFielderKey(event?.fieldingPosition ?? event?.defenderPosition);
   if (explicit && points[explicit]) return explicit;
   const outfield = isOutfieldBall(event);
@@ -1495,6 +1523,10 @@ function fieldingLandingPoint(event, points, fielderKey) {
   const line = type.includes("line");
   const fly = type.includes("fly");
   const outfield = OUTFIELDERS.includes(fielderKey);
+  if (ground && !outfield) {
+    const zonedLanding = groundBallLandingPoint(event, points, fielderKey);
+    if (zonedLanding) return zonedLanding;
+  }
   const towardHome = bunt
     ? (fielderKey === "C" ? 0.56 : 0.22)
     : ground ? (outfield ? 0.2 : 0.22) : line ? 0.13 : 0.08;
@@ -1511,6 +1543,44 @@ function fieldingLandingPoint(event, points, fielderKey) {
     x: roundCoordinate(landing.x + direction * lateral),
     y: roundCoordinate(landing.y + (outfield ? 6 : -3))
   };
+}
+
+function normalizedGroundBallZone(event) {
+  if (!normalizedToken(event?.battedBallType).includes("ground")) return "";
+  const zone = String(event?.fieldingZone ?? "").trim().toLowerCase();
+  return Object.hasOwn(GROUND_BALL_ZONE_PRIMARY, zone) ? zone : "";
+}
+
+function groundBallZonePrimary(event) {
+  const zone = normalizedGroundBallZone(event);
+  return zone ? GROUND_BALL_ZONE_PRIMARY[zone] : "";
+}
+
+function groundBallLandingPoint(event, points, fielderKey) {
+  const authoredZone = normalizedGroundBallZone(event);
+  const authoredPrimary = authoredZone ? GROUND_BALL_ZONE_PRIMARY[authoredZone] : "";
+  const fallbackZone = {
+    "3B": "third-corner",
+    SS: "shortstop-middle",
+    "2B": "second-middle",
+    "1B": "first-corner"
+  }[fielderKey] ?? "";
+  const zone = authoredPrimary === fielderKey ? authoredZone : fallbackZone;
+  const rawLane = event?.fieldingLane;
+  const lane = rawLane === null || rawLane === "" ? Number.NaN : Number(rawLane);
+  const magnitude = Number.isFinite(lane) ? Math.abs(lane) : null;
+  const geometry = {
+    "third-line": { target: "third", amount: magnitude === null ? 0.58 : 0.52 + Math.max(0, magnitude - 0.78) * 0.3 },
+    "third-corner": { target: "home", amount: magnitude === null ? 0.16 : 0.12 + Math.max(0, 0.78 - magnitude) * 0.2 },
+    "third-hole": { target: "3B", amount: magnitude === null ? 0.34 : 0.22 + Math.max(0, magnitude - 0.18) * 0.3 },
+    "shortstop-middle": { target: "mound", amount: magnitude === null ? 0.28 : 0.22 + Math.max(0, 0.18 - magnitude) * 0.3 },
+    "second-middle": { target: "mound", amount: magnitude === null ? 0.28 : 0.22 + Math.max(0, 0.18 - magnitude) * 0.3 },
+    "first-hole": { target: "1B", amount: magnitude === null ? 0.34 : 0.22 + Math.max(0, magnitude - 0.18) * 0.3 },
+    "first-corner": { target: "home", amount: magnitude === null ? 0.16 : 0.12 + Math.max(0, 0.78 - magnitude) * 0.2 },
+    "first-line": { target: "first", amount: magnitude === null ? 0.58 : 0.52 + Math.max(0, magnitude - 0.78) * 0.3 }
+  }[zone];
+  if (!geometry || !points[fielderKey] || !points[geometry.target]) return null;
+  return interpolatePoint(points[fielderKey], points[geometry.target], geometry.amount);
 }
 
 function caughtBallGlovePoint(event, landing) {
