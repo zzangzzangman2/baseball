@@ -7,9 +7,9 @@ import {
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-jamsil-only-20260716-r25";
-import { compilePlayTimeline } from "./timeline.js?v=gamecast-jamsil-only-20260716-r25";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-jamsil-only-20260716-r25";
+} from "./assets.js?v=gamecast-short-result-roll-20260716-r26";
+import { compilePlayTimeline } from "./timeline.js?v=gamecast-short-result-roll-20260716-r26";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-short-result-roll-20260716-r26";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -1215,7 +1215,7 @@ function updateBallFlight(runtime, frame = null) {
   }
   if (ball.trail?.length > 1) {
     const battedFlight = ["batted", "home-run-flight"].includes(String(ball.phase ?? ""));
-    const groundedSettle = ["safe-settle", "line-settle", "ground-settle"].includes(String(ball.phase ?? ""));
+    const groundedSettle = ["safe-settle", "line-settle", "ground-settle", "ground-through"].includes(String(ball.phase ?? ""));
     const drawTrailPath = () => {
       scene.ballTrail.beginPath();
       scene.ballTrail.moveTo(Math.round(ball.trail[0].x * sx), Math.round(ball.trail[0].y * sy));
@@ -1709,7 +1709,7 @@ export function buildTimelineBallState(timeline, progress, event) {
   if (!point) return null;
   const phase = String(sample.cue.phase ?? "");
   const battedFlight = ["batted", "home-run-flight"].includes(phase);
-  const groundedSettle = ["safe-settle", "line-settle", "ground-settle"].includes(phase);
+  const groundedSettle = ["safe-settle", "line-settle", "ground-settle", "ground-through"].includes(phase);
   const sampleCount = battedFlight ? 7 : groundedSettle ? 2 : 5;
   const cueDurationMs = Math.max(
     1,
@@ -1782,6 +1782,7 @@ export function timelineBallPoint(cue, points, localT) {
 
 function battedBallTravelProgress(profile, progress) {
   const t = clamp01(progress);
+  if (profile === "roll") return 1 - (1 - t) * (1 - t);
   if (profile === "ground") return t * (1.1 - 0.1 * t);
   if (profile === "line") return t * (1.025 - 0.025 * t);
   // A fly ball's shadow keeps moving across the field at a continuous rate.

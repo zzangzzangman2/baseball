@@ -41,7 +41,7 @@ import {
   simulateSecondaryDraft,
   setSecondaryDraftProtection,
   runAutonomousOffseason
-} from "./engine.js?v=gamecast-jamsil-only-20260716-r25";
+} from "./engine.js?v=gamecast-short-result-roll-20260716-r26";
 
 import {
   getContractSummary,
@@ -68,14 +68,14 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-jamsil-only-20260716-r25";
+} from "./gamecastPhaser.js?v=gamecast-short-result-roll-20260716-r26";
 
 import {
   canUseGamecast2,
   getGamecast2PlayDurationMs,
   getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-jamsil-only-20260716-r25";
+} from "./gamecast2/index.js?v=gamecast-short-result-roll-20260716-r26";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },
@@ -9117,13 +9117,15 @@ export function buildGamecastActionBurst(event, progress) {
   if (!event) return null;
   const profile = gamecastBurstProfile(event);
   const start = Math.max(gamecastResultRevealProgress(event), gamecastPitchEnd(event) + profile.delay);
-  const end = 1;
+  const durationFraction = Math.max(0.1, Math.min(1, Number(profile.durationFraction ?? 1)));
+  const end = start + (1 - start) * durationFraction;
   if (progress < start || progress > end) return null;
 
   const t = Math.max(0, Math.min(1, (progress - start) / Math.max(0.01, end - start)));
   const popIn = easeOutBack(Math.min(1, t / 0.28));
   const motionHold = t < 0.55 ? 1 : Math.max(0, (1 - t) / 0.45);
   const bounce = Math.sin(Math.min(1, t * 1.2) * Math.PI);
+  const fadeOut = durationFraction < 1 && t > 0.82 ? Math.max(0, (1 - t) / 0.18) : 1;
   const text = gamecastBurstText(event);
   if (!text) return null;
 
@@ -9132,7 +9134,7 @@ export function buildGamecastActionBurst(event, progress) {
     className: gamecastBurstClass(event),
     x: profile.x,
     y: profile.y,
-    opacity: Math.max(0, Math.min(1, t < 0.1 ? t / 0.1 : 1)),
+    opacity: Math.max(0, Math.min(1, (t < 0.1 ? t / 0.1 : 1) * fadeOut)),
     scaleX: profile.baseScale + popIn * profile.pop + bounce * 0.1,
     scaleY: profile.baseScale + popIn * profile.pop * 0.82 - bounce * 0.08,
     shakeX: Math.round(Math.sin(t * Math.PI * profile.shakeRate) * profile.shake * motionHold),
@@ -9145,18 +9147,18 @@ export function buildGamecastActionBurst(event, progress) {
 function gamecastBurstProfile(event) {
   const outcome = event?.outcome;
   if (outcome === "homeRun") {
-    return { delay: 0.01, end: 0.995, x: 50, y: 13, baseScale: 0.82, pop: 0.58, shake: 3, shakeRate: 10, tilt: 1.5 };
+    return { delay: 0.01, x: 50, y: 13, baseScale: 0.82, pop: 0.58, shake: 3, shakeRate: 10, tilt: 1.5 };
   }
   if (outcome === "strikeout") {
-    return { delay: 0.03, end: 0.995, x: 50, y: 13, baseScale: 0.84, pop: 0.48, shake: 2, shakeRate: 8, tilt: 1 };
+    return { delay: 0.03, durationFraction: 0.905, x: 50, y: 13, baseScale: 0.84, pop: 0.48, shake: 2, shakeRate: 8, tilt: 1 };
   }
   if (outcome === "walk") {
-    return { delay: 0.04, end: 0.995, x: 50, y: 13, baseScale: 0.84, pop: 0.42, shake: 1, shakeRate: 7, tilt: 0.8 };
+    return { delay: 0.04, durationFraction: 0.884, x: 50, y: 13, baseScale: 0.84, pop: 0.42, shake: 1, shakeRate: 7, tilt: 0.8 };
   }
   if (outcome === "out") {
-    return { delay: 0.04, end: 0.995, x: 50, y: 13, baseScale: 0.84, pop: 0.44, shake: event?.doublePlay ? 3 : 1, shakeRate: 8, tilt: 1 };
+    return { delay: 0.04, x: 50, y: 13, baseScale: 0.84, pop: 0.44, shake: event?.doublePlay ? 3 : 1, shakeRate: 8, tilt: 1 };
   }
-  return { delay: 0.02, end: 0.995, x: 50, y: 13, baseScale: 0.84, pop: 0.5, shake: 2, shakeRate: 9, tilt: 1 };
+  return { delay: 0.02, x: 50, y: 13, baseScale: 0.84, pop: 0.5, shake: 2, shakeRate: 9, tilt: 1 };
 }
 
 function gamecastBurstText(event) {

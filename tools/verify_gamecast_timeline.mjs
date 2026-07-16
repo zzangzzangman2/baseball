@@ -19,7 +19,13 @@ import {
   gamecast2TimelineCueFacing,
   timelineBallPoint
 } from "../src/gamecast2/scene.js";
-import { gamecastEventPlayDuration, gamecastPlaybackPosition, gamecastTotalDuration } from "../src/ui.js";
+import {
+  buildGamecastActionBurst,
+  gamecastEventPlayDuration,
+  gamecastPlaybackPosition,
+  gamecastTotalDuration,
+  GAMECAST_WATCH_GAP_MS
+} from "../src/ui.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const ROOT_DIR = path.resolve(path.dirname(__filename), "..");
@@ -107,8 +113,10 @@ export function verifyGamecastTimeline() {
   verifyExistingRunnerPaths(compiled);
   verifyRunnerSpeedScaling();
   verifyPlaybackClock();
+  verifyShortResultBurstTiming();
   verifyDefensiveRotation(compiled);
   verifyFlyBallResolution();
+  verifySafeHitRollout();
   verifyTrajectoryRealismRegressions();
   verifyBuntChoreography();
   verifyGroundBallResponsibilityZones();
@@ -119,6 +127,108 @@ export function verifyGamecastTimeline() {
   verifyPurity(cases[3].event);
 
   return `${compiled.length}개 플레이, ${GAMECAST2_TIMELINE_TEMPLATES.length * DEFENSE_POSITIONS.length}개 수비 조합, atlas anim ${GAMECAST2_ATLAS_ANIMATION_KEYS.length}키`;
+}
+
+function verifyShortResultBurstTiming() {
+  const cases = [
+    ["strikeout", {
+      ...BASE_EVENT,
+      outcome: "strikeout",
+      outsAfter: 1
+    }],
+    ["walk", {
+      ...BASE_EVENT,
+      outcome: "walk",
+      basesAfter: [true, false, false],
+      baseRunnerIdsAfter: ["batter", "", ""]
+    }]
+  ];
+
+  for (const [label, event] of cases) {
+    const durationMs = getGamecast2PlayDurationMs(event);
+    const visible = [];
+    for (let index = 0; index <= 4000; index += 1) {
+      const progress = index / 4000;
+      if (buildGamecastActionBurst(event, progress)?.text) visible.push(progress);
+    }
+    assert(visible.length > 0, `${label}: result banner never appears.`);
+    const first = visible[0];
+    const last = visible.at(-1);
+    const visibleMs = (last - first) * durationMs;
+    const originalPerceivedMs = (1 - first) * durationMs + GAMECAST_WATCH_GAP_MS;
+    const fraction = visibleMs / originalPerceivedMs;
+    assert(
+      fraction >= 0.49 && fraction <= 0.51,
+      `${label}: result banner is not half of its old gap-inclusive dwell (${visibleMs.toFixed(1)}ms, ${(fraction * 100).toFixed(1)}%).`
+    );
+    assert(
+      visibleMs >= 1500 && visibleMs <= 1650,
+      `${label}: shortened result banner is outside the readable 1500-1650ms range (${visibleMs.toFixed(1)}ms).`
+    );
+    assert.equal(buildGamecastActionBurst(event, Math.min(1, last + 0.01)), null, `${label}: result banner remains after its short window.`);
+  }
+}
+
+function verifySafeHitRollout() {
+  const lanes = [
+    ["LF", -0.58],
+    ["CF", 0],
+    ["RF", 0.58]
+  ];
+  const variants = [
+    ["fly", "flyBall", "fly-bloop", "safe-settle", 22, 28],
+    ["line", "lineDrive", "line-through", "line-settle", 30, 36],
+    ["ground", "groundBall", "ground-through", "ground-through", 40, 46]
+  ];
+
+  for (const [fielder, sprayLane] of lanes) {
+    for (const [label, battedBallType, hitTrajectory, phase, minDistance, maxDistance] of variants) {
+      const event = {
+        ...BASE_EVENT,
+        id: `roll-${fielder}-${label}`,
+        sequence: 820 + lanes.findIndex(([key]) => key === fielder) * 10 + variants.findIndex(([key]) => key === label),
+        outcome: "single",
+        battedBallType,
+        hitTrajectory,
+        fieldingPosition: fielder,
+        sprayLane,
+        basesAfter: [true, false, false],
+        baseRunnerIdsAfter: ["batter", "", ""]
+      };
+      const timeline = compilePlayTimeline(event, { anchors: ANCHORS });
+      const settle = timeline.tracks.ball.find((cue) => cue.phase === phase);
+      const caseLabel = `${fielder} ${label} single`;
+      assert(settle, `${caseLabel}: post-landing roll cue is missing.`);
+      assert.deepEqual(settle.path, ["landing", "pickup"], `${caseLabel}: roll does not connect landing to pickup.`);
+      assert.equal(settle.grounded, true, `${caseLabel}: post-landing travel is not grounded.`);
+      assert.equal(settle.flightProfile, "roll", `${caseLabel}: natural roll deceleration profile is missing.`);
+
+      const rollDistance = pointDistance(timeline.points.landing, timeline.points.pickup);
+      assert(
+        rollDistance >= minDistance && rollDistance <= maxDistance,
+        `${caseLabel}: rollout ${rollDistance.toFixed(2)}px is outside ${minDistance}-${maxDistance}px.`
+      );
+      assert(postLandingDirectionDot(timeline.points) > 0, `${caseLabel}: ball rolls back toward home.`);
+
+      const cueDurationMs = (Number(settle.endT) - Number(settle.t)) * Number(timeline.durationMs);
+      const sampleProgress = Number(settle.t) + Math.min(100, cueDurationMs * 0.45) / Number(timeline.durationMs);
+      const start = timelineBallPoint(settle, timeline.points, 0);
+      const after100 = buildTimelineBallState(timeline, sampleProgress, event);
+      const firstQuarter = timelineBallPoint(settle, timeline.points, 0.25);
+      const thirdQuarter = timelineBallPoint(settle, timeline.points, 0.75);
+      const end = timelineBallPoint(settle, timeline.points, 1);
+      assert(pointDistance(start, after100) >= 5, `${caseLabel}: ball moves less than 5px in its first 100ms.`);
+      assert(
+        pointDistance(start, firstQuarter) > pointDistance(thirdQuarter, end) * 3,
+        `${caseLabel}: rollout does not visibly decelerate.`
+      );
+      assert(pointDistance(end, timeline.points.pickup) <= 0.01, `${caseLabel}: rollout does not finish at pickup.`);
+      assert.equal(Number(end.height ?? 0), 0, `${caseLabel}: rolled ball remains above the turf.`);
+      assert.equal(after100?.trail?.length, 2, `${caseLabel}: grounded rollout trail classification is wrong.`);
+      assert(Number(timeline.meta.fielding?.wallClearancePx) >= 4, `${caseLabel}: rollout escapes the playable wall.`);
+      assert.equal(timeline.meta.invariants?.wallOutcomeMatches, true, `${caseLabel}: safe-hit wall invariant failed.`);
+    }
+  }
 }
 
 function verifyStealVisualActors() {
@@ -612,8 +722,11 @@ function verifyFlyBallResolution() {
     Math.hypot(
       Number(safeLine.points.pickup?.x) - Number(safeLine.points.landing?.x),
       Number(safeLine.points.pickup?.y) - Number(safeLine.points.landing?.y)
-    ) <= 20,
-    "직선타 안타가 착지 후 너무 멀리 이동합니다."
+    ) >= 30 && Math.hypot(
+      Number(safeLine.points.pickup?.x) - Number(safeLine.points.landing?.x),
+      Number(safeLine.points.pickup?.y) - Number(safeLine.points.landing?.y)
+    ) <= 36,
+    "직선타 안타의 착지 후 롤이 30-36px 범위를 벗어납니다."
   );
   assert(
     postLandingDirectionDot(safeLine.points) > 0,
@@ -640,8 +753,11 @@ function verifyFlyBallResolution() {
     Math.hypot(
       Number(safe.points.pickup?.x) - Number(safe.points.landing?.x),
       Number(safe.points.pickup?.y) - Number(safe.points.landing?.y)
-    ) <= 20,
-    "뜬공 안타가 착지 후 외야수 쪽으로 너무 멀리 이동합니다."
+    ) >= 22 && Math.hypot(
+      Number(safe.points.pickup?.x) - Number(safe.points.landing?.x),
+      Number(safe.points.pickup?.y) - Number(safe.points.landing?.y)
+    ) <= 28,
+    "뜬공 안타의 착지 후 롤이 22-28px 범위를 벗어납니다."
   );
   assert(postLandingDirectionDot(safe.points) > 0, "뜬공 안타가 착지 후 홈 쪽으로 역주행합니다.");
   assert.equal(safe.meta.fielding.fieldingStyle, "run-through", "일반 뜬공 안타가 불필요한 다이빙으로 분류됩니다.");

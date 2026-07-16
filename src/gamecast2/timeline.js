@@ -482,6 +482,7 @@ function buildFieldedBall(context, spec) {
     context.tracks.ball.push(cue(spec.landingT, pickupArrivalT, {
       path: ["landing", "pickup"],
       grounded: true,
+      flightProfile: "roll",
       phase: "safe-settle",
       arrivesAt: "pickup"
     }));
@@ -538,6 +539,7 @@ function buildFieldedBall(context, spec) {
     context.tracks.ball.push(cue(spec.landingT, pickupArrivalT, {
       path: ["landing", "pickup"],
       grounded: true,
+      flightProfile: "roll",
       phase: "line-settle",
       arrivesAt: "pickup"
     }));
@@ -569,7 +571,7 @@ function buildFieldedBall(context, spec) {
       bounce: true,
       bounces: 1,
       bounceHeightPx: 3,
-      flightProfile: "ground",
+      flightProfile: "roll",
       phase: "ground-through",
       arrivesAt: "pickup"
     }));
@@ -2045,7 +2047,10 @@ function safeBallPickupPoint(event, points, fielderKey, landing, trajectory) {
   const dx = Number(landing?.x ?? 0) - Number(home?.x ?? 0);
   const dy = Number(landing?.y ?? 0) - Number(home?.y ?? 0);
   const length = Math.max(0.001, Math.hypot(dx, dy));
-  const travel = trajectory === "ground" ? 18 : trajectory === "line" ? 12 : 8;
+  // These distances must remain visibly legible after 960x720 is fitted into
+  // the browser. The previous 8/12/18px routes rounded to one or two screen
+  // pixels per frame and looked like the ball froze where it landed.
+  const travel = trajectory === "ground" ? 42 : trajectory === "line" ? 32 : 24;
   const candidate = {
     ...landing,
     x: roundCoordinate(Number(landing.x) + dx / length * travel),
