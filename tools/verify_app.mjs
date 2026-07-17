@@ -1005,8 +1005,15 @@ function checkLegacyGamecastCornerCoverage() {
   }
 
   const secondBasePlay = uiModule.buildGamecastDefenseSprites(
-    groundEvent("3B", "second", "third-to-second"),
-    fieldingFrame,
+    {
+      ...groundEvent("3B", "second", "third-to-second-double-play"),
+      doublePlay: true,
+      fieldingZone: "third-line",
+      fieldingLane: -0.9,
+      basesBefore: [true, false, false],
+      baseRunnerIdsBefore: ["runner-1", "", ""]
+    },
+    0.75,
     palette
   );
   const primary = secondBasePlay.find((sprite) => sprite.fieldingKey === "3B");
@@ -1822,22 +1829,27 @@ function checkBattedBallExtraBaseRules() {
   }, (scenario) => runnerDestination(scenario, "runner-1") === 3);
   const secondScores = findScenario({ type: "single", occupied: [2] }, (scenario) => runnerDestination(scenario, "runner-2") === 4);
   const secondHoldsThird = findScenario({ type: "single", occupied: [2] }, (scenario) => runnerDestination(scenario, "runner-2") === 3);
-  assert(firstToSecond?.target === "second", `single 1B->2B throw target=${firstToSecond?.target}`, MODULE_PATHS.engine);
-  assert(firstToThird?.target === "third", `single 1B->3B throw target=${firstToThird?.target}`, MODULE_PATHS.engine);
-  assert(secondScores?.target === "home", `single 2B->home throw target=${secondScores?.target}`, MODULE_PATHS.engine);
-  assert(secondHoldsThird?.target === "third", `single 2B->3B throw target=${secondHoldsThird?.target}`, MODULE_PATHS.engine);
-  assert(makeHitScenario({ type: "single", occupied: [3] }).target === "home", "single 3B->home did not target home", MODULE_PATHS.engine);
+  assert(firstToSecond?.target === null, `routine single chased forced runner at second: ${firstToSecond?.target}`, MODULE_PATHS.engine);
+  assert(firstToThird?.target === "second", `deep single 1B->3B did not return to empty second-base cutoff: ${firstToThird?.target}`, MODULE_PATHS.engine);
+  assert(secondScores?.target === "second", `single 2B->home did not return to empty second-base cutoff: ${secondScores?.target}`, MODULE_PATHS.engine);
+  assert(secondHoldsThird?.target === null, `single 2B->3B chased a non-force runner: ${secondHoldsThird?.target}`, MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "single", occupied: [3] }).target === null, "single chased an already-scoring third-base runner", MODULE_PATHS.engine);
+  assert(
+    makeHitScenario({ type: "single", occupied: [2], position: "3B", battedBallType: "groundBall", hitTrajectory: "infield-chopper" }).target === null,
+    "infield chopper incorrectly throws to third/home instead of holding",
+    MODULE_PATHS.engine
+  );
 
   const emptyDouble = makeHitScenario({ type: "double", occupied: [] });
   const firstStopsThird = findScenario({ type: "double", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 3);
   const firstScoresOnDouble = findScenario({ type: "double", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 4);
-  assert(emptyDouble.target === "second", `empty-base double throw target=${emptyDouble.target}`, MODULE_PATHS.engine);
-  assert(firstStopsThird?.target === "third", `double 1B->3B throw target=${firstStopsThird?.target}`, MODULE_PATHS.engine);
-  assert(firstScoresOnDouble?.target === "home", `double 1B->home throw target=${firstScoresOnDouble?.target}`, MODULE_PATHS.engine);
-  assert(makeHitScenario({ type: "double", occupied: [2] }).target === "home", "double with runner scoring did not target home", MODULE_PATHS.engine);
+  assert(emptyDouble.target === "third", `empty-base double containment target=${emptyDouble.target}`, MODULE_PATHS.engine);
+  assert(firstStopsThird?.target === "home", `double 1B->3B containment target=${firstStopsThird?.target}`, MODULE_PATHS.engine);
+  assert(firstScoresOnDouble?.target === "third", `double 1B->home containment target=${firstScoresOnDouble?.target}`, MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "double", occupied: [2] }).target === "third", "double with a runner scoring did not contain the batter at third", MODULE_PATHS.engine);
 
-  assert(makeHitScenario({ type: "triple", occupied: [] }).target === "third", "empty-base triple invented a home throw", MODULE_PATHS.engine);
-  assert(makeHitScenario({ type: "triple", occupied: [1] }).target === "home", "triple with a scoring runner did not target home", MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "triple", occupied: [] }).target === "home", "empty-base triple did not contain the batter at home", MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "triple", occupied: [1] }).target === "second", "triple with a scoring runner did not return through the empty cutoff", MODULE_PATHS.engine);
   assert(makeHitScenario({ type: "out", occupied: [], battedBallType: "groundBall", position: "SS" }).target === "first", "ground out did not target first", MODULE_PATHS.engine);
 
   for (const hitterSpeed of [6, 19]) {
@@ -2288,7 +2300,7 @@ function checkBattedBallExtraBaseRules() {
     'CF: { x: 60, y: 29 }',
     'RF: { x: 89, y: 42 }',
     'defensiveThrowTarget,',
-    'resolveDefensiveThrowTarget({'
+    'resolveDefensiveThrowTarget(normalizedThrowEvent)'
   ]) {
     assert(uiSource.includes(snippet), `legacy Gamecast alignment/throw normalization missing: ${snippet}`, MODULE_PATHS.ui);
   }

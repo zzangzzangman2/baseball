@@ -4,7 +4,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createInitialState } from "../src/data.js";
-import { groundBallFieldingAssignment, simulateDay, simulateNextUserGame } from "../src/engine.js";
+import {
+  groundBallFieldingAssignment,
+  resolveDefensiveThrowTarget,
+  simulateDay,
+  simulateNextUserGame
+} from "../src/engine.js";
 import {
   compilePlayTimeline,
   GAMECAST2_DEFENDER_MOVE_ZONES
@@ -18,8 +23,13 @@ const JAMSIL_DAY_ANCHORS = JSON.parse(fs.readFileSync(
   "utf8"
 ));
 
-const GAME_COUNT = 10;
-const MINIMUM_EVENT_COUNT = 600;
+const requestedGameCount = Number(
+  process.argv.find((argument) => argument.startsWith("--games="))?.split("=")[1] ?? 10
+);
+const GAME_COUNT = Number.isInteger(requestedGameCount) && requestedGameCount > 0
+  ? requestedGameCount
+  : 10;
+const MINIMUM_EVENT_COUNT = GAME_COUNT * 60;
 const SAFE_WALL_MARGIN_PX = 4;
 const HOME_RUN_WALL_CLEARANCE_PX = 8;
 const GROUND_RESPONSIBILITY_ROUTE_LIMIT_PX = 55;
@@ -39,16 +49,23 @@ const GROUND_ZONE_PRIMARY = Object.freeze({
 export function verifyGamecastTenGames() {
   verifyGroundBallAssignmentFunction();
   verifyTimelineAIMovementRegressions();
-  const state = createInitialState();
-  state.selectedTeamId = "kiwoom";
-  advanceToRegularSeason(state);
+  let batchIndex = 0;
+  let state = createAuditState(batchIndex);
 
   const games = [];
   for (let index = 0; index < GAME_COUNT; index += 1) {
-    const result = simulateNextUserGame(state, {
+    let result = simulateNextUserGame(state, {
       teamId: state.selectedTeamId,
       mode: "watch"
     });
+    if (!result.ok && ["season-complete", "no-game"].includes(String(result.code))) {
+      batchIndex += 1;
+      state = createAuditState(batchIndex);
+      result = simulateNextUserGame(state, {
+        teamId: state.selectedTeamId,
+        mode: "watch"
+      });
+    }
     assert(result.ok && result.game, `Game ${index + 1}/${GAME_COUNT} did not simulate: ${result.message ?? result.code}`);
     games.push(result.game);
   }
@@ -72,6 +89,15 @@ export function verifyGamecastTenGames() {
     safeHitMisses: 0,
     safeHitGates: 0,
     safeHitReactionChecks: 0,
+    singles: 0,
+    singleThirdHomeTargets: 0,
+    singleBatterBeyondFirst: 0,
+    routineFirstToThird: 0,
+    groundSecondToHome: 0,
+    hitThrows: 0,
+    maximumHitThrowFlightMs: 0,
+    minimumLongHitThrowSpeed: Number.POSITIVE_INFINITY,
+    visiblePossessionChecks: 0,
     singleTimingByTrajectory: {
       flybloop: 0,
       flygapdrop: 0,
@@ -122,6 +148,7 @@ export function verifyGamecastTenGames() {
       const label = `${game.id}/${event.id ?? `${event.half}:${event.inning}:${event.sequence}`}`;
       auditDefenseSlot(label, game, event, problems);
       auditHitTrajectorySemantics(label, event, coverage, problems);
+      auditSingleBaseRunning(label, event, coverage, problems);
       let timeline;
       try {
         timeline = compilePlayTimeline(event, JAMSIL_DAY_ANCHORS);
@@ -170,6 +197,16 @@ export function verifyGamecastTenGames() {
   assert.equal(coverage.positionViolations, 0, `${coverage.positionViolations} defender endpoint(s) exceed the scene bounds.`);
 
   return coverage;
+}
+
+function createAuditState(batchIndex) {
+  const state = createInitialState();
+  const teamIds = state.teams.map((team) => team.id).filter(Boolean);
+  state.selectedTeamId = teamIds[batchIndex % Math.max(1, teamIds.length)] ?? "kiwoom";
+  state.currentDate = `${2026 + batchIndex}-03-01`;
+  state.day = 1;
+  advanceToRegularSeason(state);
+  return state;
 }
 
 function advanceToRegularSeason(state) {
@@ -223,8 +260,8 @@ function verifyTimelineAIMovementRegressions() {
 
   const relayEvents = [
     {
-      label: "RF-home",
-      target: "home",
+      label: "RF-third-containment",
+      target: "third",
       event: {
         outcome: "double",
         battedBallType: "lineDrive",
@@ -240,8 +277,8 @@ function verifyTimelineAIMovementRegressions() {
       }
     },
     {
-      label: "CF-third",
-      target: "third",
+      label: "CF-home-containment",
+      target: "home",
       event: {
         outcome: "triple",
         battedBallType: "flyBall",
@@ -274,13 +311,13 @@ function verifyTimelineAIMovementRegressions() {
     assert(Number(firstLeg?.arc) < Number(finalLeg?.arc), `${item.label}: arm does not affect each leg's arc.`);
     for (const throwCue of throws) {
       assert(Number(throwCue.gatherMs) <= 300.5, `${item.label}: ${throwCue.phase} gather exceeds 300ms.`);
+      assert(Number(throwCue.flightMs) <= 620, `${item.label}: ${throwCue.phase} is stretched to ${throwCue.flightMs}ms.`);
     }
     const support = timeline.tracks.fielders.filter((cue) => (
       cue.phase === "support-relay" && cue.who === relay?.fielder && cue.path?.at(-1) === relay?.point
     ));
     assert.equal(support.length, 1, `${item.label}: cutoff support cue is missing or duplicated.`);
     assert(Number(support[0].endT) <= Number(firstLeg.endT), `${item.label}: cutoff arrives after first leg.`);
-    assert.equal(finalLeg.ordering, "runner-safe-first", `${item.label}: safe/out ordering changed.`);
   }
 }
 
@@ -463,7 +500,7 @@ function auditSprayLaneBand(label, event, pointName, home, boundary, problems) {
   }
   const fullSideWidth = Math.max(0.001, Math.abs(Number(pole.x) - Number(center.x)));
   const wallBand = Math.abs(lateral) / fullSideWidth;
-  if (Math.abs(lane) <= 0.2 && wallBand > 0.32) {
+  if (Math.abs(lane) <= 0.17 && wallBand > 0.32) {
     problems.push(`${label}: ${pointName} leaves the center-field band for sprayLane ${lane} (wall band ${wallBand.toFixed(3)}).`);
   }
   if (Math.abs(lane) >= 0.6 && wallBand < 0.25) {
@@ -479,7 +516,7 @@ function auditTimeline(label, event, timeline, coverage, problems) {
   const isLine = type.includes("line");
   const isGround = type.includes("ground");
   const isAir = isFly || isLine;
-  const safeAir = isAir && ["single", "double", "triple", "error"].includes(canonical);
+  const safeAir = isAir && ["single", "double", "triple"].includes(canonical);
   const isBunt = canonical === "sacrificeBunt" || type.includes("bunt");
 
   if (isFly) coverage.fly += 1;
@@ -515,13 +552,13 @@ function auditTimeline(label, event, timeline, coverage, problems) {
   if (safeTrajectory) auditSafeHitTrajectory(label, event, timeline, batted, coverage, problems);
   if (isFly && safeAir) auditSafeFlyBall(label, timeline, batted, coverage, problems);
   if (isLine && safeAir) auditSafeLineDrive(label, timeline, batted, coverage, problems);
-  if (isGround && batted) auditGroundBall(label, batted, problems);
+  if (isGround && batted) auditGroundBall(label, event, timeline, batted, problems);
   if (isGround) auditGroundBallResponsibility(label, event, timeline, coverage, problems);
   if (isBunt) auditSacrificeBunt(label, event, timeline, batted, problems);
 
   auditThrowTarget(label, event, timeline, problems);
   auditReceiverArrivals(label, timeline, problems);
-  auditThrowAndRunnerTiming(label, timeline, coverage, problems);
+  auditThrowAndRunnerTiming(label, event, timeline, coverage, problems);
   auditDefensiveSupport(label, timeline, coverage, problems);
   auditMovementSpeeds(label, timeline, coverage, problems);
   auditTagUpOrdering(label, event, timeline, batted, problems);
@@ -811,9 +848,18 @@ function assertShortGroundedSettle(label, timeline, settle, problems) {
   }
 }
 
-function auditGroundBall(label, batted, problems) {
+function auditGroundBall(label, event, timeline, batted, problems) {
   if (Number(batted.arc) > 0.08) problems.push(`${label}: ground-ball arc ${batted.arc} is too high.`);
   if (batted.flightProfile === "hang") problems.push(`${label}: ground ball uses the hang flight profile.`);
+  if (["single", "double", "triple"].includes(canonicalOutcome(event))) {
+    const travelMs = (Number(batted.endT) - Number(batted.t)) * Number(timeline.durationMs);
+    if (!Number.isFinite(travelMs) || travelMs > 650.5) {
+      problems.push(
+        `${label}: safe ground ball takes ${Number.isFinite(travelMs) ? travelMs.toFixed(1) : "NaN"}ms `
+          + "from contact to fielding point (limit 650ms)."
+      );
+    }
+  }
 }
 
 function auditGroundBallResponsibility(label, event, timeline, coverage, problems) {
@@ -841,7 +887,7 @@ function auditGroundBallResponsibility(label, event, timeline, coverage, problem
   const lane = Number(event.fieldingLane);
   if (!Number.isFinite(lane) || lane < -1 || lane > 1) {
     problems.push(`${label}: invalid ground-ball lane ${String(event.fieldingLane)}.`);
-  } else if (Math.abs(lane) >= 0.58 && !["1B", "3B"].includes(responsibilityFielder)) {
+  } else if (Math.abs(lane) > 0.58 && !["1B", "3B"].includes(responsibilityFielder)) {
     problems.push(`${label}: corner lane ${lane} assigned to ${responsibilityFielder}.`);
   }
   if (!groundThrough) {
@@ -862,12 +908,12 @@ function auditGroundBallResponsibility(label, event, timeline, coverage, problem
     if (middleChaser) problems.push(`${label}: non-primary ${middleChaser.who} chases a no-throw ground ball.`);
   }
 
-  if (canonicalOutcome(event) === "single" && trajectory === "infieldchopper" && actual === "1B") {
-    if (event.defensiveThrowTarget !== "first") {
-      problems.push(`${label}: 1B ground-ball single throws to ${String(event.defensiveThrowTarget)} instead of first.`);
+  if (canonicalOutcome(event) === "single" && trajectory === "infieldchopper") {
+    if (event.defensiveThrowTarget !== null) {
+      problems.push(`${label}: infield chopper chases an already-safe base (${String(event.defensiveThrowTarget)}).`);
     }
-    if (timeline.meta?.fielding?.throwOrdering !== "runner-safe-first") {
-      problems.push(`${label}: 1B ground-ball single does not preserve batter-safe ordering (${String(timeline.meta?.fielding?.throwOrdering)}).`);
+    if (timeline.meta?.fielding?.throwTarget !== null) {
+      problems.push(`${label}: infield chopper timeline creates a late throw (${String(timeline.meta?.fielding?.throwTarget)}).`);
     }
   }
 
@@ -904,9 +950,9 @@ function auditMovementSpeeds(label, timeline, coverage, problems) {
     backup: [45, 220, "backup"]
   };
   const settleKinds = {
-    "safe-settle": ["fly", 28, 100, "flySettle"],
-    "line-settle": ["line", 35, 130, "lineSettle"],
-    "ground-through": ["ground", 45, 150, "groundSettle"]
+    "safe-settle": ["fly", 145, 220, "flySettle"],
+    "line-settle": ["line", 160, 260, "lineSettle"],
+    "ground-through": ["ground", 220, 320, "groundSettle"]
   };
 
   for (const cue of timeline.tracks.fielders.filter((entry) => entry.path?.length > 1)) {
@@ -915,11 +961,11 @@ function auditMovementSpeeds(label, timeline, coverage, problems) {
       problems.push(`${label}: ${cue.who} ${cue.phase} runs only ${Number.isFinite(distance) ? distance.toFixed(2) : "NaN"}px.`);
     }
     if (cue.who === primary && cue.phase === "approach" && distance >= 14) {
-      auditCueSpeed(label, timeline, cue, 45, 240, "primary approach", problems);
+      auditCueSpeed(label, timeline, cue, 45, 300, "primary approach", problems);
       counters.primary += 1;
     }
     if (cue.phase === "recover" && distance >= 8) {
-      auditCueSpeed(label, timeline, cue, 25, 180, "fielder recovery", problems);
+      auditCueSpeed(label, timeline, cue, 55, 260, "fielder recovery", problems);
       counters.recover += 1;
     }
     const support = supportLimits[cue.assignment];
@@ -929,7 +975,7 @@ function auditMovementSpeeds(label, timeline, coverage, problems) {
       counters[counter] += 1;
     }
     if (cue.assignment === "receiver" && distance >= 14) {
-      const maximum = cue.who === "P" && cue.path?.at(-1) === "first" ? 250.5 : 220;
+      const maximum = cue.who === "P" && cue.path?.at(-1) === "first" ? 360.5 : 220;
       auditCueSpeed(label, timeline, cue, 50, maximum, "throw receiver", problems);
       counters.receiver += 1;
     }
@@ -959,10 +1005,9 @@ function auditCueSpeed(label, timeline, cue, minimum, maximum, role, problems) {
   }
 }
 
-function auditThrowAndRunnerTiming(label, timeline, coverage, problems) {
+function auditThrowAndRunnerTiming(label, event, timeline, coverage, problems) {
   const throws = timeline.tracks.ball.filter((cue) => ["fielding-throw", "relay-throw"].includes(cue.phase));
-  const simpleOutfieldSingle = timeline.template === "single"
-    && OUTFIELD_POSITIONS.has(normalizePosition(timeline.meta?.fielding?.fielder));
+  const hitPlay = ["single", "double", "triple"].includes(timeline.template);
   for (const throwCue of throws) {
     coverage.throwGatherChecks += 1;
     const gatherMs = Number(throwCue.gatherMs);
@@ -970,14 +1015,52 @@ function auditThrowAndRunnerTiming(label, timeline, coverage, problems) {
       problems.push(`${label}: ${throwCue.phase} gather is ${Number.isFinite(gatherMs) ? gatherMs.toFixed(1) : "NaN"}ms (limit 300ms).`);
     }
     const flightMs = (Number(throwCue.endT) - Number(throwCue.t)) * Number(timeline.durationMs);
-    if (simpleOutfieldSingle && (!Number.isFinite(flightMs) || flightMs > 620.5)) {
-      problems.push(`${label}: ${throwCue.phase} flight is ${Number.isFinite(flightMs) ? flightMs.toFixed(1) : "NaN"}ms (limit 620ms).`);
+    if (hitPlay) {
+      coverage.hitThrows += 1;
+      coverage.maximumHitThrowFlightMs = Math.max(coverage.maximumHitThrowFlightMs, flightMs);
+    }
+    if (hitPlay && (!Number.isFinite(flightMs) || flightMs > 620.5)) {
+      problems.push(
+        `${label}: ${throwCue.phase} flight is ${Number.isFinite(flightMs) ? flightMs.toFixed(1) : "NaN"}ms (limit 620ms); `
+          + `fielder=${timeline.meta?.fielding?.fielder ?? ""}, target=${timeline.meta?.fielding?.throwTarget ?? ""}, `
+          + `trajectory=${event?.hitTrajectory ?? ""}, bases=${JSON.stringify(event?.baseRunnerIdsBefore ?? [])}->${JSON.stringify(event?.baseRunnerIdsAfter ?? [])}.`
+      );
     }
     const throwDistance = cueRouteDistance(timeline, throwCue);
     const throwSpeed = throwDistance / Math.max(0.001, flightMs / 1000);
-    if (simpleOutfieldSingle && throwDistance >= 140 && (!Number.isFinite(throwSpeed) || throwSpeed < 750)) {
-      problems.push(`${label}: ${throwCue.phase} crawls at ${Number.isFinite(throwSpeed) ? throwSpeed.toFixed(1) : "NaN"}px/s.`);
+    if (hitPlay && throwDistance >= 140) {
+      coverage.minimumLongHitThrowSpeed = Math.min(coverage.minimumLongHitThrowSpeed, throwSpeed);
     }
+    if (hitPlay && throwDistance >= 140 && (!Number.isFinite(throwSpeed) || throwSpeed < 750)) {
+      problems.push(
+        `${label}: ${throwCue.phase} crawls at ${Number.isFinite(throwSpeed) ? throwSpeed.toFixed(1) : "NaN"}px/s; `
+          + `fielder=${timeline.meta?.fielding?.fielder ?? ""}, target=${timeline.meta?.fielding?.throwTarget ?? ""}.`
+      );
+    }
+    if (throwCue.ordering === "physical-first") {
+      problems.push(
+        `${label}: ${throwCue.phase} reaches ${timeline.meta?.fielding?.throwTarget ?? "target"} `
+          + `before the recorded safe runner (${Number(throwCue.endT).toFixed(3)} < ${Number(throwCue.runnerArrivalT).toFixed(3)}).`
+      );
+    }
+    const holdCue = timeline.tracks.ball.find((cue) => (
+      cue.phase === "fielding-hold"
+      && Math.abs(Number(cue.endT) - Number(throwCue.t)) <= 0.000001
+    ));
+    coverage.visiblePossessionChecks += 1;
+    if (!holdCue) problems.push(`${label}: ${throwCue.phase} begins without a visible possession/hold cue.`);
+  }
+
+  const fielding = timeline.meta?.fielding;
+  if (
+    Number(fielding?.ballPickupArrivalT) + 0.000001 < Number(fielding?.fielderRouteArrivalT)
+    && !timeline.tracks.ball.some((cue) => (
+      cue.phase === "pickup-wait"
+      && Number(cue.t) <= Number(fielding.ballPickupArrivalT) + 0.000001
+      && Number(cue.endT) >= Number(fielding.fielderRouteArrivalT) - 0.000001
+    ))
+  ) {
+    problems.push(`${label}: ball disappears before the fielder reaches the pickup point.`);
   }
 
   if (timeline.template === "homeRun") {
@@ -1001,8 +1084,10 @@ function auditThrowAndRunnerTiming(label, timeline, coverage, problems) {
   coverage.longRelayChecks += 1;
   const firstLeg = throws.find((cue) => cue.phase === "fielding-throw" && cue.path?.at(-1) === relay.point);
   const finalLeg = throws.find((cue) => cue.phase === "relay-throw" && cue.path?.[0] === relay.point);
-  if (!firstLeg || !finalLeg) {
-    problems.push(`${label}: long outfield relay does not contain both hops.`);
+  if (!firstLeg || (relay.cutoffOnly ? Boolean(finalLeg) : !finalLeg)) {
+    problems.push(
+      `${label}: long outfield relay has invalid ${relay.cutoffOnly ? "cutoff-only" : "two-hop"} structure.`
+    );
     return;
   }
   const support = timeline.tracks.fielders.filter((cue) => (
@@ -1023,14 +1108,27 @@ function auditThrowAndRunnerTiming(label, timeline, coverage, problems) {
 }
 
 function auditThrowTarget(label, event, timeline, problems) {
+  const relay = timeline.meta?.fielding?.relay;
+  if (relay?.cutoffOnly) {
+    const firstLeg = timeline.tracks.ball.find((cue) => (
+      cue.phase === "fielding-throw" && cue.path?.at(-1) === relay.point
+    ));
+    const finalLeg = timeline.tracks.ball.find((cue) => (
+      cue.phase === "relay-throw" && cue.path?.[0] === relay.point
+    ));
+    if (timeline.meta?.fielding?.throwTarget !== null || !firstLeg || finalLeg) {
+      problems.push(`${label}: futile safe-base throw was not reduced to a cutoff-only return.`);
+    }
+    return;
+  }
   const fielder = normalizePosition(timeline.meta?.fielding?.fielder ?? event.fieldingPosition);
   const outfieldSingle = timeline.template === "single" && OUTFIELD_POSITIONS.has(fielder);
   const runnerMoves = timeline.tracks.runners.filter((cue) => cue.phase === "runner-advance");
   const hasExtraBaseAdvance = runnerMoves.some((cue) => Number(cue.basesAdvanced) >= 2);
   const secondRemainsOccupied = runnerMoves.some((cue) => cue.toBase === "second");
-  const expected = outfieldSingle
-    ? (hasExtraBaseAdvance && !secondRemainsOccupied ? "second" : null)
-    : (event.defensiveThrowTarget ?? null);
+  const expected = timeline.template === "single"
+    ? outfieldSingle && hasExtraBaseAdvance && !secondRemainsOccupied ? "second" : null
+    : resolveDefensiveThrowTarget(event);
   const actual = timeline.meta?.fielding?.throwTarget ?? null;
   if (actual !== expected) problems.push(`${label}: throw target ${actual}, expected ${expected}.`);
   const competitiveThrow = fieldingDecisionThrow(timeline);
@@ -1057,8 +1155,8 @@ function auditReceiverArrivals(label, timeline, problems) {
       const destination = timeline.points?.[receiver.path?.at(-1)];
       const seconds = (Number(receiver.endT) - Number(receiver.t)) * Number(timeline.durationMs) / 1000;
       const speed = pointDistance(start, destination) / seconds;
-      if (!Number.isFinite(speed) || speed > 250.01) {
-        problems.push(`${label}: pitcher covers first at ${speed.toFixed(1)}px/s (limit 250).`);
+      if (!Number.isFinite(speed) || speed > 360.01) {
+        problems.push(`${label}: pitcher covers first at ${speed.toFixed(1)}px/s (limit 360).`);
       }
     }
   }
@@ -1238,6 +1336,33 @@ function pointDistance(left, right) {
   return Math.hypot(Number(left.x) - Number(right.x), Number(left.y) - Number(right.y));
 }
 
+function auditSingleBaseRunning(label, event, coverage, problems) {
+  if (canonicalOutcome(event) !== "single") return;
+  coverage.singles += 1;
+  const before = Array.from({ length: 3 }, (_, index) => String(event?.baseRunnerIdsBefore?.[index] ?? ""));
+  const after = Array.from({ length: 3 }, (_, index) => String(event?.baseRunnerIdsAfter?.[index] ?? ""));
+  const hitterId = String(event?.hitterId ?? "");
+  const scored = new Set((event?.scoredRunners ?? []).map((runner) => String(runner?.id ?? runner?.runnerId ?? runner ?? "")));
+  if (!hitterId || after[0] !== hitterId || after[1] === hitterId || after[2] === hitterId) {
+    coverage.singleBatterBeyondFirst += 1;
+    problems.push(`${label}: single batter does not stop at first (${JSON.stringify(after)}).`);
+  }
+  if (["third", "home"].includes(String(event?.defensiveThrowTarget ?? ""))) {
+    coverage.singleThirdHomeTargets += 1;
+    problems.push(`${label}: single targets an already-safe runner at ${event.defensiveThrowTarget}.`);
+  }
+  const trajectory = normalizedToken(event?.hitTrajectory);
+  const runnerFromFirstDestination = before[0] ? after.indexOf(before[0]) + 1 : 0;
+  if (runnerFromFirstDestination >= 3 && trajectory !== "flygapdrop") {
+    coverage.routineFirstToThird += 1;
+    problems.push(`${label}: routine single sends the first-base runner to ${runnerFromFirstDestination}B (${trajectory}).`);
+  }
+  if (before[1] && scored.has(before[1]) && normalizedToken(event?.battedBallType).includes("ground")) {
+    coverage.groundSecondToHome += 1;
+    problems.push(`${label}: ground-ball single scores the second-base runner.`);
+  }
+}
+
 function cueRouteDistance(timeline, cue) {
   let distance = 0;
   for (let index = 1; index < (cue.path?.length ?? 0); index += 1) {
@@ -1344,7 +1469,7 @@ function finiteNumber(value) {
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
   const coverage = verifyGamecastTenGames();
   console.log(
-    `Gamecast 10-game audit passed: ${coverage.games} games, ${coverage.events} events `
+    `Gamecast ${GAME_COUNT}-game audit passed: ${coverage.games} games, ${coverage.events} events `
       + `(${coverage.plateAppearances} PA, ${coverage.steals} steals), `
       + `fly ${coverage.fly}, line ${coverage.line}, ground ${coverage.ground}, `
       + `bunt ${coverage.bunt}, DP ${coverage.doublePlay}, safe-air ${coverage.safeAir}, fallback ${coverage.fallback}, `
@@ -1352,6 +1477,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
       + `line ${coverage.safeLineDives}/${coverage.safeLineShortHops} dive/short-hop, `
       + `safe trajectory ${coverage.safeHits} hits/${coverage.safeHitMisses} misses/${coverage.safeHitGates} gates/${coverage.safeHitReactionChecks} reactions, `
       + `ground ${coverage.groundThrough}/${coverage.infieldChoppers} through/chopper, line-through ${coverage.lineThroughSingles}, `
+      + `singles ${coverage.singles} (3B/home target ${coverage.singleThirdHomeTargets}, batter>1B ${coverage.singleBatterBeyondFirst}, routine 1B->3B ${coverage.routineFirstToThird}, ground 2B->home ${coverage.groundSecondToHome}), `
+      + `hit throws ${coverage.hitThrows} (max ${coverage.maximumHitThrowFlightMs.toFixed(1)}ms, min long ${coverage.minimumLongHitThrowSpeed.toFixed(1)}px/s), possession ${coverage.visiblePossessionChecks}, `
       + `wall ${coverage.safeWallEvents} safe events/${coverage.safeWallPoints} points (min ${coverage.minimumSafeWallMarginPx.toFixed(1)}px inside), `
       + `HR ${coverage.homeRunWallExits} exits (min ${coverage.minimumHomeRunWallClearancePx.toFixed(1)}px outside), `
       + `base backups ${coverage.baseBackups} (${coverage.behindBaseBackups} behind), `

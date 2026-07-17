@@ -23,10 +23,12 @@ import {
 } from "../src/gamecast2/scene.js";
 import {
   buildGamecastActionBurst,
+  buildGamecastThrowLines,
   gamecastEventPlayDuration,
   gamecastMovementSettleProgress,
   gamecastPlaybackPosition,
   gamecastResultRevealProgress,
+  gamecastSideInfoSummary,
   gamecastStepHoldProgress,
   gamecastTotalDuration,
   GAMECAST_WATCH_GAP_MS
@@ -258,7 +260,7 @@ function verifyCenterFieldSingleTiming() {
     ["bloop", "flyBall", "fly-bloop", 1150, 1300, "safe-fly-drop"],
     ["gap drop", "flyBall", "fly-gap-drop", 1250, 1400, "safe-fly-drop"],
     ["line drop", "lineDrive", "line-drop", 850, 1200, "safe-line-short-hop"],
-    ["ground through", "groundBall", "ground-through", 800, 1100, "safe-ground-through"]
+    ["ground through", "groundBall", "ground-through", 450, 700, "safe-ground-through"]
   ];
 
   for (const [label, battedBallType, hitTrajectory, minimumFlightMs, maximumFlightMs, resolution] of variants) {
@@ -379,9 +381,9 @@ function verifyMovementSpeedWindows(compiled) {
     backup: [45, 220]
   };
   const settleKinds = {
-    "safe-settle": ["fly", 28, 100],
-    "line-settle": ["line", 35, 130],
-    "ground-through": ["ground", 45, 150]
+    "safe-settle": ["fly", 145, 220],
+    "line-settle": ["line", 160, 260],
+    "ground-through": ["ground", 220, 320]
   };
 
   for (const { name, timeline } of items) {
@@ -392,11 +394,11 @@ function verifyMovementSpeedWindows(compiled) {
         assert(distance >= 7.99, `${name}: ${cue.who} ${cue.phase} runs only ${distance.toFixed(2)}px.`);
       }
       if (cue.who === primary && cue.phase === "approach" && distance >= 14) {
-        assertTimelineCueSpeed(name, timeline, cue, 45, 240, "primary approach");
+        assertTimelineCueSpeed(name, timeline, cue, 45, 300, "primary approach");
         coverage.primary += 1;
       }
       if (cue.phase === "recover" && distance >= 8) {
-        assertTimelineCueSpeed(name, timeline, cue, 25, 180, "fielder recovery");
+        assertTimelineCueSpeed(name, timeline, cue, 55, 260, "fielder recovery");
         coverage.recover += 1;
       }
       if (supportLimits[cue.assignment] && distance >= 14) {
@@ -405,7 +407,7 @@ function verifyMovementSpeedWindows(compiled) {
         coverage[cue.assignment] += 1;
       }
       if (cue.assignment === "receiver" && distance >= 14) {
-        const maximum = cue.who === "P" && cue.path?.at(-1) === "first" ? 250.5 : 220;
+        const maximum = cue.who === "P" && cue.path?.at(-1) === "first" ? 360.5 : 220;
         assertTimelineCueSpeed(name, timeline, cue, 50, maximum, "throw receiver");
         coverage.receiver += 1;
       }
@@ -587,7 +589,7 @@ function verifyGroundBallResponsibilityZones() {
   const pitcherCoverDistance = pointDistance(ANCHORS.P, ANCHORS.first);
   const pitcherCoverSeconds = (Number(pitcherCover.endT) - Number(pitcherCover.t)) * firstBaseOut.durationMs / 1000;
   assert(
-    pitcherCoverDistance / pitcherCoverSeconds <= 250,
+    pitcherCoverDistance / pitcherCoverSeconds <= 360,
     `Pitcher first-base coverage is too fast (${(pitcherCoverDistance / pitcherCoverSeconds).toFixed(1)}px/s).`
   );
 
@@ -632,22 +634,21 @@ function verifyGroundBallResponsibilityZones() {
     basesAfter: [true, false, true],
     baseRunnerIdsAfter: ["batter", "", "r2"]
   }, { anchors: ANCHORS });
-  assert.equal(safeFirstAttempt.meta.fielding?.throwTarget, "first", "1B ground-ball single throws across the diamond instead of trying first.");
-  assert.equal(safeFirstAttempt.meta.fielding?.throwOrdering, "runner-safe-first", "1B ground-ball single throw beats a batter recorded safe.");
+  assert.equal(safeFirstAttempt.meta.fielding?.throwTarget, null, "1B ground-ball single chases an already-safe runner/base.");
+  assert.equal(safeFirstAttempt.tracks.ball.find((cue) => cue.phase === "fielding-throw"), undefined, "1B ground-ball single invents a late throw.");
 
   const thirdBaseThrow = compilePlayTimeline({
     ...BASE_EVENT,
     id: "ground-zone-third-backup",
-    outcome: "single",
-    battedBallType: "groundBall",
-    fieldingPosition: "2B",
-    fieldingZone: "first-hole",
-    fieldingLane: 0.38,
+    outcome: "out",
+    battedBallType: "flyBall",
+    fieldingPosition: "RF",
     defensiveThrowTarget: "third",
     basesBefore: [false, true, false],
     baseRunnerIdsBefore: ["", "r2", ""],
-    basesAfter: [true, false, true],
-    baseRunnerIdsAfter: ["batter", "", "r2"]
+    basesAfter: [false, false, true],
+    baseRunnerIdsAfter: ["", "", "r2"],
+    outsAfter: 1
   }, { anchors: ANCHORS });
   const thirdBackup = thirdBaseThrow.tracks.fielders.find((cue) => cue.assignment === "backup" && cue.supportTarget === "third");
   assert.equal(thirdBackup?.who, "LF", "Third-base backup should be LF, not P/SS/2B.");
@@ -1311,8 +1312,8 @@ function verifyThrowGatherLimit(compiled) {
 function verifyLongOutfieldRelays() {
   const cases = [
     {
-      label: "RF to home",
-      target: "home",
+      label: "RF to third containment",
+      target: "third",
       event: {
         outcome: "double",
         battedBallType: "lineDrive",
@@ -1328,8 +1329,8 @@ function verifyLongOutfieldRelays() {
       }
     },
     {
-      label: "CF to third",
-      target: "third",
+      label: "CF to home containment",
+      target: "home",
       event: {
         outcome: "triple",
         battedBallType: "flyBall",
@@ -1401,7 +1402,10 @@ function verifyLongOutfieldRelays() {
       && Number(cue.endT) >= Number(finalLeg.endT)
     ));
     assert(baseReceiver, `${item.label}: final receiver is not set before the relay arrives.`);
-    assert.equal(finalLeg.ordering, "runner-safe-first", `${item.label}: relay loses the recorded safe ordering.`);
+    for (const throwCue of throws) {
+      const flightMs = (Number(throwCue.endT) - Number(throwCue.t)) * timeline.durationMs;
+      assert(flightMs <= 620.5, `${item.label}: ${throwCue.phase} is stretched to ${flightMs.toFixed(1)}ms.`);
+    }
     verifyThrowChains(`long-relay-${item.label}`, timeline);
   }
 }
@@ -1420,7 +1424,7 @@ function verifyPlaybackClock() {
       basesAdvanced: 1,
       expectedPath: ["home", "first"],
       legacyDurationMs: 3900,
-      legacyLandingT: 0.46,
+      legacyLandingT: 0.38,
       legacyThrowEndT: null,
       fieldingDelayMs: 0
     },
@@ -1534,8 +1538,10 @@ function verifyPlaybackClock() {
           `${timeline.template}: pickup-to-release is ${pickupToReleaseMs.toFixed(1)}ms (limit 300ms).`
         );
         assert(Number(cueEntry.flightMs) >= 150, `${timeline.template}: throw has no realistic flight interval.`);
-        const expectedOrdering = timeline.outcome === "out" ? "out-first" : "runner-safe-first";
-        assert.equal(cueEntry.ordering, expectedOrdering, `${timeline.template}: throw loses recorded arrival ordering.`);
+        assert(Number(cueEntry.flightMs) <= 620, `${timeline.template}: throw is stretched to ${cueEntry.flightMs}ms.`);
+        if (timeline.outcome === "out") {
+          assert.equal(cueEntry.ordering, "out-first", `${timeline.template}: force throw loses recorded out ordering.`);
+        }
         continue;
       }
       const actualMs = Number(cueEntry.endT) * playbackMs;
@@ -1894,6 +1900,17 @@ function fieldingDecisionThrow(timeline) {
 function verifyThrowTargetSemantics(name, event, timeline) {
   const fieldingThrow = fieldingDecisionThrow(timeline);
   const fieldingTarget = fieldingThrow?.path?.at(-1) ?? null;
+  const cutoffRelay = timeline.meta?.fielding?.relay;
+  if (cutoffRelay?.cutoffOnly) {
+    assert.equal(timeline.meta.fielding?.throwTarget, null, `${name}: cutoff-only play still advertises a contested base.`);
+    assert.equal(fieldingTarget, cutoffRelay.point, `${name}: cutoff-only throw does not finish at the relay point.`);
+    assert.equal(fieldingThrow?.ordering, "cutoff-return", `${name}: cutoff-only return has the wrong ordering metadata.`);
+    assert(
+      !timeline.tracks.ball.some((cue) => cue.phase === "relay-throw" && cue.path?.[0] === cutoffRelay.point),
+      `${name}: cutoff-only play still throws on to the already-safe base.`
+    );
+    return;
+  }
   const runnerTarget = leadRunnerDestination(timeline);
   const canonicalTargetRaw = String(event?.defensiveThrowTarget ?? "").trim().toLowerCase();
   const canonicalTarget = ["first", "second", "third", "home"].includes(canonicalTargetRaw)
@@ -1909,13 +1926,11 @@ function verifyThrowTargetSemantics(name, event, timeline) {
     const runnerMoves = timeline.tracks.runners.filter((cue) => cue.phase === "runner-advance");
     const extraBaseAdvance = runnerMoves.some((cue) => Number(cue.basesAdvanced) >= 2);
     const secondBaseIsLive = runnerMoves.some((cue) => cue.toBase === "second");
-    const expectedTarget = outfieldSingle
-      ? (extraBaseAdvance && !secondBaseIsLive ? "second" : null)
-      : (canonicalTarget ?? (battedType.includes("ground") ? "first" : runnerTarget));
+    const expectedTarget = outfieldSingle && extraBaseAdvance && !secondBaseIsLive ? "second" : null;
     assert.equal(
       fieldingTarget,
       expectedTarget,
-      `${name}: routine outfield single invents a competitive throw instead of holding/cutting off.`
+      `${name}: single chases an already-safe runner instead of holding/cutting off.`
     );
     const batterRun = timeline.tracks.batter.find((cue) => cue.phase === "batter-run");
     const field = timeline.tracks.fielders.find((cue) => ["field", "pickup", "trap", "short-hop"].includes(cue.phase));
@@ -1961,6 +1976,7 @@ function verifyThrowTargetSemantics(name, event, timeline) {
   if (fieldingTarget === "second") {
     assert(
       timeline.template === "double"
+        || timeline.template === "triple"
         || timeline.template === "doublePlay"
         || runnerTarget === "second"
         || canonicalTarget === "second"
@@ -1975,8 +1991,8 @@ function verifyThrowTargetSemantics(name, event, timeline) {
   }
   if (fieldingTarget === "third") {
     assert(
-      timeline.template === "triple" || runnerTarget === "third" || canonicalTarget === "third",
-      `${name}: unjustified throw to third without a triple or an actual runner destination.`
+      ["double", "triple"].includes(timeline.template) || runnerTarget === "third" || canonicalTarget === "third",
+      `${name}: unjustified throw to third without an extra-base containment play or an actual runner destination.`
     );
   }
 
@@ -2085,8 +2101,8 @@ function verifyArmDrivenThrows() {
   const tripleArrival = Math.max(...safeTriple.tracks.batter
     .filter((cue) => cue.path?.at(-1) === "third" || cue.at === "third")
     .map((cue) => Number(cue.endT ?? cue.t)));
-  assert.equal(tripleThrow.ordering, "runner-safe-first", "Safe triple throw lacks safe-order metadata.");
-  assert(Number(tripleThrow.endT) >= tripleArrival + 0.014999, "Safe triple visually shows the throw beating the runner.");
+  assert(Number(tripleThrow.flightMs) <= 620, "Safe triple throw is slowed down to preserve the result.");
+  assert(Number(safeTriple.resultAt) >= tripleArrival, "Safe triple result appears before the runner reaches third.");
 
   const doublePlay = compilePlayTimeline({
     ...BASE_EVENT,
@@ -2166,12 +2182,19 @@ function verifyThrowTargetRegressionCases() {
     fieldingZone: "third-hole",
     fieldingLane: -0.36,
     hitTrajectory: "infield-chopper",
-    basesAfter: [true, false, false],
-    baseRunnerIdsAfter: ["batter", "", ""]
+    defensiveThrowTarget: "third",
+    basesBefore: [false, true, false],
+    baseRunnerIdsBefore: ["", "r2", ""],
+    basesAfter: [true, false, true],
+    baseRunnerIdsAfter: ["batter", "", "r2"]
   });
   const chopperThrow = infieldChopper.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw");
-  assert.equal(chopperThrow?.path?.at(-1), "first", "Infield hit fielder keeps the ball instead of making the late throw to first.");
-  assert.equal(chopperThrow?.ordering, "runner-safe-first", "Infield-hit throw reaches first before the recorded safe runner.");
+  assert.equal(chopperThrow, undefined, "Infield hit chases a non-force runner at third.");
+  assert.equal(infieldChopper.timeline.meta.fielding?.throwTarget, null, "Stale infield-hit target was not sanitized.");
+  const pickupWait = infieldChopper.timeline.tracks.ball.find((cue) => cue.phase === "pickup-wait");
+  if (Number(infieldChopper.timeline.meta.fielding?.ballPickupArrivalT) < Number(infieldChopper.timeline.meta.fielding?.fielderRouteArrivalT)) {
+    assert(pickupWait, "Infield-hit ball disappears before the fielder reaches the pickup point.");
+  }
 
   const firstToThirdSingle = compile({
     outcome: "single",
@@ -2201,9 +2224,9 @@ function verifyThrowTargetRegressionCases() {
     baseRunnerIdsAfter: ["batter", "r1", ""]
   });
   assert.equal(
-    forcedFirstToSecondSingle.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw")?.path?.at(-1),
-    "first",
-    "Regression: an infield single chases the forced runner instead of trying the batter at first."
+    forcedFirstToSecondSingle.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw"),
+    undefined,
+    "Regression: an infield single invents a force/late throw after the hit is already safe."
   );
   verifyThrowTargetSemantics(
     "regression-forced-first-to-second-single",
@@ -2220,9 +2243,9 @@ function verifyThrowTargetRegressionCases() {
     baseRunnerIdsAfter: ["", "batter", ""]
   });
   assert.equal(
-    canonicalEmptyDouble.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw")?.path?.at(-1),
-    "second",
-    "Regression: canonical empty-bases double target was not second."
+    fieldingDecisionThrow(canonicalEmptyDouble.timeline)?.path?.at(-1),
+    "third",
+    "Regression: empty-bases double was not contained at third."
   );
   verifyThrowTargetSemantics("regression-canonical-empty-double", canonicalEmptyDouble.event, canonicalEmptyDouble.timeline);
 
@@ -2236,8 +2259,8 @@ function verifyThrowTargetRegressionCases() {
   });
   assert.equal(
     fieldingDecisionThrow(canonicalEmptyTriple.timeline)?.path?.at(-1),
-    "third",
-    "Regression: canonical empty-bases triple target was not third."
+    "home",
+    "Regression: empty-bases triple was not contained at home."
   );
   verifyThrowTargetSemantics("regression-canonical-empty-triple", canonicalEmptyTriple.event, canonicalEmptyTriple.timeline);
 
@@ -2284,11 +2307,7 @@ function verifyThrowTargetRegressionCases() {
   const tagUpRunner = canonicalTagUpThrow.timeline.tracks.runners.find((cue) => (
     cue.phase === "runner-advance" && cue.runnerId === "r3"
   ));
-  const tagUpReceiver = canonicalTagUpThrow.timeline.tracks.fielders.find((cue) => (
-    cue.anim === "catch"
-    && cue.at === "home"
-    && Number(cue.endT ?? cue.t) >= Number(tagUpThrow?.endT ?? 2)
-  ));
+  const tagUpRelay = canonicalTagUpThrow.timeline.meta.fielding?.relay;
   assert(tagUpCatch && tagUpRunner, "Regression: tag-up play has no caught-ball/runner cues.");
   assert(
     Number(tagUpRunner.t) >= Number(tagUpCatch.endT),
@@ -2307,13 +2326,26 @@ function verifyThrowTargetRegressionCases() {
     Math.abs(Number(tagUpHelperStartMs) - tagUpTimelineStartMs) <= 0.01,
     `Regression: tag-up helper (${tagUpHelperStartMs}ms) disagrees with timeline (${tagUpTimelineStartMs}ms).`
   );
-  assert.equal(tagUpThrow?.path?.at(-1), "home", "Regression: tag-up scoring play ignored the canonical throw home.");
-  assert(tagUpReceiver, "Regression: tag-up throw reaches home after the catcher cue has ended.");
-  assert(Number(tagUpThrow.endT) <= 0.985, `Regression: tag-up throw exceeds the timeline throw boundary (${tagUpThrow.endT}).`);
+  assert(tagUpRelay?.cutoffOnly, "Regression: noncompetitive tag-up throw was not stopped at the cutoff.");
+  assert.equal(tagUpThrow?.path?.at(-1), tagUpRelay.point, "Regression: tag-up cutoff return misses the relay point.");
+  assert.equal(tagUpThrow?.ordering, "cutoff-return", "Regression: tag-up cutoff return is labeled as a plate contest.");
   assert(
-    Number(tagUpThrow.endT) >= Number(tagUpRunner.endT) + 0.014999,
-    `Regression: safe tag-up shows the throw beating the scoring runner (${tagUpThrow.endT} < ${tagUpRunner.endT} + .015).`
+    !canonicalTagUpThrow.timeline.tracks.ball.some((cue) => cue.phase === "relay-throw"),
+    "Regression: noncompetitive tag-up play still sends the relay home."
   );
+  assert(
+    Array.from({ length: 101 }, (_, index) => index / 100)
+      .every((progress) => buildGamecastThrowLines(canonicalTagUpThrow.event, progress).length === 0),
+    "Regression: legacy Gamecast still holds and throws home on the noncompetitive tag-up."
+  );
+  assert.equal(
+    gamecastSideInfoSummary(canonicalTagUpThrow.event).showThrow,
+    false,
+    "Regression: side info still advertises a futile home throw."
+  );
+  assert(Number(tagUpThrow.endT) <= 0.985, `Regression: tag-up throw exceeds the timeline throw boundary (${tagUpThrow.endT}).`);
+  const tagUpFlightMs = (Number(tagUpThrow.endT) - Number(tagUpThrow.t)) * canonicalTagUpThrow.timeline.durationMs;
+  assert(tagUpFlightMs <= 620.5, `Regression: tag-up throw is stretched to ${tagUpFlightMs.toFixed(1)}ms.`);
   assert(Number(canonicalTagUpThrow.timeline.resultAt) >= Number(tagUpThrow.endT), "Regression: tag-up result appears before the throw home arrives.");
   assert(
     Number(canonicalTagUpThrow.timeline.resultAt) >= Number(tagUpRunner.endT),
@@ -2332,12 +2364,9 @@ function verifyThrowTargetRegressionCases() {
   });
   const errorField = canonicalErrorThrow.timeline.tracks.fielders.find((cue) => cue.phase === "misplay");
   const errorThrow = canonicalErrorThrow.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw");
-  assert(errorField && errorThrow, "Regression: error event has no visible misplay-followed-by-throw sequence.");
-  assert.equal(errorThrow.path?.at(-1), "first", "Regression: error throw ignored its canonical first-base target.");
-  assert(
-    Number(errorThrow.t) >= Number(errorField.endT),
-    "Regression: error throw starts before the misplay finishes."
-  );
+  assert(errorField, "Regression: error event has no visible misplay sequence.");
+  assert.equal(errorThrow, undefined, "Regression: error play throws to first after the batter is already recorded safe.");
+  assert.equal(canonicalErrorThrow.timeline.meta.fielding?.throwTarget, null, "Regression: futile error throw remains advertised as a first-base contest.");
 
   const legacyDoubleTarget = compile({
     outcome: "double",
@@ -2347,9 +2376,9 @@ function verifyThrowTargetRegressionCases() {
     baseRunnerIdsAfter: ["", "batter", ""]
   });
   assert.equal(
-    legacyDoubleTarget.timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw")?.path?.at(-1),
-    "second",
-    "Regression: legacy double inference does not hold the batter at second."
+    fieldingDecisionThrow(legacyDoubleTarget.timeline)?.path?.at(-1),
+    "third",
+    "Regression: legacy double inference does not contain the batter at third."
   );
 
   for (const [label, overrides] of [

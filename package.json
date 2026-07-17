@@ -15,6 +15,7 @@
     "verify:browser": "node tools/verify_browser.mjs",
     "verify:balance": "node tools/verify_balance.mjs",
     "verify:gamecast-games": "node tools/verify_gamecast_10games.mjs",
+    "verify:gamecast-1000": "node tools/verify_gamecast_10games.mjs --games=1000",
     "package": "electron-builder --win --x64",
     "package:dir": "electron-builder --dir",
     "dist": "electron-builder --win --x64"

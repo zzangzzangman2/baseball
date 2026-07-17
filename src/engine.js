@@ -7575,26 +7575,29 @@ export function resolveDefensiveThrowTarget(event) {
     return "first";
   }
 
-  const leadRunnerTarget = leadExistingRunnerThrowTarget(event);
-
-  // An authored infield hit is a late force play, not a fielder who simply
-  // gives up with the ball in hand. A first baseman keeps the nearby play at
-  // first; the other infielders take a real lead-runner force when one exists,
-  // then fall back to the batter-runner. Playback orders a safe throw just
-  // after the recorded runner arrival.
   const fieldingPosition = String(event?.fieldingPosition ?? "").trim().toUpperCase();
-  if (
-    outcome === "single"
-    && battedBallType.includes("ground")
-    && SAFE_HIT_INFIELD_POSITIONS.has(fieldingPosition)
-  ) {
-    if (fieldingPosition !== "1B" && leadRunnerTarget) return leadRunnerTarget;
-    return "first";
+  if (outcome === "single") {
+    // A hit has no force play on an already-safe lead runner. The previous
+    // resolver threw to that runner's final base (including third/home), then
+    // playback slowed the ball down to preserve the recorded safe result.
+    // Infield hits are a bobble/deep-hole hold. A genuinely deep outfield
+    // single is returned to an empty second-base cutoff only when a runner took
+    // two bases; every routine single is simply secured.
+    if (!new Set(["LF", "CF", "RF", "OF"]).has(fieldingPosition)) return null;
+    const advances = existingRunnerAdvances(event);
+    const hasTwoBaseAdvance = advances.some(({ fromBase, toBase }) => toBase - fromBase >= 2);
+    const secondOccupiedAfter = Boolean(normalizedBaseRunnerIds(event?.baseRunnerIdsAfter)[1]);
+    return hasTwoBaseAdvance && !secondOccupiedAfter ? "second" : null;
   }
 
-  if (leadRunnerTarget) return leadRunnerTarget;
-  if (outcome === "double") return "second";
-  if (outcome === "triple") return "third";
+  if (["double", "triple"].includes(outcome)) {
+    // Extra-base hits are already recorded safe. Throwing at the lead runner's
+    // final base made a normal 900-1600px/s throw arrive several seconds before
+    // that runner, while slowing the throw enough to preserve the call looked
+    // even worse. Return the ball to the nearest unoccupied containment base
+    // instead. If every useful base has a live arrival, the fielder holds.
+    return extraBaseHitContainmentTarget(event, outcome);
+  }
 
   // A single with no existing runner advancing is already safely in hand.
   // Do not invent a throw home (or a futile force throw to first).
@@ -7602,6 +7605,20 @@ export function resolveDefensiveThrowTarget(event) {
 }
 
 function leadExistingRunnerThrowTarget(event) {
+  const advances = existingRunnerAdvances(event);
+  const lead = advances.sort((a, b) => b.toBase - a.toBase || b.fromBase - a.fromBase)[0];
+  return lead ? DEFENSIVE_THROW_BASE_BY_INDEX[lead.toBase] : null;
+}
+
+function extraBaseHitContainmentTarget(event, outcome) {
+  const liveDestinations = new Set(existingRunnerAdvances(event).map(({ toBase }) => toBase));
+  liveDestinations.add(outcome === "double" ? 2 : 3);
+  const preferences = outcome === "double" ? [3, 4] : [4, 2];
+  const targetIndex = preferences.find((index) => !liveDestinations.has(index));
+  return targetIndex ? DEFENSIVE_THROW_BASE_BY_INDEX[targetIndex] : null;
+}
+
+function existingRunnerAdvances(event) {
   const beforeIds = normalizedBaseRunnerIds(event?.baseRunnerIdsBefore);
   const afterIds = normalizedBaseRunnerIds(event?.baseRunnerIdsAfter);
   const afterBaseById = new Map();
@@ -7624,8 +7641,7 @@ function leadExistingRunnerThrowTarget(event) {
     }
   });
 
-  const lead = advances.sort((a, b) => b.toBase - a.toBase || b.fromBase - a.fromBase)[0];
-  return lead ? DEFENSIVE_THROW_BASE_BY_INDEX[lead.toBase] : null;
+  return advances;
 }
 
 function normalizedBaseRunnerIds(value) {

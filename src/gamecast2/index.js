@@ -1,4 +1,4 @@
-export { GAMECAST2_FIELDS, GAMECAST2_FIXED_FIELD_ID } from "./assets.js?v=gamecast-ai-kinematics-20260717-r29";
+export { GAMECAST2_FIELDS, GAMECAST2_FIXED_FIELD_ID } from "./assets.js?v=gamecast-ai-kinematics-20260717-r31";
 export {
   compilePlayTimeline,
   getGamecast2PlayDurationMs,
@@ -8,5 +8,5 @@ export {
   GAMECAST2_ATLAS_ANIMATION_CONTRACT,
   GAMECAST2_ATLAS_ANIMATION_KEYS,
   GAMECAST2_TIMELINE_TEMPLATES
-} from "./timeline.js?v=gamecast-ai-kinematics-20260717-r29";
-export { canUseGamecast2, mountGamecast2 } from "./scene.js?v=gamecast-ai-kinematics-20260717-r29";
+} from "./timeline.js?v=gamecast-ai-kinematics-20260717-r31";
+export { canUseGamecast2, mountGamecast2 } from "./scene.js?v=gamecast-ai-kinematics-20260717-r31";

@@ -7,13 +7,13 @@ import {
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-ai-kinematics-20260717-r29";
+} from "./assets.js?v=gamecast-ai-kinematics-20260717-r31";
 import {
   compilePlayTimeline,
   GAMECAST2_DEFENDER_MOVE_ZONES,
   gamecast2OutfieldPlayableMinY
-} from "./timeline.js?v=gamecast-ai-kinematics-20260717-r29";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-ai-kinematics-20260717-r29";
+} from "./timeline.js?v=gamecast-ai-kinematics-20260717-r31";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-ai-kinematics-20260717-r31";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -1759,7 +1759,7 @@ export function timelineBallPoint(cue, points, localT) {
     height += Math.sin(clamp01(localT) * Math.PI) * Math.min(190, 8 + arc * 132);
   }
   const phase = String(cue.phase ?? "");
-  if (["fielding-throw", "relay-throw"].includes(phase)) {
+  if (["fielding-hold", "fielding-throw", "relay-throw"].includes(phase)) {
     // Timeline anchors are feet/base coordinates. Lift throws into the hand and
     // receiving-glove plane so a hard throw never appears to roll base-to-base.
     height += GAMECAST2_THROW_GLOVE_LIFT;

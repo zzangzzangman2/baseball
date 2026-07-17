@@ -41,7 +41,7 @@ import {
   simulateSecondaryDraft,
   setSecondaryDraftProtection,
   runAutonomousOffseason
-} from "./engine.js?v=gamecast-ai-kinematics-20260717-r29";
+} from "./engine.js?v=gamecast-ai-kinematics-20260717-r31";
 
 import {
   getContractSummary,
@@ -68,7 +68,7 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-ai-kinematics-20260717-r29";
+} from "./gamecastPhaser.js?v=gamecast-ai-kinematics-20260717-r31";
 
 import {
   canUseGamecast2,
@@ -77,7 +77,7 @@ import {
   getGamecast2PlayDurationMs,
   getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-ai-kinematics-20260717-r29";
+} from "./gamecast2/index.js?v=gamecast-ai-kinematics-20260717-r31";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },
@@ -5577,7 +5577,7 @@ export function gamecastSideInfoSummary(event, frame = null) {
   const fielder = defenderName
     ? `${defenderName}${fieldingPosition ? ` (${fieldingPosition})` : ""}`
     : fieldingPosition;
-  const throwTarget = gamecastThrowTargetLabel(event.defensiveThrowTarget);
+  const throwTarget = gamecastThrowTargetLabel(gamecastCanonicalThrowTargetKey(event));
   const currentOuts = Number(frame?.outs ?? outsInInning(event.outsBefore));
   const pitchCount = gamecastPitchCount(frame ?? { event, progress: 1 });
   return {
@@ -6018,15 +6018,21 @@ export function normalizeGamecastEvent(event, state, gamecastContext = null) {
   const defenderProfile = resolveGamecastPlayerProfile(gamecastContext, defenderId, event?.defenderName, state, defenseTeam);
   const defenseProfilesByPosition = resolveGamecastDefenseProfiles(gamecastContext, defenseTeam, state);
   const fieldingPosition = resolveGamecastDefenderFieldingKey(defenderId, defenseProfilesByPosition, event?.fieldingPosition);
-  const defensiveThrowTarget = Object.prototype.hasOwnProperty.call(event ?? {}, "defensiveThrowTarget")
-    ? event?.defensiveThrowTarget ?? null
-    : resolveDefensiveThrowTarget({
-        ...event,
-        outcome: String(event?.outcome ?? "out"),
-        battedBallType: String(event?.battedBallType ?? ""),
-        fieldingPosition,
-        scoredRunners
-      });
+  const normalizedThrowEvent = {
+    ...event,
+    outcome: String(event?.outcome ?? "out"),
+    battedBallType: String(event?.battedBallType ?? ""),
+    fieldingPosition,
+    scoredRunners
+  };
+  // Recompute batted-ball decisions even for old saves. Earlier builds stored
+  // routine singles as third/home throws; preserving that field kept the bug
+  // alive after the AI itself was fixed.
+  const defensiveThrowTarget = isBattedBallOutcome(normalizedThrowEvent.outcome)
+    ? resolveDefensiveThrowTarget(normalizedThrowEvent)
+    : Object.prototype.hasOwnProperty.call(event ?? {}, "defensiveThrowTarget")
+      ? event?.defensiveThrowTarget ?? null
+      : resolveDefensiveThrowTarget(normalizedThrowEvent);
   const baseRunnerProfilesBefore = resolveGamecastBaseRunnerProfiles(event?.baseRunnerIdsBefore, gamecastContext, state, offenseTeam);
   const baseRunnerProfilesAfter = resolveGamecastBaseRunnerProfiles(event?.baseRunnerIdsAfter, gamecastContext, state, offenseTeam);
   const teamColor = normalizeHexColor(getTeamColor(offenseTeam), side === "home" ? "#c64b74" : "#315288");
@@ -10315,9 +10321,41 @@ export function buildGamecastThrowLines(event, progress) {
 }
 
 function gamecastCanonicalThrowTargetKey(event) {
-  if (!event || !Object.prototype.hasOwnProperty.call(event, "defensiveThrowTarget")) return undefined;
+  if (!event) return undefined;
+  if (isBattedBallOutcome(event?.outcome)) {
+    const resolved = resolveDefensiveThrowTarget(event);
+    return gamecastLegacyThrowIsNoncompetitive(event, resolved) ? null : resolved ?? null;
+  }
+  if (!Object.prototype.hasOwnProperty.call(event, "defensiveThrowTarget")) return undefined;
   const key = String(event.defensiveThrowTarget ?? "").trim().toLowerCase();
   return ["first", "second", "third", "home"].includes(key) ? key : null;
+}
+
+function gamecastLegacyThrowIsNoncompetitive(event, targetKey) {
+  const targetIndex = { first: 1, second: 2, third: 3, home: 4 }[targetKey] ?? 0;
+  if (!targetIndex) return false;
+  const movement = gamecastRunnerTransitions(event)
+    .filter((transition) => !transition.out && Number(transition.toBase) === targetIndex)
+    .map((transition) => ({ transition, timing: gamecastRunnerTransitionTiming(event, transition) }))
+    .sort((left, right) => Number(right.timing.endT) - Number(left.timing.endT))[0];
+  if (!movement) return false;
+
+  const durationMs = Math.max(1, Number(event?.gamecastDurationMs) || getGamecast2PlayDurationMs(event));
+  const fieldingKey = gamecastFieldingKeyForTarget(event, battedBallGroundPoint(event, 1));
+  const armScore = gamecastThrowArmScore(event, fieldingKey);
+  const armT = Math.max(0, Math.min(1, (armScore - 20) / 180));
+  const bases = gamecastBasePositions();
+  const from = battedBallGroundPoint(event, 1);
+  const target = bases[targetKey];
+  const distance = Math.hypot(
+    Number(target?.x ?? 0) - Number(from?.x ?? 0),
+    Number(target?.y ?? 0) - Number(from?.y ?? 0)
+  );
+  const flightMs = Math.max(170, Math.min(620, distance / (900 + armT * 700) * 1000));
+  const gatherMs = 190 - armT * 40;
+  const earliestReleaseT = gamecastFieldingCatchProgress(event) + gatherMs / durationMs;
+  const runnerSafeReleaseT = Number(movement.timing.endT) + 0.015 - flightMs / durationMs;
+  return (runnerSafeReleaseT - earliestReleaseT) * durationMs > 300.5;
 }
 
 function gamecastFirstBasemanCoverPosition(event, progress) {
@@ -10422,11 +10460,12 @@ function gamecastLegacyThrowTiming(event) {
     : targetKey;
   const target = bases[effectiveTarget] ?? bases.first;
   const distance = Math.hypot(Number(target?.x ?? 0) - Number(from?.x ?? 0), Number(target?.y ?? 0) - Number(from?.y ?? 0));
-  const pixelsPerSecond = 380 + armT * 290;
+  const pixelsPerSecond = 900 + armT * 700;
   const flightMs = Math.max(170, Math.min(620, distance / pixelsPerSecond * 1000));
   const gatherMs = 190 - armT * 40;
   let startT = Math.min(0.94, gamecastFieldingCatchProgress(event) + gatherMs / durationMs);
-  let endT = startT + flightMs / durationMs;
+  const flightT = flightMs / durationMs;
+  let endT = startT + flightT;
   const targetIndex = { first: 1, second: 2, third: 3, home: 4 }[effectiveTarget] ?? 0;
   const transitions = gamecastRunnerTransitions(event)
     .filter((transition) => Number(transition.toBase) === targetIndex)
@@ -10434,10 +10473,13 @@ function gamecastLegacyThrowTiming(event) {
   const movement = transitions.find(({ transition }) => transition.out)
     ?? transitions.sort((a, b) => b.timing.endT - a.timing.endT)[0]
     ?? null;
-  if (movement?.transition.out) endT = Math.min(endT, movement.timing.endT - 0.015);
-  else if (movement) endT = Math.max(endT, movement.timing.endT + 0.015);
-  endT = Math.min(0.985, endT);
-  startT = Math.min(startT, endT - 0.025);
+  if (movement?.transition.out) {
+    startT = Math.min(startT, movement.timing.endT - 0.015 - flightT);
+  } else if (movement) {
+    startT = Math.max(startT, movement.timing.endT + 0.015 - flightT);
+  }
+  startT = Math.max(gamecastFieldingCatchProgress(event) + 0.01, Math.min(0.985 - flightT, startT));
+  endT = startT + flightT;
   return {
     startT: Math.max(gamecastFieldingCatchProgress(event) + 0.01, startT),
     endT,

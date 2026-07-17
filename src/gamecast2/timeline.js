@@ -53,26 +53,26 @@ const THROW_SAFE_LEAD_T = 0.015;
 const THROW_OUT_LEAD_T = 0.015;
 const THROW_ARRIVAL_LATEST_T = 0.985;
 const THROW_MAX_GATHER_MS = 300;
-const FIELDING_SECURE_MS = 90;
+const FIELDING_SECURE_MS = 180;
 const LONG_OUTFIELD_RELAY_DISTANCE_PX = 280;
 const MIN_VISIBLE_RUN_ROUTE_PX = 8;
 const FIELDER_ROUTE_SPEED_PX_PER_SECOND = Object.freeze({
   approach: 110,
-  recover: 120,
+  recover: 220,
   relay: 115,
   baseCover: 130,
   backup: 120,
   receiver: 145
 });
 const BALL_SETTLE_SPEED_PX_PER_SECOND = Object.freeze({
-  fly: 90,
-  line: 105,
-  ground: 120
+  fly: 180,
+  line: 220,
+  ground: 280
 });
 const BALL_SETTLE_MAX_MS = Object.freeze({
-  fly: 480,
-  line: 420,
-  ground: 400
+  fly: 240,
+  line: 220,
+  ground: 200
 });
 const OUTFIELD_FIELDING_DELAY_MS = Object.freeze({
   ground: 450,
@@ -439,7 +439,18 @@ function buildFieldedBall(context, spec) {
   const caughtBattedOut = isCaughtBattedOut(context);
   const safeFlyHit = isSafeFlyBallHit(context);
   const safeLineHit = isSafeLineDriveHit(context);
+  const safeGroundBallHit = isSafeGroundBallHit(context);
   const safeGroundHit = isSafeGroundThroughHit(context, fielderKey);
+  if (safeGroundBallHit) {
+    // Every safe grounder needs a ground-ball clock, including an infield
+    // chopper that is ultimately picked up by an infielder. Limiting this to
+    // ground-through/outfield hits left those infield singles rolling for
+    // nearly a full second after contact.
+    spec = {
+      ...spec,
+      landingT: actionT(0.38)
+    };
+  }
   if (isSafeHitOutcome(context.event) && OUTFIELDERS.includes(fielderKey)) {
     context.points.outfieldWall = outfieldWallPoint(
       context.points,
@@ -514,7 +525,7 @@ function buildFieldedBall(context, spec) {
       earliestT: spec.landingT,
       deadlineT: 0.94,
       speed: BALL_SETTLE_SPEED_PX_PER_SECOND[safeTrajectoryKind],
-      minMs: 140,
+      minMs: 60,
       maxMs: BALL_SETTLE_MAX_MS[safeTrajectoryKind]
     });
     recoveryWindow = routeWindow(context, {
@@ -539,8 +550,18 @@ function buildFieldedBall(context, spec) {
         pickupArrivalT + FIELDING_SECURE_MS / Math.max(1, Number(context.durationMs) || 1)
       ))
     };
+    if (pickupArrivalT > ballPickupArrivalT + 0.000001) {
+      // Keep the stopped ball visible until the defender reaches it. Without
+      // this cue the ball vanished for 12-19 frames, making the following
+      // throw look as though it happened before possession.
+      context.tracks.ball.push(cue(ballPickupArrivalT, pickupArrivalT, {
+        at: "pickup",
+        grounded: true,
+        phase: "pickup-wait"
+      }));
+    }
   }
-  const throwTarget = fieldedBallThrowTarget(context, spec);
+  let throwTarget = fieldedBallThrowTarget(context, spec);
   const possessionT = safeFlyHit || safeLineHit || safeGroundHit ? pickupArrivalT : spec.landingT;
   if (throwTarget && spec.throwEndT) {
     // The fielding/catch pose is only the secure transfer into the throwing
@@ -845,12 +866,21 @@ function buildFieldedBall(context, spec) {
         startT: primaryThrowPlan.endT,
         nominalEndT: spec.throwEndT
       });
+      const cutoffOnly = throwPlan.ordering === "physical-first";
+      if (cutoffOnly) {
+        // The natural relay would beat a runner whose result is already safe by
+        // more than the allowed gather window. End the play at the cutoff
+        // instead of slowing the ball, holding it for seconds, or showing the
+        // ball waiting at a base before the runner gets there.
+        primaryThrowPlan = { ...primaryThrowPlan, ordering: "cutoff-return" };
+      }
       addFieldingThrow(context, {
         who: fielderKey,
         from: fieldingPoint,
         to: relayThrow.point,
         startT: spec.fieldEndT,
-        plan: primaryThrowPlan
+        plan: primaryThrowPlan,
+        holdStartT: possessionT
       });
       addRelayCatch(context, {
         who: relayThrow.fielder,
@@ -858,26 +888,33 @@ function buildFieldedBall(context, spec) {
         from: fieldingPoint,
         arrivalT: primaryThrowPlan.endT
       });
-      addFieldingThrow(context, {
-        who: relayThrow.fielder,
-        from: relayThrow.point,
-        to: throwTarget,
-        startT: primaryThrowPlan.endT,
-        plan: throwPlan,
-        actorPhase: "relay-throw",
-        ballPhase: "relay-throw"
-      });
-      defensiveRotation = addThrowReceiver(context, {
-        primary: fielderKey,
-        receiver: relayThrow.receiver,
-        to: throwTarget,
-        throwFrom: relayThrow.point,
-        moveStartT: Math.max(
-          scaleActionTime(context, 0.265),
-          Math.min(scaleActionTime(context, 0.31), spec.landingT - scaleActionTime(context, 0.1))
-        ),
-        throwEndT: throwPlan.endT
-      });
+      if (cutoffOnly) {
+        relayThrow = { ...relayThrow, cutoffOnly: true };
+        throwTarget = null;
+        throwPlan = primaryThrowPlan;
+      } else {
+        addFieldingThrow(context, {
+          who: relayThrow.fielder,
+          from: relayThrow.point,
+          to: throwTarget,
+          startT: primaryThrowPlan.endT,
+          plan: throwPlan,
+          holdStartT: primaryThrowPlan.endT,
+          actorPhase: "relay-throw",
+          ballPhase: "relay-throw"
+        });
+        defensiveRotation = addThrowReceiver(context, {
+          primary: fielderKey,
+          receiver: relayThrow.receiver,
+          to: throwTarget,
+          throwFrom: relayThrow.point,
+          moveStartT: Math.max(
+            scaleActionTime(context, 0.265),
+            Math.min(scaleActionTime(context, 0.31), spec.landingT - scaleActionTime(context, 0.1))
+          ),
+          throwEndT: throwPlan.endT
+        });
+      }
     } else {
       throwPlan = resolveFieldingThrowPlan(context, {
         who: fielderKey,
@@ -887,22 +924,39 @@ function buildFieldedBall(context, spec) {
         nominalEndT: spec.throwEndT,
         possessionT
       });
-      primaryThrowPlan = throwPlan;
-      defensiveRotation = addDefensiveRotation(context, {
-        primary: fielderKey,
-        landing: fieldingPoint,
-        landingT: spec.landingT,
-        fieldEndT: spec.fieldEndT,
-        throwTarget,
-        throwEndT: throwPlan.endT
-      });
-      addFieldingThrow(context, {
-        who: fielderKey,
-        from: fieldingPoint,
-        to: throwTarget,
-        startT: spec.fieldEndT,
-        plan: throwPlan
-      });
+      if (throwPlan.ordering === "physical-first") {
+        // A direct throw that cannot be made competitive within the 300ms
+        // gather budget is held; showing it arrive before a safe runner is a
+        // stronger visual contradiction than omitting the futile throw.
+        throwTarget = null;
+        throwPlan = null;
+        addDefensiveSupport(context, {
+          primary: fielderKey,
+          receiver: "",
+          landing: fieldingPoint,
+          landingT: spec.landingT,
+          fieldEndT: spec.fieldEndT,
+          throwTarget: null
+        });
+      } else {
+        primaryThrowPlan = throwPlan;
+        defensiveRotation = addDefensiveRotation(context, {
+          primary: fielderKey,
+          landing: fieldingPoint,
+          landingT: spec.landingT,
+          fieldEndT: spec.fieldEndT,
+          throwTarget,
+          throwEndT: throwPlan.endT
+        });
+        addFieldingThrow(context, {
+          who: fielderKey,
+          from: fieldingPoint,
+          to: throwTarget,
+          startT: spec.fieldEndT,
+          plan: throwPlan,
+          holdStartT: possessionT
+        });
+      }
     }
   } else {
     addDefensiveSupport(context, {
@@ -990,10 +1044,11 @@ function buildFieldedBall(context, spec) {
       ? {
           fielder: relayThrow.fielder,
           point: relayThrow.point,
+          cutoffOnly: Boolean(relayThrow.cutoffOnly),
           receiveT: primaryThrowPlan?.endT ?? null,
-          armScore: throwPlan?.armScore ?? null,
-          releaseT: throwPlan?.releaseT ?? null,
-          arrivalT: throwPlan?.endT ?? null
+          armScore: relayThrow.cutoffOnly ? null : throwPlan?.armScore ?? null,
+          releaseT: relayThrow.cutoffOnly ? null : throwPlan?.releaseT ?? null,
+          arrivalT: relayThrow.cutoffOnly ? primaryThrowPlan?.endT ?? null : throwPlan?.endT ?? null
         }
       : null,
     receiver: defensiveRotation?.receiver ?? null,
@@ -1028,7 +1083,6 @@ function fieldedBallThrowTarget(context, spec) {
   // batter is already safe before fielding completes, so there is no fake throw
   // to second (or a visually tempting but impossible throw to first).
   if (context.template === "single") {
-    const type = normalizedToken(context.event?.battedBallType);
     const primary = selectFielderKey(context.event, context.points);
     if (OUTFIELDERS.includes(primary)) {
       const extraBaseAdvance = runnerTransitions.some((transition) => transitionDistance(transition) >= 2);
@@ -1039,25 +1093,37 @@ function fieldedBallThrowTarget(context, spec) {
       // at first without inventing a tag play. Otherwise the fielder holds.
       return extraBaseAdvance && !secondBaseIsLive ? "second" : null;
     }
-    if (canonicalTarget) return canonicalTarget;
-    if (type.includes("ground") && primary === "1B") return "first";
-    if (type.includes("ground") && INFIELDERS.includes(primary)) return "first";
+    // Never chase an already-safe runner at third/home on an infield hit. A
+    // chopper single means the fielder had no viable force play after the
+    // bobble/deep-hole pickup, so holding the ball is the honest animation.
     return null;
   }
 
-  if (canonicalTarget) return canonicalTarget;
-
   if (["double", "triple"].includes(context.template)) {
-    const leadTarget = baseAnchorForIndex(leadTransition?.toBase);
-    if (leadTarget) return leadTarget;
-    return context.template === "double" ? "second" : "third";
+    // Recompute old/saved events as well as newly simulated ones. The target is
+    // an empty containment base, never the final safe base of a runner whose
+    // arrival would contradict a normal-speed throw.
+    return extraBaseHitContainmentTarget(context.template, runnerTransitions);
   }
+
+  if (canonicalTarget) return canonicalTarget;
 
   // Every ordinary ground-ball out is the batter-runner force at first. The
   // double-play builder is the only batted-out path that starts at second.
   if (["infieldOut", "outfieldOut"].includes(context.template)) return "first";
 
   return spec.throwTarget ?? null;
+}
+
+function extraBaseHitContainmentTarget(template, runnerTransitions) {
+  const liveDestinations = new Set(
+    (runnerTransitions ?? [])
+      .filter((transition) => !transition?.out)
+      .map((transition) => Number(transition?.toBase))
+  );
+  liveDestinations.add(template === "double" ? 2 : 3);
+  const preferences = template === "double" ? [3, 4] : [4, 2];
+  return baseAnchorForIndex(preferences.find((index) => !liveDestinations.has(index)));
 }
 
 function defensiveThrowTarget(event) {
@@ -1138,9 +1204,13 @@ function isSafeLineDriveHit(context) {
   return normalizedToken(context.event?.battedBallType).includes("line");
 }
 
-function isSafeGroundThroughHit(context, fielderKey) {
+function isSafeGroundBallHit(context) {
   if (!["single", "double", "triple"].includes(context.outcome)) return false;
-  if (!normalizedToken(context.event?.battedBallType).includes("ground")) return false;
+  return normalizedToken(context.event?.battedBallType).includes("ground");
+}
+
+function isSafeGroundThroughHit(context, fielderKey) {
+  if (!isSafeGroundBallHit(context)) return false;
   const trajectory = normalizedToken(context.event?.hitTrajectory);
   return trajectory.includes("groundthrough") || OUTFIELDERS.includes(fielderKey);
 }
@@ -1388,7 +1458,8 @@ function resolveFieldingThrowPlan(context, {
   // the recorded safe result. Runner ordering below is the only delay a hit
   // throw may need.
   const immediateHitThrow = forceImmediate || ["single", "double", "triple"].includes(context.template);
-  let endT = earliestReleaseT + flightMs / durationMs;
+  const flightT = flightMs / durationMs;
+  let releaseT = earliestReleaseT;
   // A recorded runner contest supplies its own safe/out deadline below. Keeping
   // the old nominal endpoint as an additional floor made every arm release at
   // the 300ms gather ceiling, erasing strong-vs-weak flight speed entirely.
@@ -1396,25 +1467,21 @@ function resolveFieldingThrowPlan(context, {
   // clock to cover roughly 278 design pixels without an impossible sprint.
   const pitcherMustCoverFirst = to === "first" && normalizeFielderKey(who) === "1B";
   if (!immediateHitThrow && (!movement || pitcherMustCoverFirst)) {
-    endT = Math.max(endT, Number(nominalEndT) || 0);
+    releaseT = Math.max(releaseT, (Number(nominalEndT) || 0) - flightT);
   }
   let ordering = "neutral";
-  if (movement?.out) {
-    endT = Math.min(endT, movement.endT - THROW_OUT_LEAD_T);
-    ordering = "out-first";
-  } else if (movement) {
-    endT = Math.max(endT, movement.endT + THROW_SAFE_LEAD_T);
-    ordering = "runner-safe-first";
-  }
-  endT = roundTime(Math.min(THROW_ARRIVAL_LATEST_T, endT));
   const latestReleaseT = controlledAtT + THROW_MAX_GATHER_MS / durationMs;
   const releaseCeilingT = Math.floor((latestReleaseT + Number.EPSILON) * 1000) / 1000;
-  let releaseT = Math.min(
-    releaseCeilingT,
-    roundTime(Math.max(earliestReleaseT, endT - flightMs / durationMs))
-  );
-  releaseT = Math.max(Number(startT), releaseT);
-  releaseT = roundTime(Math.min(releaseT, endT - Math.min(0.035, Math.max(0.018, (endT - startT) * 0.42))));
+  if (movement?.out) {
+    releaseT = Math.min(releaseT, movement.endT - THROW_OUT_LEAD_T - flightT);
+  } else if (movement) {
+    releaseT = Math.max(releaseT, movement.endT + THROW_SAFE_LEAD_T - flightT);
+  }
+  releaseT = Math.min(releaseCeilingT, releaseT, THROW_ARRIVAL_LATEST_T - flightT);
+  releaseT = roundTime(Math.max(Number(startT), controlledAtT, releaseT));
+  const endT = roundTime(releaseT + flightT);
+  if (movement?.out) ordering = endT <= movement.endT ? "out-first" : "physical-late";
+  else if (movement) ordering = endT >= movement.endT ? "runner-safe-first" : "physical-first";
   const arc = roundTime(0.055 - armT * 0.04);
   return {
     armScore,
@@ -1436,10 +1503,17 @@ function addFieldingThrow(context, {
   to,
   startT,
   plan,
+  holdStartT = startT,
   actorPhase = "throw",
   ballPhase = "fielding-throw"
 }) {
   const releaseT = plan.releaseT;
+  if (releaseT > Number(holdStartT) + 0.000001) {
+    context.tracks.ball.push(cue(holdStartT, releaseT, {
+      at: from,
+      phase: "fielding-hold"
+    }));
+  }
   context.tracks.fielders.push(cue(startT, releaseT + scaleActionTime(context, 0.025), {
     who,
     anim: ANIM.throw,
