@@ -1335,6 +1335,10 @@ async function checkGamecastLab() {
       const screen = modal?.querySelector("[data-gamecast-screen]");
       const canvas = modal?.querySelector("[data-gamecast-canvas].gamecast-pixel-canvas");
       const rect = canvas?.getBoundingClientRect();
+      const screenRect = screen?.getBoundingClientRect();
+      const rail = modal?.querySelector(".gamecast-broadcast-rail");
+      const railRect = rail?.getBoundingClientRect();
+      const sideInfo = rail?.querySelector("[data-gamecast-side-info]");
       const totalEvents = window.__labState?.lastGames?.[0]?.plateAppearanceEvents?.length ?? 0;
       const feedCount = modal?.querySelectorAll(".gamecast-feed li[data-gamecast-event-id]")?.length ?? 0;
       return {
@@ -1343,6 +1347,11 @@ async function checkGamecastLab() {
         activeCanvasCount: document.querySelectorAll("[data-gamecast-canvas].gamecast-pixel-canvas").length,
         cssWidth: rect?.width ?? 0,
         cssHeight: rect?.height ?? 0,
+        railExists: Boolean(rail),
+        railIsRight: Number(railRect?.left ?? 0) >= Number(screenRect?.right ?? 0) - 1,
+        railOverflowPx: rail ? Math.max(0, rail.scrollWidth - rail.clientWidth) : -1,
+        sideInfoText: sideInfo?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+        sideResult: sideInfo?.querySelector("[data-gamecast-side-result]")?.textContent?.trim() ?? "",
         totalEvents,
         feedCount,
         feedText: modal?.querySelector(".gamecast-feed")?.textContent?.trim() ?? "",
@@ -1360,6 +1369,10 @@ async function checkGamecastLab() {
   assert(desktopProbe.screenCount === 1, `랩 중계 스크린이 ${desktopProbe.screenCount}개입니다.`, "src/ui.js");
   assert(desktopProbe.activeCanvasCount === 1, `랩 활성 캔버스가 ${desktopProbe.activeCanvasCount}개입니다.`, "src/ui.js");
   assert(desktopProbe.cssWidth >= 800 && desktopProbe.cssHeight >= 720, `큰 화면 캔버스가 작습니다: ${desktopProbe.cssWidth}x${desktopProbe.cssHeight}`, "src/styles.css");
+  assert(desktopProbe.railExists && desktopProbe.railIsRight, `경기 정보 레일이 화면 오른쪽에 없습니다: ${JSON.stringify(desktopProbe)}`, "src/styles.css");
+  assert(desktopProbe.railOverflowPx <= 1, `경기 정보 레일이 가로로 넘칩니다: ${JSON.stringify(desktopProbe)}`, "src/styles.css");
+  assert(["타구", "주자", "카운트", "아웃"].every((label) => desktopProbe.sideInfoText.includes(label)), `현재 플레이 정보가 빠졌습니다: ${JSON.stringify(desktopProbe)}`, "src/ui.js");
+  assert(desktopProbe.sideResult.length > 0, `현재 플레이 결과가 비어 있습니다: ${JSON.stringify(desktopProbe)}`, "src/ui.js");
   assert(desktopProbe.totalEvents > 20, `랩 PA 이벤트가 부족합니다: ${desktopProbe.totalEvents}`, "src/gamecastLab.js");
   assert(desktopProbe.feedCount >= 0 && desktopProbe.feedCount < desktopProbe.totalEvents, `랩 시작 피드가 전체 경기를 스포일러합니다: feed=${desktopProbe.feedCount}, total=${desktopProbe.totalEvents}`, "src/ui.js");
   assert(desktopProbe.activeSpeed === "1", `랩 초기 배속이 x1이 아닙니다: x${desktopProbe.activeSpeed}`, "src/ui.js");
@@ -1791,7 +1804,7 @@ async function checkGamecastLab() {
           url.includes("/assets/gamecast/player-") ||
           url.includes("/assets/gamecast/props")
         );
-      const expectedAssetRevision = "20260716-jamsil-only-6";
+      const expectedAssetRevision = "20260716-jamsil-defense-7";
       const middleDepths = [
         [anchors.SS, anchors.second, anchors.third],
         [anchors["2B"], anchors.second, anchors.first]
@@ -1886,7 +1899,7 @@ async function checkGamecastLab() {
     `v2 watch playback ignores the authored timeline duration: ${JSON.stringify(anchorProbe)}`,
     "src/ui.js"
   );
-  assert(anchorProbe.assetRevision === "20260716-jamsil-only-6" && anchorProbe.assetRevisionOk, `v2 assets are not cache-revisioned: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
+  assert(anchorProbe.assetRevision === "20260716-jamsil-defense-7" && anchorProbe.assetRevisionOk, `v2 assets are not cache-revisioned: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
   assert(anchorProbe.firstAnchorSignature === "758,415", `v2 loaded a stale first-base anchor: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-jamsil-day.anchors.json");
   assert(anchorProbe.batterAnchorDistance >= 0 && anchorProbe.batterAnchorDistance <= 0.01, `v2 batter is outside the authored box anchor: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-jamsil-day.anchors.json");
   assert(anchorProbe.middleInfieldSignature === "347,347" && anchorProbe.middleDepths.every((depth) => depth >= 8 && depth <= 16), `v2 middle infield depth is wrong: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2/field-jamsil-day.anchors.json");
@@ -1926,7 +1939,7 @@ async function checkGamecastLab() {
   assert(anchorProbe.ballpark === "jamsil" && anchorProbe.field === "field-jamsil-day" && anchorProbe.fieldLocked, `비활성 구장 URL이 잠실 고정을 우회했습니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/assets.js");
   assert(anchorProbe.anchorCount >= 15 && anchorProbe.missing.length === 0, `v2 앵커가 부족합니다: ${JSON.stringify(anchorProbe)}`, "assets/gamecast2");
   assert(anchorProbe.canvasPixelW === 960 && anchorProbe.canvasPixelH === 720, `v2 필드 해상도 계약이 다릅니다: ${JSON.stringify(anchorProbe)}`, "src/gamecast2/scene.js");
-  assert(anchorProbe.canvasWidth >= 900 && anchorProbe.canvasHeight >= 675, `v2 데스크톱 캔버스가 고해상도로 표시되지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/styles.css");
+  assert(anchorProbe.canvasWidth >= 800 && anchorProbe.canvasHeight >= 600, `v2 데스크톱 캔버스가 오른쪽 정보 레일과 함께 충분한 크기로 표시되지 않습니다: ${JSON.stringify(anchorProbe)}`, "src/styles.css");
   assert(
     Math.abs(anchorProbe.canvasBufferW - anchorProbe.canvasWidth * anchorProbe.devicePixelRatio) <= 0.51 &&
       Math.abs(anchorProbe.canvasBufferH - anchorProbe.canvasHeight * anchorProbe.devicePixelRatio) <= 0.51 &&

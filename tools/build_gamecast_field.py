@@ -30,6 +30,7 @@ MARKERS: Dict[str, Tuple[int, int, int]] = {
     "LF": (255, 95, 175),
     "CF": (255, 135, 135),
     "RF": (255, 175, 95),
+    "centerWall": (175, 215, 95),
     "leftPole": (255, 215, 55),
     "rightPole": (215, 255, 55),
     "scoreboardTl": (175, 255, 55),
@@ -44,13 +45,14 @@ FIELD_MARKERS: Dict[str, Dict[str, Tuple[int, int]]] = {
         "mound": (480, 407),
         "P": (480, 414),
         "C": (480, 646),
-        "1B": (724, 438),
+        "1B": (710, 416),
         "2B": (592, 347),
-        "3B": (236, 438),
+        "3B": (250, 416),
         "SS": (368, 347),
-        "LF": (245, 270),
-        "CF": (480, 230),
-        "RF": (715, 270),
+        "LF": (263, 298),
+        "CF": (480, 279),
+        "RF": (697, 298),
+        "centerWall": (480, 214),
         "leftPole": (42, 252),
         "rightPole": (918, 252),
         "scoreboardTl": (401, 64),
@@ -70,6 +72,7 @@ FIELD_MARKERS: Dict[str, Dict[str, Tuple[int, int]]] = {
         "LF": (260, 280),
         "CF": (480, 240),
         "RF": (700, 280),
+        "centerWall": (480, 224),
         "leftPole": (18, 254),
         "rightPole": (942, 254),
         "scoreboardTl": (394, 86),
@@ -89,6 +92,7 @@ FIELD_MARKERS: Dict[str, Dict[str, Tuple[int, int]]] = {
         "LF": (270, 295),
         "CF": (480, 260),
         "RF": (690, 295),
+        "centerWall": (480, 244),
         "leftPole": (25, 247),
         "rightPole": (935, 247),
         "scoreboardTl": (404, 84),
@@ -250,6 +254,7 @@ def build_anchor_payload(field_id: str, found: Dict[str, List[Tuple[int, int]]])
         "paths": {
             "bases": ["home", "first", "second", "third", "home"],
             "outfield": ["LF", "CF", "RF"],
+            "wall": ["leftPole", "centerWall", "rightPole"],
             "poles": ["leftPole", "rightPole"],
         },
     }
@@ -291,9 +296,19 @@ def build_fields(source_dir: Path, out_dir: Path) -> None:
         source = Image.open(source_path).convert("RGBA")
         if source.size != (DESIGN_W, DESIGN_H):
             raise SystemExit(f"{source_path}: expected {DESIGN_W}x{DESIGN_H}, got {source.size[0]}x{source.size[1]}")
-        found, marker_pixels = find_marker_pixels(source)
+        # FIELD_MARKERS is the canonical geometry contract. Re-stamp in
+        # memory so a coordinate-only source change cannot rebuild stale
+        # anchors merely because a committed marked PNG has not been manually
+        # re-stamped yet. --restamp-sources remains available when the source
+        # artifact itself should be refreshed.
+        _existing, existing_marker_pixels = find_marker_pixels(source)
+        canonical_source = stamp_markers(
+            clean_markers(source, existing_marker_pixels),
+            field_id,
+        )
+        found, marker_pixels = find_marker_pixels(canonical_source)
         payload = build_anchor_payload(field_id, found)
-        cleaned = quantize(clean_markers(source, marker_pixels), PALETTE_COLORS)
+        cleaned = quantize(clean_markers(canonical_source, marker_pixels), PALETTE_COLORS)
         cleaned.save(out_dir / f"{field_id}.png")
         write_json(out_dir / f"{field_id}.anchors.json", payload)
         manifest.append({

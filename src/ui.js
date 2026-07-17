@@ -41,7 +41,7 @@ import {
   simulateSecondaryDraft,
   setSecondaryDraftProtection,
   runAutonomousOffseason
-} from "./engine.js?v=gamecast-short-result-roll-20260716-r26";
+} from "./engine.js?v=gamecast-ai-kinematics-20260717-r29";
 
 import {
   getContractSummary,
@@ -68,14 +68,16 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-short-result-roll-20260716-r26";
+} from "./gamecastPhaser.js?v=gamecast-ai-kinematics-20260717-r29";
 
 import {
   canUseGamecast2,
+  GAMECAST2_BATTER_RUN_MS_PER_BASE,
+  GAMECAST2_RUNNER_RUN_MS_PER_BASE,
   getGamecast2PlayDurationMs,
   getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-short-result-roll-20260716-r26";
+} from "./gamecast2/index.js?v=gamecast-ai-kinematics-20260717-r29";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },
@@ -187,7 +189,6 @@ const GAMECAST_RESUME_COUNTDOWN_MS = 400;
 const GAMECAST_HOLD_LEVERAGE_THRESHOLD = 0.55;
 const GAMECAST_SCORE_SLOW_RATE = 0.35;
 const GAMECAST_FAST_BALL_RATE = 1.5;
-const GAMECAST_RUN_MS_PER_BASE = 1400;
 const GAMECAST_SLIDE_MS = 270;
 const GAMECAST_WALK_PITCH_STARTS = Object.freeze([0]);
 const GAMECAST_WALK_PITCH_RELEASE_OFFSET = 0.065;
@@ -5423,30 +5424,48 @@ function renderGamecastBroadcastModal(state, sequence, away, home, feedEvents, f
         </header>
         <div class="gamecast-broadcast-grid">
           <div class="gamecast-board gamecast-broadcast-board" data-gamecast-board>
-            <div class="gamecast-scoreline gamecast-broadcast-scoreline">
-              <span style="--score-team-color: ${escapeAttribute(getTeamColor(away))}">
-                ${renderTeamLogo(away, "team-logo mini-logo")}
-                <b>${escapeHtml(getTeamShortName(away) ?? "Away")}</b>
-                <strong>${formatNumber(sequence.startAway)}</strong>
-              </span>
-              <span style="--score-team-color: ${escapeAttribute(getTeamColor(home))}">
-                ${renderTeamLogo(home, "team-logo mini-logo")}
-                <b>${escapeHtml(getTeamShortName(home) ?? "Home")}</b>
-                <strong>${formatNumber(sequence.startHome)}</strong>
-              </span>
+            <div class="gamecast-broadcast-stage">
+              <div class="gamecast-screen gamecast-screen-large is-${escapeAttribute(gamecastEngine)} ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen data-gamecast-engine-current="${escapeAttribute(gamecastEngine)}" aria-hidden="true">
+                ${renderGamecastPixelStage("broadcast", gamecastEngine, showFps)}
+              </div>
             </div>
-            ${renderGamecastControls(sequence, "broadcast")}
-            ${renderGamecastMatchup(featured)}
-            <div class="gamecast-screen gamecast-screen-large is-${escapeAttribute(gamecastEngine)} ${featured?.outcome === "homeRun" ? "is-homer" : ""}" data-gamecast-screen data-gamecast-engine-current="${escapeAttribute(gamecastEngine)}" aria-hidden="true">
-              ${renderGamecastPixelStage("broadcast", gamecastEngine, showFps)}
-            </div>
-            <div class="gamecast-now gamecast-broadcast-now">
-              <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
-              <small>${featured ? escapeHtml(gamecastNowDetail(featured)) : "타석 이벤트 대기"}</small>
-            </div>
-            <ol class="gamecast-feed gamecast-broadcast-feed" data-gamecast-feed>
-              ${feedEvents.length ? feedEvents.map((event, index) => renderGamecastEvent(event, state, index)).join("") : renderGamecastEmptyFeedItem()}
-            </ol>
+            <aside class="gamecast-broadcast-rail" aria-label="실시간 경기 정보">
+              <div class="gamecast-broadcast-rail-head">
+                <span><i aria-hidden="true"></i> LIVE GAME</span>
+                <b data-gamecast-rail-state>${featured ? escapeHtml(formatGamecastInningCompact(featured)) : "FINAL"}</b>
+              </div>
+              <div class="gamecast-scoreline gamecast-broadcast-scoreline">
+                <span style="--score-team-color: ${escapeAttribute(getTeamColor(away))}">
+                  ${renderTeamLogo(away, "team-logo mini-logo")}
+                  <b>${escapeHtml(getTeamShortName(away) ?? "Away")}</b>
+                  <strong>${formatNumber(sequence.startAway)}</strong>
+                </span>
+                <span style="--score-team-color: ${escapeAttribute(getTeamColor(home))}">
+                  ${renderTeamLogo(home, "team-logo mini-logo")}
+                  <b>${escapeHtml(getTeamShortName(home) ?? "Home")}</b>
+                  <strong>${formatNumber(sequence.startHome)}</strong>
+                </span>
+              </div>
+              ${renderGamecastMatchup(featured)}
+              ${renderGamecastSideInfo(featured)}
+              <div class="gamecast-now gamecast-broadcast-now">
+                <strong>${featured ? escapeHtml(gamecastNowTitle(featured)) : "경기 종료"}</strong>
+                <small>${featured ? escapeHtml(gamecastNowDetail(featured)) : "타석 이벤트 대기"}</small>
+              </div>
+              <section class="gamecast-broadcast-feed-card" aria-label="플레이 기록">
+                <header>
+                  <strong>플레이 기록</strong>
+                  <small>최근 상황</small>
+                </header>
+                <ol class="gamecast-feed gamecast-broadcast-feed" data-gamecast-feed>
+                  ${feedEvents.length ? feedEvents.map((event, index) => renderGamecastEvent(event, state, index)).join("") : renderGamecastEmptyFeedItem()}
+                </ol>
+              </section>
+              <div class="gamecast-broadcast-control-card">
+                <span>중계 제어</span>
+                ${renderGamecastControls(sequence, "broadcast")}
+              </div>
+            </aside>
           </div>
         </div>
       </section>
@@ -5495,6 +5514,103 @@ function renderGamecastMatchup(event) {
       <b class="${escapeAttribute(summary.className)}" data-gamecast-matchup-result>${escapeHtml(summary.result)}</b>
     </div>
   `;
+}
+
+function renderGamecastSideInfo(event) {
+  const summary = gamecastSideInfoSummary(event);
+  return `
+    <section class="gamecast-side-info" data-gamecast-side-info aria-label="현재 플레이 정보">
+      <header>
+        <span>현재 플레이</span>
+        <b class="${escapeAttribute(summary.className)}" data-gamecast-side-result role="status" aria-live="polite" aria-atomic="true">${escapeHtml(summary.result)}</b>
+      </header>
+      <dl class="gamecast-side-info-grid">
+        <div data-gamecast-side-row="ball">
+          <dt>타구</dt>
+          <dd data-gamecast-side-ball>${escapeHtml(summary.ball)}</dd>
+        </div>
+        <div data-gamecast-side-row="fielder" ${summary.showFielder ? "" : "hidden"}>
+          <dt>처리</dt>
+          <dd data-gamecast-side-fielder>${escapeHtml(summary.fielder)}</dd>
+        </div>
+        <div data-gamecast-side-row="throw" ${summary.showThrow ? "" : "hidden"}>
+          <dt>송구</dt>
+          <dd data-gamecast-side-throw>${escapeHtml(summary.throwTarget)}</dd>
+        </div>
+        <div>
+          <dt>주자</dt>
+          <dd data-gamecast-side-bases>${escapeHtml(summary.bases)}</dd>
+        </div>
+        <div>
+          <dt>카운트</dt>
+          <dd data-gamecast-side-count>${escapeHtml(summary.count)}</dd>
+        </div>
+        <div>
+          <dt>아웃</dt>
+          <dd data-gamecast-side-outs>${escapeHtml(summary.outs)}</dd>
+        </div>
+      </dl>
+    </section>
+  `;
+}
+
+export function gamecastSideInfoSummary(event, frame = null) {
+  if (!event) {
+    return {
+      result: "대기",
+      className: "is-ball",
+      ball: "타석 대기",
+      fielder: "",
+      throwTarget: "",
+      bases: "주자 없음",
+      count: "B 0 · S 0",
+      outs: "0아웃",
+      showFielder: false,
+      showThrow: false
+    };
+  }
+  const revealed = frame ? gamecastFrameResultRevealed(frame) : true;
+  const battedLabel = battedBallTypeLabel(event.battedBallType);
+  const ball = battedLabel || gamecastNonContactPlayLabel(event.outcome);
+  const fieldingPosition = String(event.fieldingPosition ?? "").trim();
+  const defenderName = String(event.defenderName ?? "").trim();
+  const fielder = defenderName
+    ? `${defenderName}${fieldingPosition ? ` (${fieldingPosition})` : ""}`
+    : fieldingPosition;
+  const throwTarget = gamecastThrowTargetLabel(event.defensiveThrowTarget);
+  const currentOuts = Number(frame?.outs ?? outsInInning(event.outsBefore));
+  const pitchCount = gamecastPitchCount(frame ?? { event, progress: 1 });
+  return {
+    result: revealed
+      ? gamecastResultDisplayText(event)
+      : gamecastLivePhaseLabel(event, Number(frame?.progress ?? 0)),
+    className: revealed ? gamecastOutcomeClass(event.outcome) : "is-ball",
+    ball,
+    fielder,
+    throwTarget,
+    bases: gamecastBaseSummary(frame?.bases ?? event.basesBefore),
+    count: `B ${formatNumber(pitchCount.balls)} · S ${formatNumber(pitchCount.strikes)}`,
+    outs: `${formatNumber(Math.max(0, Math.min(3, currentOuts)))}아웃`,
+    showFielder: Boolean(fielder),
+    showThrow: Boolean(throwTarget)
+  };
+}
+
+function gamecastNonContactPlayLabel(outcome) {
+  if (outcome === "walk") return "볼넷";
+  if (outcome === "strikeout") return "삼진";
+  if (outcome === "stolenBase" || outcome === "caughtStealing") return "도루 시도";
+  return "투구";
+}
+
+function gamecastThrowTargetLabel(target) {
+  const key = String(target ?? "").trim().toLowerCase();
+  return {
+    first: "1루",
+    second: "2루",
+    third: "3루",
+    home: "홈"
+  }[key] ?? "";
 }
 
 function gamecastMatchupSummary(event, frame = null) {
@@ -6401,6 +6517,7 @@ function initGamecastPixelScreen(root, appState = null) {
       nowTitle: board.querySelector(".gamecast-now strong"),
       nowDetail: board.querySelector(".gamecast-now small"),
       matchup: board.querySelector("[data-gamecast-matchup]"),
+      sideInfo: board.querySelector("[data-gamecast-side-info]"),
       playerLabel,
       actionBurst,
       pauseOverlay: collectGamecastPauseOverlay(screen),
@@ -6544,7 +6661,7 @@ function createGamecastPalette(ballparkProfile = null) {
   };
 }
 
-function createGamecastPhaserController({ screen, stage, canvas, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [], renderer = "phaser" }) {
+function createGamecastPhaserController({ screen, stage, canvas, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, sideInfo, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [], renderer = "phaser" }) {
   const normalizedSequence = normalizeGamecastSequenceForPlayback(sequence);
   const palette = createGamecastPalette(normalizedSequence.ballparkProfile);
   const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
@@ -6568,6 +6685,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
     nowTitle,
     nowDetail,
     matchup,
+    sideInfo,
     playerLabel,
     actionBurst,
     pauseOverlay,
@@ -6867,7 +6985,7 @@ function createGamecastPhaserController({ screen, stage, canvas, appState, seque
   };
 }
 
-function createGamecastPixelController({ screen, stage, canvas, ctx, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [] }) {
+function createGamecastPixelController({ screen, stage, canvas, ctx, appState, sequence, scoreNodes, nowTitle, nowDetail, matchup, sideInfo, playerLabel, actionBurst, pauseOverlay, fpsNode, hud, feedList, feedItems, speedControls = [], pauseControls = [], pauseActionControls = [], stepControls = [], soundControls = [], skipControls = [] }) {
   const normalizedSequence = normalizeGamecastSequenceForPlayback(sequence);
   const palette = createGamecastPalette(normalizedSequence.ballparkProfile);
   const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
@@ -6898,6 +7016,7 @@ function createGamecastPixelController({ screen, stage, canvas, ctx, appState, s
     nowTitle,
     nowDetail,
     matchup,
+    sideInfo,
     playerLabel,
     actionBurst,
     pauseOverlay,
@@ -8865,9 +8984,14 @@ function buildGamecastFrameState(state, forceFinal = false) {
   const scoreRevealProgress = gamecastScoreRevealProgress(event);
   const resultRevealed = gapProgress > 0 || progress >= resultRevealProgress;
   const scoreRevealed = gapProgress > 0 || progress >= scoreRevealProgress;
-  const settling = resultRevealed;
+  // A call and the physical end of a play are separate moments. Ball four is
+  // announced as soon as the decisive pitch reaches the catcher, while the
+  // batter and forced runners still finish walking to their bases. Tying base
+  // settlement to resultRevealed made the call wait for the walk animation (or
+  // made runners teleport if the reveal was moved earlier).
+  const movementSettled = gapProgress > 0 || progress >= gamecastMovementSettleProgress(event);
   const clearingInning = event.inningEnded && progress >= 0.92;
-  const baseOccupancy = settling
+  const baseOccupancy = movementSettled
     ? (clearingInning ? [false, false, false] : event.basesAfter)
     : baseOccupancyDuringMove(event, progress);
   const score = scoreForGamecastFrame(seq, events, index, scoreRevealed);
@@ -9022,7 +9146,10 @@ function maybeHoldGamecastPlayback(state, frame, applyHold) {
     }
   }
 
-  if (state.stepMode && nextEvent && Number(frame.progress ?? 0) >= gamecastResultRevealProgress(event)) {
+  // Keep the result visible while the physical play finishes. A walk is called
+  // at ball four, but step mode must not freeze there and skip the batter's
+  // walk to first when the viewer advances to the next plate appearance.
+  if (state.stepMode && nextEvent && Number(frame.progress ?? 0) >= gamecastStepHoldProgress(event)) {
     return issueHold({
       type: "step",
       key: `step:${event.id}`,
@@ -9126,6 +9253,7 @@ export function buildGamecastActionBurst(event, progress) {
   const motionHold = t < 0.55 ? 1 : Math.max(0, (1 - t) / 0.45);
   const bounce = Math.sin(Math.min(1, t * 1.2) * Math.PI);
   const fadeOut = durationFraction < 1 && t > 0.82 ? Math.max(0, (1 - t) / 0.18) : 1;
+  const entranceOpacity = profile.instant ? 1 : (t < 0.1 ? t / 0.1 : 1);
   const text = gamecastBurstText(event);
   if (!text) return null;
 
@@ -9134,7 +9262,7 @@ export function buildGamecastActionBurst(event, progress) {
     className: gamecastBurstClass(event),
     x: profile.x,
     y: profile.y,
-    opacity: Math.max(0, Math.min(1, (t < 0.1 ? t / 0.1 : 1) * fadeOut)),
+    opacity: Math.max(0, Math.min(1, entranceOpacity * fadeOut)),
     scaleX: profile.baseScale + popIn * profile.pop + bounce * 0.1,
     scaleY: profile.baseScale + popIn * profile.pop * 0.82 - bounce * 0.08,
     shakeX: Math.round(Math.sin(t * Math.PI * profile.shakeRate) * profile.shake * motionHold),
@@ -9153,7 +9281,7 @@ function gamecastBurstProfile(event) {
     return { delay: 0.03, durationFraction: 0.905, x: 50, y: 13, baseScale: 0.84, pop: 0.48, shake: 2, shakeRate: 8, tilt: 1 };
   }
   if (outcome === "walk") {
-    return { delay: 0.04, durationFraction: 0.884, x: 50, y: 13, baseScale: 0.84, pop: 0.42, shake: 1, shakeRate: 7, tilt: 0.8 };
+    return { delay: 0, instant: true, durationFraction: 0.884, x: 50, y: 13, baseScale: 0.84, pop: 0.42, shake: 1, shakeRate: 7, tilt: 0.8 };
   }
   if (outcome === "out") {
     return { delay: 0.04, x: 50, y: 13, baseScale: 0.84, pop: 0.44, shake: event?.doublePlay ? 3 : 1, shakeRate: 8, tilt: 1 };
@@ -9543,18 +9671,10 @@ export function gamecastRunnerTransitionTiming(event, transition) {
   ));
   const slide = event?.outcome !== "homeRun"
     && (distance >= 2 || (transition?.role === "runner" && Boolean(transition?.out)));
-  if (transition?.role === "batter" && event?.outcome === "homeRun") {
-    const endT = Math.min(0.985, Math.max(startT + 0.01, 0.94));
-    return {
-      startT,
-      endT,
-      durationMs: Math.max(1, (endT - startT) * durationMs),
-      distance,
-      slide: false,
-      tagUp: false
-    };
-  }
-  const motionMs = distance * GAMECAST_RUN_MS_PER_BASE + (slide ? GAMECAST_SLIDE_MS : 0);
+  const runMsPerBase = transition?.role === "batter"
+    ? GAMECAST2_BATTER_RUN_MS_PER_BASE
+    : GAMECAST2_RUNNER_RUN_MS_PER_BASE;
+  const motionMs = distance * runMsPerBase + (slide ? GAMECAST_SLIDE_MS : 0);
   return {
     startT,
     endT: Math.min(0.985, startT + motionMs / durationMs),
@@ -10230,6 +10350,17 @@ function gamecastRunnerMoveEnd(event) {
   return Math.max(...transitions.map((transition) => gamecastRunnerTransitionTiming(event, transition).endT));
 }
 
+export function gamecastMovementSettleProgress(event) {
+  return Math.max(0, Math.min(0.985, gamecastRunnerMoveEnd(event)));
+}
+
+export function gamecastStepHoldProgress(event) {
+  return Math.max(
+    gamecastResultRevealProgress(event),
+    gamecastMovementSettleProgress(event)
+  );
+}
+
 function gamecastBallFlightEnd(event) {
   if (event?.outcome === "homeRun") return 0.88;
   const arrival = gamecastNonHomerCatchProgress(event);
@@ -10329,15 +10460,18 @@ function gamecastThrowArmScore(event, key) {
   return Math.max(20, Math.min(200, Math.round(Number(score) || 100)));
 }
 
-function gamecastResultRevealProgress(event) {
+export function gamecastResultRevealProgress(event) {
   if (!event) return 0.82;
+  // Ball four is a plate call, not a base-arrival call. Reveal BB on the exact
+  // pitch-completion frame and let the separate movement-settlement clock keep
+  // the batter walking naturally to first.
+  if (event.outcome === "walk") return gamecastPitchEnd(event);
   let baseReveal = 0.82;
   if (event.outcome === "homeRun") baseReveal = 0.97;
   else if (event.outcome === "triple") baseReveal = 0.95;
   else if (event.outcome === "double") baseReveal = 0.92;
   else if (event.outcome === "single") baseReveal = 0.87;
   else if (event.outcome === "error") baseReveal = 0.89;
-  else if (event.outcome === "walk") baseReveal = 0.62;
   else if (event.outcome === "strikeout") baseReveal = 0.46;
   else if (event.doublePlay) baseReveal = 0.8;
   if (event.outcome === "out") {
@@ -10621,6 +10755,7 @@ function syncGamecastDom(state, frame) {
       : frame.event ? gamecastFrameNowDetail(frame) : "타석 이벤트 대기";
   }
   syncGamecastMatchup(state.matchup, frame.event, frame);
+  syncGamecastSideInfo(state.sideInfo, frame);
   syncGamecastPlayerLabel(state.playerLabel, frame.done ? null : frame.playerLabel);
   syncGamecastActionBurst(state.actionBurst, frame.done ? null : frame.actionBurst);
   syncGamecastHud(state.hud, frame);
@@ -10996,6 +11131,35 @@ function syncGamecastMatchup(node, event, frame = null) {
     resultNode.textContent = summary.result;
     resultNode.className = summary.className;
   }
+}
+
+function syncGamecastSideInfo(node, frame) {
+  if (!node) return;
+  const event = frame?.done ? null : frame?.event;
+  const summary = gamecastSideInfoSummary(event, frame?.done ? null : frame);
+  const resultNode = node.querySelector("[data-gamecast-side-result]");
+  const ballNode = node.querySelector("[data-gamecast-side-ball]");
+  const fielderNode = node.querySelector("[data-gamecast-side-fielder]");
+  const throwNode = node.querySelector("[data-gamecast-side-throw]");
+  const basesNode = node.querySelector("[data-gamecast-side-bases]");
+  const countNode = node.querySelector("[data-gamecast-side-count]");
+  const outsNode = node.querySelector("[data-gamecast-side-outs]");
+  const fielderRow = node.querySelector("[data-gamecast-side-row='fielder']");
+  const throwRow = node.querySelector("[data-gamecast-side-row='throw']");
+  const railState = node.closest(".gamecast-broadcast-rail")?.querySelector("[data-gamecast-rail-state]");
+  if (resultNode) {
+    resultNode.textContent = frame?.done ? "경기 종료" : summary.result;
+    resultNode.className = frame?.done ? "is-ball" : summary.className;
+  }
+  if (ballNode) ballNode.textContent = frame?.done ? "최종" : summary.ball;
+  if (fielderNode) fielderNode.textContent = summary.fielder;
+  if (throwNode) throwNode.textContent = summary.throwTarget;
+  if (basesNode) basesNode.textContent = frame?.done ? "주자 없음" : summary.bases;
+  if (countNode) countNode.textContent = frame?.done ? "B 0 · S 0" : summary.count;
+  if (outsNode) outsNode.textContent = frame?.done ? "3아웃" : summary.outs;
+  if (fielderRow) fielderRow.hidden = frame?.done || !summary.showFielder;
+  if (throwRow) throwRow.hidden = frame?.done || !summary.showThrow;
+  if (railState) railState.textContent = frame?.done ? "FINAL" : formatGamecastInningCompact(event);
 }
 
 function syncGamecastActionBurst(node, burst) {

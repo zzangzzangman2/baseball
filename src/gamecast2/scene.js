@@ -7,9 +7,13 @@ import {
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-short-result-roll-20260716-r26";
-import { compilePlayTimeline } from "./timeline.js?v=gamecast-short-result-roll-20260716-r26";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-short-result-roll-20260716-r26";
+} from "./assets.js?v=gamecast-ai-kinematics-20260717-r29";
+import {
+  compilePlayTimeline,
+  GAMECAST2_DEFENDER_MOVE_ZONES,
+  gamecast2OutfieldPlayableMinY
+} from "./timeline.js?v=gamecast-ai-kinematics-20260717-r29";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-ai-kinematics-20260717-r29";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -55,17 +59,6 @@ const PIXEL_GLYPHS = {
   T: ["111", "010", "010", "010", "010"],
   U: ["101", "101", "101", "101", "111"],
   "-": ["000", "000", "111", "000", "000"]
-};
-const DEFENDER_MOVE_ZONES = {
-  P: { x: 300, yTop: 110, yBottom: 220 },
-  C: { x: 30, yTop: 42, yBottom: 12 },
-  "1B": { x: 54, yTop: 42, yBottom: 45 },
-  "2B": { x: 132, yTop: 80, yBottom: 80 },
-  "3B": { x: 54, yTop: 42, yBottom: 45 },
-  SS: { x: 184, yTop: 80, yBottom: 80 },
-  LF: { x: 96, yTop: 58, yBottom: 160 },
-  CF: { x: 116, yTop: 62, yBottom: 84 },
-  RF: { x: 96, yTop: 58, yBottom: 160 }
 };
 const PLAYER_TEXTURE_KEYS = {
   defense: {
@@ -809,7 +802,7 @@ function buildVisualPlay(runtime, frame = null) {
     const routeT = clamp01((progress - routeStart) / Math.max(0.01, routeEnd - routeStart));
     const actor = anchors[fielderKey];
     const position = actor && progress >= routeStart
-      ? clampDefenderDesignPoint(
+      ? clampGamecast2DefenderDesignPoint(
           curvedRoute(actor, fieldSpot, easeInOutCubic(routeT), eventNoise(event, 71) * 18),
           anchors,
           fielderKey
@@ -1975,16 +1968,16 @@ function fieldingSpotForEvent(event, anchors, key) {
   if (event?.outcome === "homeRun" && OUTFIELD_ANCHORS.has(key)) {
     const wallTarget = battedBallTargetForEvent(event, anchors);
     const x = lerp(anchor.x, wallTarget.x, 0.62);
-    return clampDefenderDesignPoint({
+    return clampGamecast2DefenderDesignPoint({
       x,
-      y: outfieldPlayableMinY(anchors, x) + 6,
+      y: gamecast2OutfieldPlayableMinY(anchors, x) + 6,
       scale: lerp(Number(anchor.scale ?? 1), Number(wallTarget.scale ?? anchor.scale ?? 1), 0.45)
     }, anchors, key);
   }
   const towardHome = normalizeVector(home.x - anchor.x, home.y - anchor.y);
   const lateral = eventNoise(event, 8) * (OUTFIELD_ANCHORS.has(key) ? 34 : 16);
   const depth = OUTFIELD_ANCHORS.has(key) ? 18 + Math.abs(eventNoise(event, 9)) * 22 : 10;
-  return clampDefenderDesignPoint({
+  return clampGamecast2DefenderDesignPoint({
     x: anchor.x + lateral + towardHome.x * depth,
     y: anchor.y + towardHome.y * depth,
     scale: anchor.scale
@@ -1996,7 +1989,7 @@ function battedBallTargetForEvent(event, anchors) {
     const lane = eventNoise(event, 12);
     const left = anchors.leftPole ?? { x: 40, y: 250 };
     const right = anchors.rightPole ?? { x: 920, y: 250 };
-    const center = anchors.CF ?? { x: 480, y: 260 };
+    const center = anchors.centerWall ?? { x: 480, y: 214 };
     const x = lane < -0.35 ? lerp(left.x, center.x, 0.35) : lane > 0.35 ? lerp(center.x, right.x, 0.65) : center.x + lane * 90;
     const y = Math.min(left.y, right.y, center.y) - 34 - Math.abs(eventNoise(event, 13)) * 18;
     return { x, y, scale: 0.72 };
@@ -2051,12 +2044,12 @@ function battedBallArc(event) {
 function clampActorDesignPosition(actor, position, runtime) {
   const point = position ?? { x: actor?.designX ?? GAMECAST2_DESIGN_W / 2, y: actor?.designY ?? GAMECAST2_DESIGN_H / 2 };
   if (actor?.isDefender) {
-    return clampDefenderDesignPoint(point, runtime?.anchors?.anchors ?? {}, actor.fieldingKey || actor.key);
+    return clampGamecast2DefenderDesignPoint(point, runtime?.anchors?.anchors ?? {}, actor.fieldingKey || actor.key);
   }
   return clampDesignPointToCanvas(point);
 }
 
-function clampDefenderDesignPoint(point, anchors, key) {
+export function clampGamecast2DefenderDesignPoint(point, anchors, key) {
   const raw = point ?? {};
   const anchor = anchors?.[key];
   let x = Number(raw.x ?? anchor?.x ?? GAMECAST2_DESIGN_W / 2);
@@ -2064,11 +2057,11 @@ function clampDefenderDesignPoint(point, anchors, key) {
   x = clampNumber(x, FIELD_EDGE_PADDING, GAMECAST2_DESIGN_W - FIELD_EDGE_PADDING);
   y = clampNumber(y, FIELD_EDGE_PADDING, GAMECAST2_DESIGN_H - FIELD_EDGE_PADDING);
   if (anchor) {
-    const zone = DEFENDER_MOVE_ZONES[key] ?? { x: 54, yTop: 42, yBottom: 44 };
+    const zone = GAMECAST2_DEFENDER_MOVE_ZONES[key] ?? { x: 54, yTop: 42, yBottom: 44 };
     x = clampNumber(x, anchor.x - zone.x, anchor.x + zone.x);
     y = clampNumber(y, anchor.y - zone.yTop, anchor.y + zone.yBottom);
     if (OUTFIELD_ANCHORS.has(key)) {
-      y = Math.max(y, outfieldPlayableMinY(anchors, x));
+      y = Math.max(y, gamecast2OutfieldPlayableMinY(anchors, x));
     }
   }
   return {
@@ -2117,7 +2110,7 @@ function collectGamecast2PositionGuard(runtime) {
 function defenderPositionViolation(point, anchors, key) {
   const anchor = anchors?.[key];
   if (!anchor) return "";
-  const zone = DEFENDER_MOVE_ZONES[key] ?? { x: 54, yTop: 42, yBottom: 44 };
+  const zone = GAMECAST2_DEFENDER_MOVE_ZONES[key] ?? { x: 54, yTop: 42, yBottom: 44 };
   const x = Number(point?.x ?? 0);
   const y = Number(point?.y ?? 0);
   const tolerance = 1.25;
@@ -2125,27 +2118,8 @@ function defenderPositionViolation(point, anchors, key) {
   if (y < FIELD_EDGE_PADDING - tolerance || y > GAMECAST2_DESIGN_H - FIELD_EDGE_PADDING + tolerance) return "canvas-y";
   if (x < anchor.x - zone.x - tolerance || x > anchor.x + zone.x + tolerance) return "zone-x";
   if (y < anchor.y - zone.yTop - tolerance || y > anchor.y + zone.yBottom + tolerance) return "zone-y";
-  if (OUTFIELD_ANCHORS.has(key) && y < outfieldPlayableMinY(anchors, x) - tolerance) return "outfield-wall";
+  if (OUTFIELD_ANCHORS.has(key) && y < gamecast2OutfieldPlayableMinY(anchors, x) - tolerance) return "outfield-wall";
   return "";
-}
-
-function outfieldPlayableMinY(anchors, x) {
-  return outfieldWallYForDesignX(anchors, x) + 10;
-}
-
-function outfieldWallYForDesignX(anchors, x) {
-  const left = anchors?.leftPole ?? { x: 38, y: 252 };
-  const right = anchors?.rightPole ?? { x: 922, y: 252 };
-  const centerAnchor = anchors?.CF ?? { x: GAMECAST2_DESIGN_W / 2, y: 270 };
-  const center = {
-    x: Number(centerAnchor.x ?? GAMECAST2_DESIGN_W / 2),
-    y: Math.min((Number(left.y ?? 252) + Number(right.y ?? 252)) / 2, Number(centerAnchor.y ?? 270) - 16)
-  };
-  const px = Number(x ?? center.x);
-  const from = px < center.x ? left : center;
-  const to = px < center.x ? center : right;
-  const local = (px - Number(from.x ?? 0)) / Math.max(1, Number(to.x ?? 1) - Number(from.x ?? 0));
-  return lerp(Number(from.y ?? center.y), Number(to.y ?? center.y), local);
 }
 
 function clampNumber(value, min, max) {

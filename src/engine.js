@@ -6719,7 +6719,11 @@ export function groundBallDoublePlayProbability({ hitter, pitcher, defenseContex
 
 export function canAdvanceFirstToThirdOnSingle(outcome) {
   if (String(outcome?.outcome ?? outcome?.type ?? "") !== "single") return false;
-  return canProduceExtraBaseHitFromBattedBall(outcome);
+  if (!canProduceExtraBaseHitFromBattedBall(outcome)) return false;
+  // A routine bloop or line-drive single is one base for the runner on first.
+  // Only an explicitly deep gap single may create the first-to-third read.
+  return new Set(["flygap", "flygapdrop", "linegap", "linegapdrop"])
+    .has(normalizedHitTrajectory(outcome));
 }
 
 export function canAdvanceSecondToHomeOnSingle(outcome) {
@@ -6741,19 +6745,20 @@ export function canScoreThirdOnGroundForceOut(event) {
   return event?.doublePlay ? outsBefore === 0 : outsBefore <= 1;
 }
 
-export function singleSecondToHomeProbability({ runner, outs = 0, defender = null } = {}) {
-  return runnerAdvanceProbability({
+export function singleSecondToHomeProbability({ runner, outs = 0, defender = null, outcome = null } = {}) {
+  const probability = runnerAdvanceProbability({
     runner,
     outs,
     defender,
     base: 0.36,
     speedWeight: 0.009,
     baserunningWeight: 0.007,
-    twoOutBonus: 0.11,
+    twoOutBonus: 0.08,
     armWeight: 0.012,
-    min: 0.16,
-    max: 0.82
+    min: 0.08,
+    max: 0.64
   });
+  return clamp(probability * singleSecondToHomeTrajectoryFactor(outcome), 0.06, 0.68);
 }
 
 export function singleFirstToThirdProbability({ runner, outs = 0, defender = null } = {}) {
@@ -6764,10 +6769,10 @@ export function singleFirstToThirdProbability({ runner, outs = 0, defender = nul
     base: 0.13,
     speedWeight: 0.006,
     baserunningWeight: 0.013,
-    twoOutBonus: 0.08,
+    twoOutBonus: 0.07,
     armWeight: 0.01,
-    min: 0.08,
-    max: 0.72
+    min: 0.04,
+    max: 0.46
   });
 }
 
@@ -6776,13 +6781,13 @@ export function doubleFirstToHomeProbability({ runner, outs = 0, defender = null
     runner,
     outs,
     defender,
-    base: 0.23,
+    base: 0.42,
     speedWeight: 0.009,
     baserunningWeight: 0.01,
-    twoOutBonus: 0.12,
+    twoOutBonus: 0.1,
     armWeight: 0.012,
-    min: 0.14,
-    max: 0.86
+    min: 0.18,
+    max: 0.8
   });
 }
 
@@ -6792,13 +6797,27 @@ function runnerAdvanceProbability({ runner, outs, defender, base, speedWeight, b
   const arm = safeNumber(defender?.arm, 10);
   return clamp(
     base
-      + speed * speedWeight
-      + baserunning * baserunningWeight
+      + (speed - 10) * speedWeight
+      + (baserunning - 10) * baserunningWeight
       + (safeNumber(outs) % 3 === 2 ? twoOutBonus : 0)
       - (arm - 10) * armWeight,
     min,
     max
   );
+}
+
+function normalizedHitTrajectory(outcome) {
+  return String(outcome?.hitTrajectory ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function singleSecondToHomeTrajectoryFactor(outcome) {
+  const trajectory = normalizedHitTrajectory(outcome);
+  if (!trajectory) return 1;
+  if (["flygap", "flygapdrop", "linegap", "linegapdrop"].includes(trajectory)) return 1.05;
+  if (trajectory === "linethrough") return 0.9;
+  if (trajectory === "linedrop") return 0.72;
+  if (trajectory === "flybloop") return 0.48;
+  return 1;
 }
 
 export function canProduceExtraBaseHitFromBattedBall(outcome) {
@@ -7065,7 +7084,8 @@ export function applyPlateAppearanceOutcome({ outcome, hitter, bases, outs, seed
         && rollUnit(seed, "single-second", plateAppearance, second.id) < singleSecondToHomeProbability({
           runner: second,
           outs,
-          defender: outcome.defender
+          defender: outcome.defender,
+          outcome
         });
       if (secondScores) scoreRunner(second, true);
       else placeRunner(bases, 2, second, scoreRunner);

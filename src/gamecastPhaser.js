@@ -101,7 +101,7 @@ const PLAYER_LEGACY_ANIMATIONS = {
   catcher: { frames: ["catcher"], durations: [160] }
 };
 const SPRITE_ASSET_ROOT = "./assets/gamecast";
-export const GAMECAST_SPRITE_ASSET_REVISION = "20260716-jamsil-only-6";
+export const GAMECAST_SPRITE_ASSET_REVISION = "20260716-jamsil-defense-7";
 export const GAMECAST_THROW_BALL_SIZE = 1.25;
 export const GAMECAST_BALL_MIN_RENDER_SCALE = 1.2;
 
@@ -199,7 +199,10 @@ export function mountGamecastPhaser(options) {
     },
     pause() {
       runtime.paused = true;
-      stopRuntimeLoop(runtime);
+      // Keep Phaser's clock alive while a result/step overlay is shown. Some
+      // Chromium builds do not reliably restart a TimeStep after loop.stop(),
+      // which left the overlay dismissed but the next plate appearance frozen.
+      // updateRuntime already returns immediately while runtime.paused is true.
       const frame = runtime.currentFrame ?? runtime.makeFrame?.(runtime.elapsedMs, false);
       if (frame) {
         runtime.currentFrame = frame;

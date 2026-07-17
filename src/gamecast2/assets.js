@@ -2,7 +2,7 @@ export const GAMECAST2_DESIGN_W = 960;
 export const GAMECAST2_DESIGN_H = 720;
 
 const FIELD_ROOT = "./assets/gamecast2";
-export const GAMECAST2_ASSET_REVISION = "20260716-jamsil-only-6";
+export const GAMECAST2_ASSET_REVISION = "20260716-jamsil-defense-7";
 export const GAMECAST2_FIXED_FIELD_ID = "field-jamsil-day";
 
 export function gamecast2AssetUrl(url) {

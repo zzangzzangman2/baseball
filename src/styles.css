@@ -4027,9 +4027,10 @@ img {
 
 .gamecast-broadcast-shell {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   width: min(1480px, calc(100vw - 12px));
-  max-height: calc(100vh - 12px);
+  max-height: calc(100dvh - 12px);
   min-width: 0;
   padding: clamp(10px, 1.2vw, 16px);
   overflow: hidden;
@@ -4065,7 +4066,7 @@ img {
 }
 
 .gamecast-broadcast-head p {
-  color: var(--muted);
+  color: #626c76;
   font-weight: 850;
   line-height: 1.34;
 }
@@ -4079,56 +4080,109 @@ img {
 .gamecast-broadcast-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
   min-width: 0;
+  min-height: 0;
 }
 
 .gamecast-broadcast-board {
   display: grid;
-  grid-template-areas:
-    "score screen"
-    "controls screen"
-    "matchup screen"
-    "now screen"
-    "feed screen";
-  grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
-  align-content: start;
-  align-items: start;
-  gap: 8px;
+  grid-template-areas: "stage rail";
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  align-items: stretch;
+  gap: 12px;
+  min-height: 0;
   padding: clamp(8px, 1vw, 12px);
+  overflow: hidden;
   border: 1px solid rgba(17, 27, 39, 0.12);
   background:
     linear-gradient(180deg, rgba(255, 254, 251, 0.84), rgba(232, 244, 238, 0.8)),
     repeating-linear-gradient(90deg, rgba(17, 27, 39, 0.04) 0 1px, transparent 1px 10px);
 }
 
+.gamecast-broadcast-stage {
+  grid-area: stage;
+  display: grid;
+  place-items: start center;
+  min-width: 0;
+  min-height: 0;
+}
+
+.gamecast-broadcast-rail {
+  grid-area: rail;
+  display: grid;
+  grid-template-rows: auto auto auto auto auto minmax(96px, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  max-height: calc(100dvh - 142px);
+  padding: 11px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(143, 208, 180, 0.2), transparent 32%),
+    linear-gradient(165deg, #111d2a 0%, #142736 58%, #18333a 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 18px 38px rgba(11, 23, 34, 0.2);
+}
+
+.gamecast-broadcast-rail-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.7rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+}
+
+.gamecast-broadcast-rail-head span {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.gamecast-broadcast-rail-head i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff8f83;
+  box-shadow: 0 0 0 4px rgba(255, 143, 131, 0.14), 0 0 14px rgba(255, 143, 131, 0.64);
+}
+
+.gamecast-broadcast-rail-head b {
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff0a8;
+  font-size: 0.7rem;
+  letter-spacing: 0;
+}
+
 .gamecast-broadcast-scoreline {
-  grid-area: score;
   grid-template-columns: 1fr;
 }
 
 .gamecast-broadcast-scoreline span {
-  min-height: 54px;
+  min-height: 50px;
 }
 
 .gamecast-controls.is-broadcast {
-  grid-area: controls;
   justify-content: flex-start;
 }
 
-.gamecast-broadcast-board .gamecast-matchup {
-  grid-area: matchup;
-}
-
 .gamecast-controls.is-broadcast .gamecast-speed-button {
-  min-height: 38px;
-  padding: 8px 13px;
-  font-size: 0.84rem;
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 0.78rem;
 }
 
 .gamecast-screen-large {
-  grid-area: screen;
-  width: min(976px, 100%);
+  width: min(976px, 100%, calc(100dvh - 75px));
   min-width: 0;
   align-self: start;
   padding: 8px;
@@ -4167,26 +4221,194 @@ img {
 }
 
 .gamecast-broadcast-now {
-  grid-area: now;
   min-height: 52px;
   padding: 10px 12px;
-  border: 1px solid rgba(232, 223, 213, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.76);
+  background: rgba(255, 255, 255, 0.075);
 }
 
 .gamecast-broadcast-now strong {
+  color: #fffefa;
   font-size: 1.06rem;
 }
 
+.gamecast-broadcast-now small {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.gamecast-side-info {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(185, 217, 247, 0.16);
+  border-radius: 9px;
+  background:
+    linear-gradient(145deg, rgba(49, 82, 136, 0.34), rgba(143, 208, 180, 0.13)),
+    rgba(5, 13, 22, 0.34);
+}
+
+.gamecast-side-info > header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.gamecast-side-info > header > span {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+
+.gamecast-side-info > header > b {
+  max-width: 68%;
+  padding: 5px 9px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fffefa;
+  font-size: 0.82rem;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gamecast-side-info > header > b.is-hit,
+.gamecast-side-info > header > b.is-homer {
+  border-color: rgba(255, 227, 154, 0.42);
+  background: rgba(255, 210, 63, 0.15);
+  color: #fff0a8;
+}
+
+.gamecast-side-info > header > b.is-out {
+  border-color: rgba(221, 236, 255, 0.25);
+  color: #ddecff;
+}
+
+.gamecast-side-info > header > b.is-walk {
+  border-color: rgba(185, 217, 247, 0.36);
+  background: rgba(185, 217, 247, 0.12);
+  color: #ddecff;
+}
+
+.gamecast-side-info > header > b.is-error {
+  border-color: rgba(255, 143, 131, 0.4);
+  background: rgba(255, 143, 131, 0.12);
+  color: #ffb3a6;
+}
+
+.gamecast-side-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+
+.gamecast-side-info-grid > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.gamecast-side-info-grid dt {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 0.64rem;
+  font-weight: 900;
+}
+
+.gamecast-side-info-grid dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: #fffefa;
+  font-size: 0.79rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gamecast-broadcast-feed-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 7px;
+  min-width: 0;
+  min-height: 0;
+  padding: 9px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  background: rgba(248, 252, 250, 0.96);
+}
+
+.gamecast-broadcast-feed-card > header {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  color: #252b32;
+}
+
+.gamecast-broadcast-feed-card > header strong {
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.gamecast-broadcast-feed-card > header small {
+  color: #737d86;
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
 .gamecast-broadcast-feed {
-  grid-area: feed;
   grid-template-columns: 1fr;
   align-content: start;
-  max-height: min(22vh, 172px);
+  max-height: none;
+  min-height: 0;
   overflow: auto;
   padding-right: 2px;
+  scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
+}
+
+.gamecast-broadcast-feed-card .gamecast-broadcast-feed li,
+.gamecast-broadcast-feed-card .gamecast-broadcast-feed .gamecast-empty {
+  padding: 8px 9px;
+}
+
+.gamecast-broadcast-control-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.gamecast-broadcast-control-card > span {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 0.64rem;
+  font-weight: 900;
+}
+
+.gamecast-broadcast-control-card .gamecast-controls {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  padding: 1px 1px 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.gamecast-broadcast-control-card .gamecast-speed-button {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 1220px) and (min-width: 861px) {
@@ -4196,13 +4418,51 @@ img {
 
   .gamecast-broadcast-board {
     grid-template-areas:
-      "screen"
-      "score"
-      "controls"
-      "matchup"
-      "now"
-      "feed";
+      "stage"
+      "rail";
     grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  .gamecast-broadcast-rail {
+    grid-template-areas:
+      "head head"
+      "score matchup"
+      "info now"
+      "feed feed"
+      "controls controls";
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto auto auto minmax(160px, 220px) auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .gamecast-broadcast-rail-head {
+    grid-area: head;
+  }
+
+  .gamecast-broadcast-scoreline {
+    grid-area: score;
+  }
+
+  .gamecast-broadcast-rail .gamecast-matchup {
+    grid-area: matchup;
+  }
+
+  .gamecast-side-info {
+    grid-area: info;
+  }
+
+  .gamecast-broadcast-now {
+    grid-area: now;
+  }
+
+  .gamecast-broadcast-feed-card {
+    grid-area: feed;
+  }
+
+  .gamecast-broadcast-control-card {
+    grid-area: controls;
   }
 
   .gamecast-broadcast-scoreline {
@@ -4210,12 +4470,12 @@ img {
   }
 
   .gamecast-screen-large {
-    width: min(976px, 100%);
+    width: min(976px, 100%, calc(100dvh - 130px));
     justify-self: center;
   }
 
   .gamecast-broadcast-feed {
-    max-height: 180px;
+    max-height: 200px;
   }
 }
 
@@ -6064,8 +6324,7 @@ img {
       "status";
   }
 
-  .gamecast-broadcast-grid,
-  .gamecast-broadcast-scoreline {
+  .gamecast-broadcast-grid {
     grid-template-columns: 1fr;
   }
 
@@ -6075,13 +6334,54 @@ img {
 
   .gamecast-broadcast-board {
     grid-template-areas:
-      "score"
-      "controls"
-      "matchup"
-      "screen"
-      "now"
-      "feed";
+      "stage"
+      "rail";
     grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .gamecast-broadcast-rail {
+    grid-template-areas:
+      "head"
+      "info"
+      "score"
+      "matchup"
+      "now"
+      "feed"
+      "controls";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .gamecast-broadcast-rail-head {
+    grid-area: head;
+  }
+
+  .gamecast-side-info {
+    grid-area: info;
+  }
+
+  .gamecast-broadcast-scoreline {
+    grid-area: score;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .gamecast-broadcast-rail .gamecast-matchup {
+    grid-area: matchup;
+  }
+
+  .gamecast-broadcast-now {
+    grid-area: now;
+  }
+
+  .gamecast-broadcast-feed-card {
+    grid-area: feed;
+  }
+
+  .gamecast-broadcast-control-card {
+    grid-area: controls;
   }
 
   .gamecast-screen-large {
@@ -6089,7 +6389,7 @@ img {
   }
 
   .gamecast-broadcast-feed {
-    max-height: 280px;
+    max-height: 260px;
   }
 
   .action-row {
@@ -6388,19 +6688,61 @@ img {
 
   .gamecast-broadcast-shell {
     width: calc(100vw - 12px);
-    max-height: calc(100vh - 12px);
+    max-height: calc(100dvh - 12px);
     padding: 10px;
   }
 
-  .gamecast-broadcast-head,
+  .gamecast-broadcast-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    justify-content: stretch;
+  }
+
   .gamecast-head-actions {
     align-items: stretch;
     justify-content: stretch;
   }
 
-  .gamecast-broadcast-head .button,
+  .gamecast-broadcast-head p {
+    display: none;
+  }
+
+  .gamecast-broadcast-head h2 {
+    font-size: 1.22rem;
+  }
+
+  .gamecast-broadcast-head .button {
+    width: auto;
+  }
+
   .gamecast-expand-button {
     width: 100%;
+  }
+
+  .gamecast-broadcast-rail {
+    padding: 9px;
+  }
+
+  .gamecast-broadcast-scoreline {
+    grid-template-columns: 1fr;
+  }
+
+  .gamecast-broadcast-rail .gamecast-matchup {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "state result"
+      "hitter hitter"
+      "pitcher pitcher";
+  }
+
+  .gamecast-broadcast-rail .gamecast-matchup b {
+    justify-self: end;
+    max-width: 180px;
+  }
+
+  .gamecast-broadcast-feed {
+    max-height: 220px;
   }
 
   .gamecast-controls {

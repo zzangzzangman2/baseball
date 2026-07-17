@@ -39,9 +39,11 @@ export const GAMECAST2_TIMELINE_TEMPLATES = Object.freeze([
 
 const ANIM = GAMECAST2_ATLAS_ANIMATION_CONTRACT;
 const BASE_ROUTE = Object.freeze(["home", "first", "second", "third", "home"]);
-const BATTER_RUN_MS_PER_BASE = 1400;
+export const GAMECAST2_BATTER_RUN_MS_PER_BASE = 3000;
+export const GAMECAST2_RUNNER_RUN_MS_PER_BASE = 2600;
+const BATTER_RUN_MS_PER_BASE = GAMECAST2_BATTER_RUN_MS_PER_BASE;
 const BATTER_SLIDE_MS = 270;
-const RUNNER_RUN_MS_PER_BASE = 1400;
+const RUNNER_RUN_MS_PER_BASE = GAMECAST2_RUNNER_RUN_MS_PER_BASE;
 const RUNNER_SLIDE_MS = 270;
 const RUNNER_RESULT_LATEST_T = 0.95;
 const OUTFIELD_ACTION_LATEST_T = 0.94;
@@ -50,6 +52,28 @@ const THROW_ARM_MAX = 200;
 const THROW_SAFE_LEAD_T = 0.015;
 const THROW_OUT_LEAD_T = 0.015;
 const THROW_ARRIVAL_LATEST_T = 0.985;
+const THROW_MAX_GATHER_MS = 300;
+const FIELDING_SECURE_MS = 90;
+const LONG_OUTFIELD_RELAY_DISTANCE_PX = 280;
+const MIN_VISIBLE_RUN_ROUTE_PX = 8;
+const FIELDER_ROUTE_SPEED_PX_PER_SECOND = Object.freeze({
+  approach: 110,
+  recover: 120,
+  relay: 115,
+  baseCover: 130,
+  backup: 120,
+  receiver: 145
+});
+const BALL_SETTLE_SPEED_PX_PER_SECOND = Object.freeze({
+  fly: 90,
+  line: 105,
+  ground: 120
+});
+const BALL_SETTLE_MAX_MS = Object.freeze({
+  fly: 480,
+  line: 420,
+  ground: 400
+});
 const OUTFIELD_FIELDING_DELAY_MS = Object.freeze({
   ground: 450,
   line: 580,
@@ -61,6 +85,16 @@ const OUTFIELD_LANDING_DELAY_MS = Object.freeze({
   line: 100,
   fly: 1200,
   default: 180
+});
+// A single that drops in front of an outfielder must get down before the
+// batter reaches first.  The former 850/1200ms add-on kept a CF bloop airborne
+// for 1.8-2.1s after contact, so the base-running animation could finish while
+// the ball was still hanging.  Extra-base flies keep their longer clocks in
+// outfieldLandingDelayMs; these values only describe safe fly-ball singles.
+const SAFE_FLY_SINGLE_LANDING_DELAY_MS = Object.freeze({
+  bloop: 280,
+  gapDrop: 400,
+  default: 340
 });
 const SAFE_HIT_LANDING_CLEARANCE_PX = 42;
 const SAFE_HIT_MIN_APPROACH_PX = 24;
@@ -81,24 +115,42 @@ const GROUND_BALL_ZONE_PRIMARY = Object.freeze({
   "first-line": "1B"
 });
 const BASE_SUPPORT_TARGETS = new Set(["home", "first", "second", "third"]);
-const BASE_BACKUP_OFFSET_PX = 14;
-const BASE_BACKUP_MAX_DISTANCE_PX = 42;
+// Corner outfielders back up throws beyond first/third, but must remain a
+// visibly separate defender. The atlas' widest catch/run poses need roughly
+// 69 design pixels of center-to-center clearance; 14px made RF/LF sit inside
+// the receiver for the remainder of every play.
+const BASE_BACKUP_OFFSET_PX = Object.freeze({
+  home: 14,
+  first: 72,
+  second: 14,
+  third: 72
+});
+const BASE_BACKUP_MAX_DISTANCE_PX = Object.freeze({
+  home: 42,
+  first: 84,
+  second: 42,
+  third: 84
+});
 const MIN_SUPPORT_ROUTE_PX = 14;
 const MIN_PURPOSEFUL_SUPPORT_ROUTE_PX = 18;
 // Keep these support-route bounds aligned with scene.js. Timeline-authored
 // destinations must stay inside them so the renderer never silently clamps a
 // defender somewhere other than the declared arrival point.
-const DEFENDER_SUPPORT_MOVE_ZONES = Object.freeze({
+export const GAMECAST2_DEFENDER_MOVE_ZONES = Object.freeze({
   P: Object.freeze({ x: 300, yTop: 110, yBottom: 220 }),
   C: Object.freeze({ x: 30, yTop: 42, yBottom: 12 }),
   "1B": Object.freeze({ x: 54, yTop: 42, yBottom: 45 }),
   "2B": Object.freeze({ x: 132, yTop: 80, yBottom: 80 }),
   "3B": Object.freeze({ x: 54, yTop: 42, yBottom: 45 }),
   SS: Object.freeze({ x: 184, yTop: 80, yBottom: 80 }),
-  LF: Object.freeze({ x: 96, yTop: 58, yBottom: 160 }),
-  CF: Object.freeze({ x: 116, yTop: 62, yBottom: 84 }),
-  RF: Object.freeze({ x: 96, yTop: 58, yBottom: 160 })
+  // Gap balls and base backups legitimately take an outfielder well away
+  // from the starting spot. These are also the renderer's hard bounds; keep
+  // one exported contract so authored endpoints can never be silently moved.
+  LF: Object.freeze({ x: 240, yTop: 90, yBottom: 180 }),
+  CF: Object.freeze({ x: 190, yTop: 90, yBottom: 120 }),
+  RF: Object.freeze({ x: 240, yTop: 90, yBottom: 180 })
 });
+export const GAMECAST2_OUTFIELD_WALL_PADDING_PX = 10;
 const RESULT_BADGES = Object.freeze({
   strikeout: "삼진",
   walk: "볼넷",
@@ -151,6 +203,22 @@ function resolvedPlayDurationMs(event, outcome, template) {
   const fieldingDelayMs = spec ? outfieldFieldingDelayMs(event, fielderKey, template) : 0;
   let resolvedDurationMs = baseDurationMs;
 
+  const battedType = normalizedToken(event?.battedBallType);
+  const caughtBattedOut = outcome === "out"
+    && template !== "doublePlay"
+    && (battedType.includes("fly") || battedType.includes("line"));
+  if (spec && !caughtBattedOut) {
+    const batterTarget = defaultBatterTarget(outcome, template);
+    if (batterTarget > 0) {
+      const batterStartMs = 0.27 * actionDurationMs;
+      const batterMotionMs = batterTarget * BATTER_RUN_MS_PER_BASE + (spec.slide ? BATTER_SLIDE_MS : 0);
+      resolvedDurationMs = Math.max(
+        resolvedDurationMs,
+        Math.ceil((batterStartMs + batterMotionMs) / RUNNER_RESULT_LATEST_T)
+      );
+    }
+  }
+
   const runnerStartMs = resolvedRunnerStartMs(event, outcome, template);
   if (runnerStartMs !== null) {
     const transitions = existingRunnerTransitions(event, outcome, template);
@@ -168,6 +236,19 @@ function resolvedPlayDurationMs(event, outcome, template) {
         Math.ceil(latestRunnerEndMs / RUNNER_RESULT_LATEST_T)
       );
     }
+  }
+
+  if (template === "homeRun") {
+    // Keep the hitter on the dedicated batter clock and reserve enough
+    // reserve enough timeline for the full four-base trot. The old authored
+    // .29-.93 cue compressed the hitter to 896ms/base and could overtake a
+    // runner who began the play on first.
+    const batterStartMs = 0.29 * actionDurationMs;
+    const batterEndMs = batterStartMs + 4 * BATTER_RUN_MS_PER_BASE;
+    resolvedDurationMs = Math.max(
+      resolvedDurationMs,
+      Math.ceil(batterEndMs / RUNNER_RESULT_LATEST_T)
+    );
   }
 
   if (spec) {
@@ -402,22 +483,16 @@ function buildFieldedBall(context, spec) {
   // Keep the post-landing travel grounded and short: a pronounced rebound
   // makes the entire flight read like a grounder.
   let fieldingPoint = "landing";
+  let ballPickupArrivalT = spec.landingT;
+  let fielderRouteArrivalT = spec.landingT;
   let pickupArrivalT = spec.landingT;
+  let recoveryWindow = null;
+  let safeTrajectoryKind = null;
   if (safeFlyHit) {
     context.points.miss = safeBallMissPoint(context.event, context.points, fielderKey, context.points.landing);
     context.points.pickup = safeBallPickupPoint(context.event, context.points, fielderKey, context.points.landing, "fly");
     fieldingPoint = "pickup";
-    pickupArrivalT = roundTime(Math.min(
-      0.89,
-      Math.max(spec.fieldEndT + scaleActionTime(context, 0.055), spec.landingT + scaleActionTime(context, 0.15))
-    ));
-    spec = {
-      ...spec,
-      fieldEndT: roundTime(Math.min(0.92, pickupArrivalT + scaleActionTime(context, 0.045))),
-      throwEndT: Number.isFinite(Number(spec.throwEndT))
-        ? roundTime(Math.min(0.965, Math.max(spec.throwEndT, pickupArrivalT + scaleActionTime(context, 0.16))))
-        : spec.throwEndT
-    };
+    safeTrajectoryKind = "fly";
   } else if (safeLineHit) {
     // A safe line drive has already hit the turf before the defender controls
     // it. Give the ball a short deadened roll, then choose a routine short-hop
@@ -425,31 +500,58 @@ function buildFieldedBall(context, spec) {
     context.points.miss = safeBallMissPoint(context.event, context.points, fielderKey, context.points.landing);
     context.points.pickup = safeBallPickupPoint(context.event, context.points, fielderKey, context.points.landing, "line");
     fieldingPoint = "pickup";
-    pickupArrivalT = roundTime(Math.min(
-      0.89,
-      Math.max(spec.fieldEndT + scaleActionTime(context, 0.02), spec.landingT + scaleActionTime(context, 0.075))
-    ));
-    spec = {
-      ...spec,
-      fieldEndT: roundTime(Math.min(0.92, pickupArrivalT + scaleActionTime(context, 0.035))),
-      throwEndT: Number.isFinite(Number(spec.throwEndT))
-        ? roundTime(Math.min(0.965, Math.max(spec.throwEndT, pickupArrivalT + scaleActionTime(context, 0.13))))
-        : spec.throwEndT
-    };
+    safeTrajectoryKind = "line";
   } else if (safeGroundHit) {
     context.points.miss = safeBallMissPoint(context.event, context.points, fielderKey, context.points.landing);
     context.points.pickup = safeBallPickupPoint(context.event, context.points, fielderKey, context.points.landing, "ground");
     fieldingPoint = "pickup";
-    pickupArrivalT = roundTime(Math.min(
-      0.89,
-      Math.max(spec.fieldEndT + scaleActionTime(context, 0.02), spec.landingT + scaleActionTime(context, 0.14))
-    ));
+    safeTrajectoryKind = "ground";
+  }
+  if (safeTrajectoryKind) {
+    const ballWindow = routeWindow(context, {
+      from: "landing",
+      to: "pickup",
+      earliestT: spec.landingT,
+      deadlineT: 0.94,
+      speed: BALL_SETTLE_SPEED_PX_PER_SECOND[safeTrajectoryKind],
+      minMs: 140,
+      maxMs: BALL_SETTLE_MAX_MS[safeTrajectoryKind]
+    });
+    recoveryWindow = routeWindow(context, {
+      from: "miss",
+      to: "pickup",
+      earliestT: spec.landingT,
+      deadlineT: 0.94,
+      speed: FIELDER_ROUTE_SPEED_PX_PER_SECOND.recover,
+      minMs: 140,
+      maxMs: 650
+    });
+    ballPickupArrivalT = ballWindow.endT;
+    fielderRouteArrivalT = recoveryWindow.endT;
+    // The ball rolls on its own clock. Possession begins only once both the
+    // ball and defender are at the pickup point, then a short secure transfer
+    // leads into the existing <=300ms throwing-gather budget.
+    pickupArrivalT = roundTime(Math.max(ballPickupArrivalT, fielderRouteArrivalT));
     spec = {
       ...spec,
-      fieldEndT: roundTime(Math.min(0.92, pickupArrivalT + scaleActionTime(context, 0.035))),
-      throwEndT: Number.isFinite(Number(spec.throwEndT))
-        ? roundTime(Math.min(0.965, Math.max(spec.throwEndT, pickupArrivalT + scaleActionTime(context, 0.13))))
-        : spec.throwEndT
+      fieldEndT: roundTime(Math.min(
+        0.965,
+        pickupArrivalT + FIELDING_SECURE_MS / Math.max(1, Number(context.durationMs) || 1)
+      ))
+    };
+  }
+  const throwTarget = fieldedBallThrowTarget(context, spec);
+  const possessionT = safeFlyHit || safeLineHit || safeGroundHit ? pickupArrivalT : spec.landingT;
+  if (throwTarget && spec.throwEndT) {
+    // The fielding/catch pose is only the secure transfer into the throwing
+    // motion. Count the 300ms release budget from actual possession, not from
+    // the end of a long authored pose.
+    spec = {
+      ...spec,
+      fieldEndT: roundTime(Math.min(
+        0.965,
+        possessionT + FIELDING_SECURE_MS / Math.max(1, Number(context.durationMs) || 1)
+      ))
     };
   }
   const battedPath = ["home"];
@@ -479,7 +581,7 @@ function buildFieldedBall(context, spec) {
     });
   }
   if (safeFlyHit) {
-    context.tracks.ball.push(cue(spec.landingT, pickupArrivalT, {
+    context.tracks.ball.push(cue(spec.landingT, ballPickupArrivalT, {
       path: ["landing", "pickup"],
       grounded: true,
       flightProfile: "roll",
@@ -488,10 +590,28 @@ function buildFieldedBall(context, spec) {
     }));
     if (safeFlyStyle === "dive") {
       context.points.diveStart = interpolatePoint(context.points[fielderKey], context.points.miss, 0.72);
+      const reactionT = actionT(0.265);
       const diveStartT = roundTime(Math.max(actionT(0.265), spec.landingT - scaleActionTime(context, 0.07)));
-      context.tracks.fielders.push(cue(actionT(0.265), diveStartT, {
+      const approachWindow = routeWindow(context, {
+        from: fielderKey,
+        to: "diveStart",
+        earliestT: reactionT,
+        deadlineT: diveStartT,
+        speed: FIELDER_ROUTE_SPEED_PX_PER_SECOND.approach,
+        minMs: 180,
+        maxMs: 1200,
+        align: "end"
+      });
+      addFielderRead(context, {
         who: fielderKey,
-        anim: ANIM.run,
+        at: fielderKey,
+        toward: "landing",
+        startT: reactionT,
+        endT: approachWindow.startT
+      });
+      context.tracks.fielders.push(cue(approachWindow.startT, approachWindow.endT, {
+        who: fielderKey,
+        anim: approachWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
         path: [fielderKey, "diveStart"],
         phase: "approach",
         arrivesAt: "diveStart"
@@ -503,9 +623,9 @@ function buildFieldedBall(context, spec) {
         phase: "miss",
         arrivesAt: "miss"
       }));
-      context.tracks.fielders.push(cue(spec.landingT, pickupArrivalT, {
+      context.tracks.fielders.push(cue(recoveryWindow.startT, recoveryWindow.endT, {
         who: fielderKey,
-        anim: ANIM.run,
+        anim: recoveryWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
         path: ["miss", "pickup"],
         phase: "recover",
         arrivesAt: "pickup"
@@ -513,16 +633,34 @@ function buildFieldedBall(context, spec) {
     } else {
       // Stop outside the glove radius when the ball lands, then continue through
       // the bounce. This reads as a genuine gap/bloop hit, never a dropped catch.
-      context.tracks.fielders.push(cue(actionT(0.265), spec.landingT, {
+      const reactionT = actionT(0.265);
+      const approachWindow = routeWindow(context, {
+        from: fielderKey,
+        to: "miss",
+        earliestT: reactionT,
+        deadlineT: spec.landingT,
+        speed: FIELDER_ROUTE_SPEED_PX_PER_SECOND.approach,
+        minMs: 180,
+        maxMs: 1200,
+        align: "end"
+      });
+      addFielderRead(context, {
         who: fielderKey,
-        anim: ANIM.run,
+        at: fielderKey,
+        toward: "landing",
+        startT: reactionT,
+        endT: approachWindow.startT
+      });
+      context.tracks.fielders.push(cue(approachWindow.startT, approachWindow.endT, {
+        who: fielderKey,
+        anim: approachWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
         path: [fielderKey, "miss"],
         phase: "approach",
         arrivesAt: "miss"
       }));
-      context.tracks.fielders.push(cue(spec.landingT, pickupArrivalT, {
+      context.tracks.fielders.push(cue(recoveryWindow.startT, recoveryWindow.endT, {
         who: fielderKey,
-        anim: ANIM.run,
+        anim: recoveryWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
         path: ["miss", "pickup"],
         phase: "recover",
         arrivesAt: "pickup"
@@ -536,23 +674,43 @@ function buildFieldedBall(context, spec) {
       phase: "pickup"
     }));
   } else if (safeLineHit) {
-    context.tracks.ball.push(cue(spec.landingT, pickupArrivalT, {
+    context.tracks.ball.push(cue(spec.landingT, ballPickupArrivalT, {
       path: ["landing", "pickup"],
       grounded: true,
       flightProfile: "roll",
       phase: "line-settle",
       arrivesAt: "pickup"
     }));
-    context.tracks.fielders.push(cue(actionT(0.265), spec.landingT, {
+    const reactionT = actionT(0.265);
+    const approachWindow = routeWindow(context, {
+      from: fielderKey,
+      to: "miss",
+      earliestT: reactionT,
+      deadlineT: spec.landingT,
+      speed: FIELDER_ROUTE_SPEED_PX_PER_SECOND.approach,
+      minMs: 180,
+      maxMs: 1200,
+      align: "end"
+    });
+    addFielderRead(context, {
       who: fielderKey,
-      anim: ANIM.run,
+      at: fielderKey,
+      toward: "landing",
+      startT: reactionT,
+      endT: approachWindow.startT
+    });
+    context.tracks.fielders.push(cue(approachWindow.startT, approachWindow.endT, {
+      who: fielderKey,
+      anim: approachWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
       path: [fielderKey, "miss"],
       phase: "approach",
       arrivesAt: "miss"
     }));
-    context.tracks.fielders.push(cue(spec.landingT, pickupArrivalT, {
+    context.tracks.fielders.push(cue(recoveryWindow.startT, recoveryWindow.endT, {
       who: fielderKey,
-      anim: safeLineStyle === "dive" ? ANIM.dive : ANIM.run,
+      anim: safeLineStyle === "dive"
+        ? ANIM.dive
+        : recoveryWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
       path: ["miss", "pickup"],
       phase: "recover",
       arrivesAt: "pickup"
@@ -565,7 +723,7 @@ function buildFieldedBall(context, spec) {
       phase: safeLineStyle === "dive" ? "trap" : "short-hop"
     }));
   } else if (safeGroundHit) {
-    context.tracks.ball.push(cue(spec.landingT, pickupArrivalT, {
+    context.tracks.ball.push(cue(spec.landingT, ballPickupArrivalT, {
       path: ["landing", "pickup"],
       grounded: true,
       bounce: true,
@@ -575,16 +733,34 @@ function buildFieldedBall(context, spec) {
       phase: "ground-through",
       arrivesAt: "pickup"
     }));
-    context.tracks.fielders.push(cue(actionT(0.265), spec.landingT, {
+    const reactionT = actionT(0.265);
+    const approachWindow = routeWindow(context, {
+      from: fielderKey,
+      to: "miss",
+      earliestT: reactionT,
+      deadlineT: spec.landingT,
+      speed: FIELDER_ROUTE_SPEED_PX_PER_SECOND.approach,
+      minMs: 180,
+      maxMs: 1200,
+      align: "end"
+    });
+    addFielderRead(context, {
       who: fielderKey,
-      anim: ANIM.run,
+      at: fielderKey,
+      toward: "landing",
+      startT: reactionT,
+      endT: approachWindow.startT
+    });
+    context.tracks.fielders.push(cue(approachWindow.startT, approachWindow.endT, {
+      who: fielderKey,
+      anim: approachWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
       path: [fielderKey, "miss"],
       phase: "approach",
       arrivesAt: "miss"
     }));
-    context.tracks.fielders.push(cue(spec.landingT, pickupArrivalT, {
+    context.tracks.fielders.push(cue(recoveryWindow.startT, recoveryWindow.endT, {
       who: fielderKey,
-      anim: ANIM.run,
+      anim: recoveryWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
       path: ["miss", "pickup"],
       phase: "recover",
       arrivesAt: "pickup"
@@ -597,9 +773,18 @@ function buildFieldedBall(context, spec) {
       phase: "pickup"
     }));
   } else {
-    context.tracks.fielders.push(cue(actionT(0.265), spec.landingT, {
+    const approachWindow = routeWindow(context, {
+      from: fielderKey,
+      to: "landing",
+      earliestT: actionT(0.265),
+      deadlineT: spec.landingT,
+      speed: FIELDER_ROUTE_SPEED_PX_PER_SECOND.approach,
+      minMs: 180,
+      maxMs: 1200
+    });
+    context.tracks.fielders.push(cue(approachWindow.startT, approachWindow.endT, {
       who: fielderKey,
-      anim: ANIM.run,
+      anim: approachWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
       path: [fielderKey, "landing"],
       phase: "approach",
       arrivesAt: "landing"
@@ -621,7 +806,7 @@ function buildFieldedBall(context, spec) {
       targetBase: batterTargetBase(context),
       out: context.template === "infieldOut" || context.template === "outfieldOut" || context.template === "doublePlay",
       slide: Boolean(spec.slide),
-      paceByDistance: !["doublePlay", "outfieldOut"].includes(context.template),
+      paceByDistance: true,
       phase: "batter-run"
     });
   }
@@ -631,32 +816,94 @@ function buildFieldedBall(context, spec) {
   // already-recorded call. An out throw must beat the retired runner; a safe
   // throw must arrive just after the runner instead of visually reversing the
   // simulation result.
-  const throwTarget = fieldedBallThrowTarget(context, spec);
   let defensiveRotation = null;
   let throwPlan = null;
+  let primaryThrowPlan = null;
+  let relayThrow = null;
   if (throwTarget && spec.throwEndT) {
-    throwPlan = resolveFieldingThrowPlan(context, {
-      who: fielderKey,
-      from: fieldingPoint,
-      to: throwTarget,
-      startT: spec.fieldEndT,
-      nominalEndT: spec.throwEndT
-    });
-    defensiveRotation = addDefensiveRotation(context, {
+    relayThrow = prepareLongOutfieldRelay(context, {
       primary: fielderKey,
       landing: fieldingPoint,
       landingT: spec.landingT,
       fieldEndT: spec.fieldEndT,
-      throwTarget,
-      throwEndT: throwPlan.endT
+      throwTarget
     });
-    addFieldingThrow(context, {
-      who: fielderKey,
-      from: fieldingPoint,
-      to: throwTarget,
-      startT: spec.fieldEndT,
-      plan: throwPlan
-    });
+    if (relayThrow) {
+      primaryThrowPlan = resolveFieldingThrowPlan(context, {
+        who: fielderKey,
+        from: fieldingPoint,
+        to: relayThrow.point,
+        startT: spec.fieldEndT,
+        nominalEndT: spec.throwEndT,
+        possessionT,
+        forceImmediate: true
+      });
+      throwPlan = resolveFieldingThrowPlan(context, {
+        who: relayThrow.fielder,
+        from: relayThrow.point,
+        to: throwTarget,
+        startT: primaryThrowPlan.endT,
+        nominalEndT: spec.throwEndT
+      });
+      addFieldingThrow(context, {
+        who: fielderKey,
+        from: fieldingPoint,
+        to: relayThrow.point,
+        startT: spec.fieldEndT,
+        plan: primaryThrowPlan
+      });
+      addRelayCatch(context, {
+        who: relayThrow.fielder,
+        at: relayThrow.point,
+        from: fieldingPoint,
+        arrivalT: primaryThrowPlan.endT
+      });
+      addFieldingThrow(context, {
+        who: relayThrow.fielder,
+        from: relayThrow.point,
+        to: throwTarget,
+        startT: primaryThrowPlan.endT,
+        plan: throwPlan,
+        actorPhase: "relay-throw",
+        ballPhase: "relay-throw"
+      });
+      defensiveRotation = addThrowReceiver(context, {
+        primary: fielderKey,
+        receiver: relayThrow.receiver,
+        to: throwTarget,
+        throwFrom: relayThrow.point,
+        moveStartT: Math.max(
+          scaleActionTime(context, 0.265),
+          Math.min(scaleActionTime(context, 0.31), spec.landingT - scaleActionTime(context, 0.1))
+        ),
+        throwEndT: throwPlan.endT
+      });
+    } else {
+      throwPlan = resolveFieldingThrowPlan(context, {
+        who: fielderKey,
+        from: fieldingPoint,
+        to: throwTarget,
+        startT: spec.fieldEndT,
+        nominalEndT: spec.throwEndT,
+        possessionT
+      });
+      primaryThrowPlan = throwPlan;
+      defensiveRotation = addDefensiveRotation(context, {
+        primary: fielderKey,
+        landing: fieldingPoint,
+        landingT: spec.landingT,
+        fieldEndT: spec.fieldEndT,
+        throwTarget,
+        throwEndT: throwPlan.endT
+      });
+      addFieldingThrow(context, {
+        who: fielderKey,
+        from: fieldingPoint,
+        to: throwTarget,
+        startT: spec.fieldEndT,
+        plan: throwPlan
+      });
+    }
   } else {
     addDefensiveSupport(context, {
       primary: fielderKey,
@@ -732,11 +979,23 @@ function buildFieldedBall(context, spec) {
     ballLandingT: roundTime(spec.landingT),
     ballArrivalT: roundTime(safeFlyHit || safeLineHit || safeGroundHit ? pickupArrivalT : spec.landingT),
     fielderArrivalT: roundTime(safeFlyHit || safeLineHit || safeGroundHit ? pickupArrivalT : spec.landingT),
+    ballPickupArrivalT: roundTime(safeFlyHit || safeLineHit || safeGroundHit ? ballPickupArrivalT : spec.landingT),
+    fielderRouteArrivalT: roundTime(safeFlyHit || safeLineHit || safeGroundHit ? fielderRouteArrivalT : spec.landingT),
     throwTarget: throwTarget || null,
-    throwArmScore: throwPlan?.armScore ?? null,
-    throwArc: throwPlan?.arc ?? null,
+    throwArmScore: primaryThrowPlan?.armScore ?? null,
+    throwArc: primaryThrowPlan?.arc ?? null,
     throwArrivalT: throwPlan?.endT ?? null,
     throwOrdering: throwPlan?.ordering ?? null,
+    relay: relayThrow
+      ? {
+          fielder: relayThrow.fielder,
+          point: relayThrow.point,
+          receiveT: primaryThrowPlan?.endT ?? null,
+          armScore: throwPlan?.armScore ?? null,
+          releaseT: throwPlan?.releaseT ?? null,
+          arrivalT: throwPlan?.endT ?? null
+        }
+      : null,
     receiver: defensiveRotation?.receiver ?? null,
     receiverArrivalT: defensiveRotation?.arrivalT ?? null,
     outRecordedAt: caughtBattedOut
@@ -756,11 +1015,8 @@ function buildFieldedBall(context, spec) {
 
 function fieldedBallThrowTarget(context, spec) {
   const canonicalTarget = defensiveThrowTarget(context.event);
-  if (canonicalTarget) return canonicalTarget;
-
-  const leadTransition = leadRunnerTransition(
-    existingRunnerTransitions(context.event, context.outcome, context.template)
-  );
+  const runnerTransitions = existingRunnerTransitions(context.event, context.outcome, context.template);
+  const leadTransition = leadRunnerTransition(runnerTransitions);
 
   // A caught fly/line already records the batter out at the landing point. Only
   // make a competitive throw when the event says an existing runner advanced.
@@ -774,12 +1030,22 @@ function fieldedBallThrowTarget(context, spec) {
   if (context.template === "single") {
     const type = normalizedToken(context.event?.battedBallType);
     const primary = selectFielderKey(context.event, context.points);
+    if (OUTFIELDERS.includes(primary)) {
+      const extraBaseAdvance = runnerTransitions.some((transition) => transitionDistance(transition) >= 2);
+      const secondBaseIsLive = runnerTransitions.some((transition) => Number(transition.toBase) === 2);
+      // A clean outfield single is returned to the cutoff, not floated behind
+      // a runner who is already recorded safe. When second is empty after a
+      // rare two-base advance, the normal-speed return there keeps the batter
+      // at first without inventing a tag play. Otherwise the fielder holds.
+      return extraBaseAdvance && !secondBaseIsLive ? "second" : null;
+    }
+    if (canonicalTarget) return canonicalTarget;
     if (type.includes("ground") && primary === "1B") return "first";
-    const leadTarget = baseAnchorForIndex(leadTransition?.toBase);
-    if (leadTarget) return leadTarget;
     if (type.includes("ground") && INFIELDERS.includes(primary)) return "first";
     return null;
   }
+
+  if (canonicalTarget) return canonicalTarget;
 
   if (["double", "triple"].includes(context.template)) {
     const leadTarget = baseAnchorForIndex(leadTransition?.toBase);
@@ -832,18 +1098,19 @@ function buildDoublePlay(context) {
 
   const primary = context.fielding?.fielder ?? selectFielderKey(context.event, context.points);
   const relay = context.fielding?.receiver ?? selectRelayFielder(context.points, primary);
+  const relayStartT = Number(context.fielding?.throwArrivalT ?? spec.throwEndT);
   const relayPlan = resolveFieldingThrowPlan(context, {
     who: relay,
     from: "second",
     to: "first",
-    startT: 0.63,
+    startT: relayStartT,
     nominalEndT: 0.72
   });
   addFieldingThrow(context, {
     who: relay,
     from: "second",
     to: "first",
-    startT: 0.63,
+    startT: relayStartT,
     plan: relayPlan,
     actorPhase: "relay-throw",
     ballPhase: "relay-throw"
@@ -903,7 +1170,7 @@ function addSafeHitInfieldAttempt(context, { who, landingT, actionT }) {
   ));
   const routeDistance = pointDistance(start, attempt);
 
-  if (routeDistance >= 4) {
+  if (routeDistance >= MIN_VISIBLE_RUN_ROUTE_PX) {
     context.tracks.fielders.push(cue(reactionT, approachEndT, {
       who,
       anim: ANIM.run,
@@ -917,12 +1184,12 @@ function addSafeHitInfieldAttempt(context, { who, landingT, actionT }) {
     anim: normalizedToken(context.event?.battedBallType).includes("line") && routeDistance >= 14
       ? ANIM.dive
       : ANIM.catch,
-    at: routeDistance >= 4 ? "infieldAttempt" : who,
+    at: routeDistance >= MIN_VISIBLE_RUN_ROUTE_PX ? "infieldAttempt" : who,
     faceFrom: who,
     toward: "infieldGate",
     phase: "infield-attempt-miss"
   }));
-  if (routeDistance >= 4 && recoverEndT > missEndT) {
+  if (routeDistance >= MIN_VISIBLE_RUN_ROUTE_PX && recoverEndT > missEndT) {
     context.tracks.fielders.push(cue(missEndT, recoverEndT, {
       who,
       anim: ANIM.run,
@@ -970,10 +1237,21 @@ function buildHomeRun(context) {
     phase: "home-run-flight",
     clearsWall: true
   }));
-  context.tracks.fielders.push(cue(actionT(0.24), actionT(0.57), {
+  const warningTrackWindow = routeWindow(context, {
+    from: fielderKey,
+    to: "wallTrack",
+    earliestT: actionT(0.24),
+    deadlineT: actionT(0.57),
+    speed: FIELDER_ROUTE_SPEED_PX_PER_SECOND.approach,
+    minMs: 180,
+    maxMs: 1500
+  });
+  context.tracks.fielders.push(cue(warningTrackWindow.startT, warningTrackWindow.endT, {
     who: fielderKey,
-    anim: ANIM.run,
-    path: [fielderKey, "wallTrack"],
+    anim: warningTrackWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
+    path: warningTrackWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? [fielderKey, "wallTrack"] : undefined,
+    at: warningTrackWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? undefined : fielderKey,
+    toward: "outfieldWall",
     phase: "warning-track"
   }));
   context.tracks.camera.push(cue(actionT(0.22), actionT(0.66), {
@@ -986,6 +1264,7 @@ function buildHomeRun(context) {
   addBatterAdvance(context, actionT(0.29), actionT(0.93), {
     anim: ANIM.run,
     targetBase: 4,
+    paceByDistance: true,
     phase: "home-run-trot"
   });
   addExistingRunnerAdvances(context, actionT(0.27));
@@ -1084,8 +1363,17 @@ function addPitch(context, startT, pitchNumber, caught, timeScale = 1) {
   }
 }
 
-function resolveFieldingThrowPlan(context, { who, from, to, startT, nominalEndT }) {
+function resolveFieldingThrowPlan(context, {
+  who,
+  from,
+  to,
+  startT,
+  nominalEndT,
+  possessionT = startT,
+  forceImmediate = false
+}) {
   const durationMs = Math.max(1, Number(context.durationMs) || 1);
+  const controlledAtT = Number.isFinite(Number(possessionT)) ? Number(possessionT) : Number(startT);
   const armScore = throwerArmScore(context.event, who);
   const armT = Math.max(0, Math.min(1, (armScore - THROW_ARM_MIN) / (THROW_ARM_MAX - THROW_ARM_MIN)));
   const distance = pointDistance(context.points[from], context.points[to]);
@@ -1099,9 +1387,17 @@ function resolveFieldingThrowPlan(context, { who, from, to, startT, nominalEndT 
   // fielder stand still with the ball for one or two seconds merely to preserve
   // the recorded safe result. Runner ordering below is the only delay a hit
   // throw may need.
-  const immediateHitThrow = ["single", "double", "triple"].includes(context.template);
+  const immediateHitThrow = forceImmediate || ["single", "double", "triple"].includes(context.template);
   let endT = earliestReleaseT + flightMs / durationMs;
-  if (!immediateHitThrow) endT = Math.max(endT, Number(nominalEndT) || 0);
+  // A recorded runner contest supplies its own safe/out deadline below. Keeping
+  // the old nominal endpoint as an additional floor made every arm release at
+  // the 300ms gather ceiling, erasing strong-vs-weak flight speed entirely.
+  // The exception is a 1B-fielded grounder: the pitcher needs the authored
+  // clock to cover roughly 278 design pixels without an impossible sprint.
+  const pitcherMustCoverFirst = to === "first" && normalizeFielderKey(who) === "1B";
+  if (!immediateHitThrow && (!movement || pitcherMustCoverFirst)) {
+    endT = Math.max(endT, Number(nominalEndT) || 0);
+  }
   let ordering = "neutral";
   if (movement?.out) {
     endT = Math.min(endT, movement.endT - THROW_OUT_LEAD_T);
@@ -1111,17 +1407,24 @@ function resolveFieldingThrowPlan(context, { who, from, to, startT, nominalEndT 
     ordering = "runner-safe-first";
   }
   endT = roundTime(Math.min(THROW_ARRIVAL_LATEST_T, endT));
-  let releaseT = Math.max(earliestReleaseT, endT - flightMs / durationMs);
+  const latestReleaseT = controlledAtT + THROW_MAX_GATHER_MS / durationMs;
+  const releaseCeilingT = Math.floor((latestReleaseT + Number.EPSILON) * 1000) / 1000;
+  let releaseT = Math.min(
+    releaseCeilingT,
+    roundTime(Math.max(earliestReleaseT, endT - flightMs / durationMs))
+  );
+  releaseT = Math.max(Number(startT), releaseT);
   releaseT = roundTime(Math.min(releaseT, endT - Math.min(0.035, Math.max(0.018, (endT - startT) * 0.42))));
   const arc = roundTime(0.055 - armT * 0.04);
   return {
     armScore,
     throwClass: armScore >= 150 ? "strong" : armScore <= 75 ? "weak" : "average",
-    pixelsPerSecond: Math.round(pixelsPerSecond),
+    pixelsPerSecond: Math.round(distance / Math.max(0.001, (endT - releaseT) * durationMs / 1000)),
     arc,
     releaseT,
     endT,
     flightMs: Math.round((endT - releaseT) * durationMs),
+    gatherMs: Math.round((releaseT - controlledAtT) * durationMs),
     ordering,
     runnerArrivalT: movement?.endT ?? null
   };
@@ -1153,10 +1456,56 @@ function addFieldingThrow(context, {
     throwClass: plan.throwClass,
     pixelsPerSecond: plan.pixelsPerSecond,
     flightMs: plan.flightMs,
+    gatherMs: plan.gatherMs,
     ordering: plan.ordering,
     runnerArrivalT: plan.runnerArrivalT,
     phase: ballPhase
   }));
+}
+
+function prepareLongOutfieldRelay(context, {
+  primary,
+  landing,
+  landingT,
+  fieldEndT,
+  throwTarget
+}) {
+  if (!OUTFIELDERS.includes(primary) || !["home", "third"].includes(throwTarget)) return null;
+  if (pointDistance(context.points[landing], context.points[throwTarget]) < LONG_OUTFIELD_RELAY_DISTANCE_PX) return null;
+
+  const attempted = safeHitAttemptedFielderKey(context.event, context.points, primary);
+  const excluded = new Set([attempted].filter(Boolean));
+  const receiver = selectThrowReceiver(context.points, primary, throwTarget, excluded);
+  const fielder = selectCutoffFielder(context.points, primary, receiver, context.points[landing], excluded);
+  if (!receiver || !fielder) return null;
+
+  addDefensiveSupport(context, {
+    primary,
+    receiver,
+    landing,
+    landingT,
+    fieldEndT,
+    throwTarget
+  });
+  const point = defensiveSupportPointName(fielder, "relay");
+  if (!context.points[point]) return null;
+  return { fielder, point, receiver };
+}
+
+function addRelayCatch(context, { who, at, from, arrivalT }) {
+  const durationMs = Math.max(1, Number(context.durationMs) || 1);
+  context.tracks.fielders.push(cue(
+    Math.max(0, arrivalT - 70 / durationMs),
+    arrivalT,
+    {
+      who,
+      anim: ANIM.catch,
+      at,
+      toward: from,
+      phase: "relay-receive",
+      assignment: "receiver"
+    }
+  ));
 }
 
 function throwerArmScore(event, who) {
@@ -1213,7 +1562,8 @@ function addDefensiveRotation(context, {
     landing,
     landingT,
     fieldEndT,
-    throwTarget
+    throwTarget,
+    throwEndT
   });
   if (!receiver) return null;
   const pitcherCoveringFirst = receiver === "P" && throwTarget === "first";
@@ -1231,7 +1581,8 @@ function addDefensiveRotation(context, {
           scaleActionTime(context, 0.265),
           Math.min(scaleActionTime(context, 0.31), landingT - scaleActionTime(context, 0.1))
         ),
-    throwEndT
+    throwEndT,
+    handoff: context.template === "doublePlay" && throwTarget === "second"
   });
 }
 
@@ -1241,7 +1592,8 @@ function addDefensiveSupport(context, {
   landing,
   landingT,
   fieldEndT,
-  throwTarget = null
+  throwTarget = null,
+  throwEndT = null
 }) {
   const target = context.points[landing];
   if (!target) return;
@@ -1264,18 +1616,40 @@ function addDefensiveSupport(context, {
     if (pointDistance(context.points[key], context.points[pointName]) < MIN_SUPPORT_ROUTE_PX) continue;
 
     const roleDelay = role === "relay" ? 0 : role === "base-cover" ? 0.016 : 0.032;
-    const roleArrival = role === "relay" ? -0.018 : role === "base-cover" ? -0.004 : 0.012;
-    const moveStartT = roundTime(baseStartT + scaleActionTime(context, roleDelay + index * 0.006));
-    const moveEndT = roundTime(Math.min(
-      0.97,
-      Math.max(
-        moveStartT + scaleActionTime(context, 0.08),
-        baseEndT + scaleActionTime(context, roleArrival + index * 0.004)
-      )
-    ));
-    context.tracks.fielders.push(cue(moveStartT, moveEndT, {
+    const baseBackup = role === "backup" && BASE_SUPPORT_TARGETS.has(targetKey);
+    // The pitcher reads a thrown ball from contact and starts drifting behind
+    // the bag immediately. Waiting for the generic backup delay can compress a
+    // long P route into an implausible last-second sprint.
+    const moveStartT = roundTime(key === "P" && role === "backup"
+      ? scaleActionTime(context, 0.22)
+      : baseStartT + scaleActionTime(context, roleDelay + index * 0.006));
+    const resolvedThrowEndT = throwEndT !== null && throwEndT !== "" && Number.isFinite(Number(throwEndT))
+      ? Number(throwEndT)
+      : null;
+    const deadlineT = role === "relay"
+      ? Math.max(moveStartT, Number(fieldEndT) || baseEndT)
+      : role === "base-cover" && resolvedThrowEndT !== null
+        ? Math.max(baseEndT, resolvedThrowEndT - scaleActionTime(context, 0.05))
+        : baseBackup && resolvedThrowEndT !== null
+          ? Math.min(0.985, resolvedThrowEndT + scaleActionTime(context, 0.04))
+          : baseEndT + scaleActionTime(context, (role === "backup" ? 0.012 : -0.004) + index * 0.004);
+    const roleSpeed = role === "relay"
+      ? FIELDER_ROUTE_SPEED_PX_PER_SECOND.relay
+      : role === "base-cover"
+        ? FIELDER_ROUTE_SPEED_PX_PER_SECOND.baseCover
+        : FIELDER_ROUTE_SPEED_PX_PER_SECOND.backup;
+    const moveWindow = routeWindow(context, {
+      from: key,
+      to: pointName,
+      earliestT: moveStartT,
+      deadlineT,
+      speed: roleSpeed,
+      minMs: 180,
+      maxMs: role === "backup" ? 1800 : 1400
+    });
+    context.tracks.fielders.push(cue(moveWindow.startT, moveWindow.endT, {
       who: key,
-      anim: ANIM.run,
+      anim: moveWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
       path: [key, pointName],
       arrivesAt: pointName,
       toward: assignment.toward ?? landing,
@@ -1320,7 +1694,13 @@ function defensiveSupportAssignments(context, { primary, receiver, landing, thro
     add(selectBaseBackupFielder(context.points, "first", primary, receiver, occupied, landing), "backup", "first", 0.18, landing);
   } else if (outfieldPrimary) {
     const adjacentOutfielder = selectOutfieldBackupFielder(context.points, primary, context.points[landing]);
-    const cutoff = selectCutoffFielder(context.points, primary, receiver, context.points[landing]);
+    const cutoff = selectCutoffFielder(
+      context.points,
+      primary,
+      receiver,
+      context.points[landing],
+      new Set([attempted].filter(Boolean))
+    );
     if (throwTarget) {
       if (throwTarget === "second") {
         add(selectMiddleCoverFielder(primary, receiver), "base-cover", "second", 0.66, landing);
@@ -1363,11 +1743,11 @@ function selectOutfieldBackupFielder(points, primary, landing) {
   return candidates.find((key) => points[key]) ?? "";
 }
 
-function selectCutoffFielder(points, primary, receiver, landing) {
+function selectCutoffFielder(points, primary, receiver, landing, excluded = new Set()) {
   const secondX = Number(points.second?.x ?? 0);
   const leftSide = primary === "LF" || Number(landing?.x ?? secondX) < secondX;
   const candidates = leftSide ? ["SS", "2B"] : ["2B", "SS"];
-  return candidates.find((key) => key !== primary && key !== receiver && points[key]) ?? "";
+  return candidates.find((key) => key !== primary && key !== receiver && !excluded.has(key) && points[key]) ?? "";
 }
 
 function selectMiddleCoverFielder(primary, receiver) {
@@ -1392,7 +1772,7 @@ function selectBaseBackupFielder(points, target, primary, receiver, occupied = n
       };
     })
     .filter(({ targetDistance, routeDistance }) => (
-      targetDistance <= BASE_BACKUP_MAX_DISTANCE_PX
+      targetDistance <= (BASE_BACKUP_MAX_DISTANCE_PX[target] ?? 42)
       && routeDistance >= MIN_SUPPORT_ROUTE_PX
     ))
     // Preserve baseball-role priority. Sorting by geometric closeness allowed a
@@ -1413,7 +1793,8 @@ function addThrowReceiver(context, {
   throwFrom = "",
   moveStartT,
   throwEndT,
-  phasePrefix = ""
+  phasePrefix = "",
+  handoff = false
 }) {
   const selected = receiver || selectThrowReceiver(context.points, primary, to);
   if (!selected || !context.points[selected] || !context.points[to]) return null;
@@ -1428,17 +1809,30 @@ function addThrowReceiver(context, {
   const firstBaseForce = to === "first";
   const arrivalLeadT = scaleActionTime(context, firstBaseForce ? 0.12 : 0.05);
   const catchLeadT = scaleActionTime(context, firstBaseForce ? 0.055 : 0.05);
-  const arrivalT = roundTime(Math.max(resolvedMoveStartT + scaleActionTime(context, 0.08), throwEndT - arrivalLeadT));
+  const arrivalDeadlineT = roundTime(Math.max(
+    resolvedMoveStartT + scaleActionTime(context, 0.08),
+    throwEndT - arrivalLeadT
+  ));
+  const moveWindow = routeWindow(context, {
+    from,
+    to,
+    earliestT: resolvedMoveStartT,
+    deadlineT: arrivalDeadlineT,
+    speed: FIELDER_ROUTE_SPEED_PX_PER_SECOND.receiver,
+    minMs: 160,
+    maxMs: selected === "P" && to === "first" ? 2200 : 1900
+  });
+  const arrivalT = moveWindow.endT;
   const receiveT = roundTime(Math.max(arrivalT, throwEndT - catchLeadT));
-  context.tracks.fielders.push(cue(resolvedMoveStartT, arrivalT, {
+  context.tracks.fielders.push(cue(moveWindow.startT, moveWindow.endT, {
     who: selected,
-    anim: ANIM.run,
+    anim: moveWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
     path: [from, to],
     arrivesAt: to,
     phase: `${phasePrefix}cover-${to}`,
     assignment: "receiver"
   }));
-  context.tracks.fielders.push(cue(receiveT, Math.min(0.99, throwEndT + scaleActionTime(context, 0.04)), {
+  context.tracks.fielders.push(cue(receiveT, handoff ? throwEndT : Math.min(0.99, throwEndT + scaleActionTime(context, 0.04)), {
     who: selected,
     anim: ANIM.catch,
     at: to,
@@ -1469,7 +1863,8 @@ function defensiveSupportDestination(points, assignment) {
   return clampDefensiveSupportPoint(
     start,
     interpolatePoint(start, target, purposefulAmount),
-    key
+    key,
+    points
   );
 }
 
@@ -1482,22 +1877,30 @@ function baseBackupDestination(points, key, targetKey, towardKey) {
   const deltaX = Number(target.x) - Number(incoming?.x ?? start.x);
   const deltaY = Number(target.y) - Number(incoming?.y ?? start.y);
   const length = Math.hypot(deltaX, deltaY) || 1;
+  const offset = BASE_BACKUP_OFFSET_PX[targetKey] ?? 14;
   const desired = {
     ...target,
-    x: roundCoordinate(Number(target.x) + deltaX / length * BASE_BACKUP_OFFSET_PX),
-    y: roundCoordinate(Number(target.y) + deltaY / length * BASE_BACKUP_OFFSET_PX)
+    x: roundCoordinate(Number(target.x) + deltaX / length * offset),
+    y: roundCoordinate(Number(target.y) + deltaY / length * offset)
   };
-  return clampDefensiveSupportPoint(start, desired, key);
+  return clampDefensiveSupportPoint(start, desired, key, points);
 }
 
-function clampDefensiveSupportPoint(anchor, point, key) {
-  const zone = DEFENDER_SUPPORT_MOVE_ZONES[key] ?? { x: 54, yTop: 42, yBottom: 44 };
-  return {
+function clampDefensiveSupportPoint(anchor, point, key, points) {
+  const zone = GAMECAST2_DEFENDER_MOVE_ZONES[key] ?? { x: 54, yTop: 42, yBottom: 44 };
+  const clamped = {
     ...point,
     x: roundCoordinate(Math.max(Number(anchor.x) - zone.x, Math.min(Number(anchor.x) + zone.x, Number(point.x)))),
     y: roundCoordinate(Math.max(Number(anchor.y) - zone.yTop, Math.min(Number(anchor.y) + zone.yBottom, Number(point.y)))),
     scale: roundCoordinate(Number(point.scale ?? anchor.scale ?? 1))
   };
+  if (OUTFIELDERS.includes(key)) {
+    clamped.y = roundCoordinate(Math.max(
+      clamped.y,
+      gamecast2OutfieldPlayableMinY(points, clamped.x)
+    ));
+  }
+  return clamped;
 }
 
 function addBatterAdvance(context, startT, endT, options) {
@@ -1683,6 +2086,11 @@ function inferredExistingRunCount(event, outcome, hitterId, scoredIds) {
 }
 
 function batterTargetBase(context) {
+  // The scored hit result is authoritative for the batter. A transient or
+  // legacy basesAfter payload can still contain the hitter at second after a
+  // single (for example, after a throw or an old identity mismatch). Rendering
+  // that payload literally turns an engine single into a visual double.
+  if (context.outcome === "single") return 1;
   const hitterId = String(context.event?.hitterId ?? context.event?.batterId ?? "");
   if (hitterId) {
     const after = baseOccupants(context.event, "After");
@@ -1712,7 +2120,10 @@ function transitionDistance(transition) {
 }
 
 function selectFielderKey(event, points) {
-  const explicit = normalizeFielderKey(event?.fieldingPosition ?? event?.defenderPosition);
+  const recordedPosition = event?.fieldingPosition ?? event?.defenderPosition;
+  const explicit = normalizeFielderKey(recordedPosition);
+  const rawExplicit = String(recordedPosition ?? "").trim().toUpperCase().replaceAll(" ", "");
+  const genericExplicit = ["IF", "OF", "내야수", "외야수"].includes(rawExplicit);
   const type = normalizedToken(event?.battedBallType);
   const safeAirHit = isSafeHitOutcome(event) && (type.includes("line") || type.includes("fly"));
   const authoredThroughBall = isSafeHitOutcome(event) && normalizedToken(event?.hitTrajectory).includes("through");
@@ -1726,6 +2137,12 @@ function selectFielderKey(event, points) {
   // the ball. fieldingZone still describes which infielder the ball passed, so
   // an explicit outfielder must win before the ground-zone responsibility map.
   if (explicit && OUTFIELDERS.includes(explicit) && points[explicit]) return explicit;
+  // The engine's concrete fieldingPosition is the recorded fielder and must be
+  // authoritative. fieldingZone is geometry metadata and can be stale on a
+  // legacy/save payload; letting it win made a recorded 1B groundout animate
+  // the shortstop as the primary fielder. Generic IF/OF records still use the
+  // zone map because they do not identify a concrete defender.
+  if (explicit && !genericExplicit && points[explicit]) return explicit;
   const zonedPrimary = groundBallZonePrimary(event);
   if (zonedPrimary && points[zonedPrimary]) return zonedPrimary;
   if (explicit && points[explicit]) return explicit;
@@ -1782,6 +2199,53 @@ function firstAvailableAnchor(points, candidates) {
 
 function pointDistance(a, b) {
   return Math.hypot(Number(a?.x ?? 0) - Number(b?.x ?? 0), Number(a?.y ?? 0) - Number(b?.y ?? 0));
+}
+
+function routeWindow(context, {
+  from,
+  to,
+  earliestT,
+  deadlineT = 0.985,
+  speed,
+  minMs = 160,
+  maxMs = 1600,
+  align = "start"
+}) {
+  const durationMs = Math.max(1, Number(context?.durationMs) || 1);
+  const distancePx = pointDistance(context?.points?.[from], context?.points?.[to]);
+  const targetSpeed = Math.max(1, Number(speed) || 1);
+  const naturalMs = Math.max(
+    Math.max(1, Number(minMs) || 1),
+    Math.min(Math.max(1, Number(maxMs) || 1), distancePx / targetSpeed * 1000)
+  );
+  const earliest = Math.max(0, Number(earliestT) || 0);
+  const deadline = Math.max(earliest, Math.min(0.99, Number(deadlineT) || 0.985));
+  const naturalT = naturalMs / durationMs;
+  if (align === "end") {
+    return {
+      startT: roundTime(Math.max(earliest, deadline - naturalT)),
+      endT: roundTime(deadline),
+      distancePx,
+      targetMs: naturalMs
+    };
+  }
+  return {
+    startT: roundTime(earliest),
+    endT: roundTime(Math.min(deadline, earliest + naturalT)),
+    distancePx,
+    targetMs: naturalMs
+  };
+}
+
+function addFielderRead(context, { who, at, toward, startT, endT }) {
+  if (Number(endT) - Number(startT) < 0.018) return;
+  context.tracks.fielders.push(cue(startT, endT, {
+    who,
+    anim: ANIM.catch,
+    at,
+    toward,
+    phase: "read"
+  }));
 }
 
 function segmentProjectionAmount(point, from, to) {
@@ -1967,13 +2431,33 @@ function eventSprayLane(event, fielderKey) {
 }
 
 function outfieldWallPoint(points, lane) {
-  const center = points.CF ?? interpolatePoint(points.leftPole, points.rightPole, 0.5);
+  const center = points.centerWall ?? interpolatePoint(points.leftPole, points.rightPole, 0.5);
   if (lane < 0) {
     const left = points.leftPole ?? points.LF ?? center;
     return interpolatePoint(center, left, Math.min(0.72, Math.abs(lane)));
   }
   const right = points.rightPole ?? points.RF ?? center;
   return interpolatePoint(center, right, Math.min(0.72, lane));
+}
+
+export function gamecast2OutfieldWallYForDesignX(points, x) {
+  const left = points?.leftPole ?? { x: 38, y: 252 };
+  const right = points?.rightPole ?? { x: 922, y: 252 };
+  const center = points?.centerWall ?? {
+    x: (Number(left.x ?? 38) + Number(right.x ?? 922)) / 2,
+    y: Math.min(Number(left.y ?? 252), Number(right.y ?? 252)) - 38
+  };
+  const px = Number(x ?? center.x);
+  const from = px < Number(center.x) ? left : center;
+  const to = px < Number(center.x) ? center : right;
+  const local = (px - Number(from.x ?? 0)) / Math.max(1, Number(to.x ?? 1) - Number(from.x ?? 0));
+  return Number(from.y ?? center.y) + (Number(to.y ?? center.y) - Number(from.y ?? center.y)) * local;
+}
+
+export function gamecast2OutfieldPlayableMinY(points, x) {
+  return roundCoordinate(
+    gamecast2OutfieldWallYForDesignX(points, x) + GAMECAST2_OUTFIELD_WALL_PADDING_PX
+  );
 }
 
 function ensurePointClearanceInsideWall(point, fielder, home, wall, minimumDistance) {
@@ -2057,7 +2541,14 @@ function safeBallPickupPoint(event, points, fielderKey, landing, trajectory) {
     y: roundCoordinate(Number(landing.y) + dy / length * travel)
   };
   const wall = points.outfieldWall ?? outfieldWallPoint(points, eventSprayLane(event, fielderKey));
-  return clampPointInsideOutfieldWall(candidate, home, wall, SAFE_HIT_PICKUP_WALL_MARGIN_PX);
+  const insideWall = clampPointInsideOutfieldWall(candidate, home, wall, SAFE_HIT_PICKUP_WALL_MARGIN_PX);
+  return {
+    ...insideWall,
+    y: roundCoordinate(Math.max(
+      Number(insideWall.y),
+      gamecast2OutfieldPlayableMinY(points, Number(insideWall.x))
+    ))
+  };
 }
 
 function clampPointInsideOutfieldWall(point, home, wall, marginPx) {
@@ -2127,16 +2618,19 @@ function outfieldLandingDelayMs(event, fielderKey, template) {
 
 function flyBallLandingDelayMs(event, template) {
   const trajectory = normalizedToken(event?.hitTrajectory);
-  if (trajectory.includes("flybloop")) return 850;
-  if (trajectory.includes("flygapdrop")) return 1200;
+  if (canonicalOutcome(event) === "single") {
+    if (trajectory.includes("flybloop")) return SAFE_FLY_SINGLE_LANDING_DELAY_MS.bloop;
+    if (trajectory.includes("flygapdrop")) return SAFE_FLY_SINGLE_LANDING_DELAY_MS.gapDrop;
+    return SAFE_FLY_SINGLE_LANDING_DELAY_MS.default;
+  }
   if (template === "outfieldOut") return 1300;
   return OUTFIELD_LANDING_DELAY_MS.fly;
 }
 
 function homeRunWallPoint(event, points) {
-  const left = points.leftPole ?? points.LF ?? points.CF ?? points.third;
-  const right = points.rightPole ?? points.RF ?? points.CF ?? points.first;
-  const center = points.CF ?? interpolatePoint(left, right, 0.5);
+  const left = points.leftPole ?? points.LF ?? points.third;
+  const right = points.rightPole ?? points.RF ?? points.first;
+  const center = points.centerWall ?? interpolatePoint(left, right, 0.5);
   const lane = deterministicUnit(event);
   if (lane < -0.34) return interpolatePoint(left, center, 0.42);
   if (lane > 0.34) return interpolatePoint(center, right, 0.58);
@@ -2312,6 +2806,11 @@ function finalizeTimeline(context) {
   const allAnimationKeysValid = allAnimationKeys(context.tracks).every((key) => GAMECAST2_ATLAS_ANIMATION_KEYS.includes(key));
   const fieldingArrivalMatchesBall = !context.fielding
     || context.fielding.ballArrivalT === context.fielding.fielderArrivalT;
+  const possessionAfterBallAndFielder = !context.fielding
+    || (
+      Number(context.fielding.fielderArrivalT) + 0.000001 >= Number(context.fielding.ballPickupArrivalT)
+      && Number(context.fielding.fielderArrivalT) + 0.000001 >= Number(context.fielding.fielderRouteArrivalT)
+    );
   const wallOutcomeMatches = !context.wall
     || (context.template === "homeRun"
       ? context.wall.clearsWall === true && Number(context.wall.clearancePx) > 0
@@ -2333,6 +2832,7 @@ function finalizeTimeline(context) {
       invariants: {
         animationContract: allAnimationKeysValid,
         fieldingArrivalMatchesBall,
+        possessionAfterBallAndFielder,
         resultAfterRunning: runningEndT === 0 || resultT > runningEndT,
         wallOutcomeMatches
       }

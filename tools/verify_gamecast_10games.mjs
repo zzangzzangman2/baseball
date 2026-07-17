@@ -5,7 +5,11 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createInitialState } from "../src/data.js";
 import { groundBallFieldingAssignment, simulateDay, simulateNextUserGame } from "../src/engine.js";
-import { compilePlayTimeline } from "../src/gamecast2/timeline.js";
+import {
+  compilePlayTimeline,
+  GAMECAST2_DEFENDER_MOVE_ZONES
+} from "../src/gamecast2/timeline.js";
+import { clampGamecast2DefenderDesignPoint } from "../src/gamecast2/scene.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const ROOT_DIR = path.resolve(path.dirname(__filename), "..");
@@ -32,25 +36,9 @@ const GROUND_ZONE_PRIMARY = Object.freeze({
   "first-corner": "1B",
   "first-line": "1B"
 });
-// Keep aligned with the endpoint guard in src/gamecast2/scene.js and the
-// authored-timeline matrix in tools/verify_gamecast_timeline.mjs.
-const DEFENDER_MOVE_ZONES = Object.freeze({
-  P: { x: 300, yTop: 110, yBottom: 220 },
-  C: { x: 30, yTop: 42, yBottom: 12 },
-  "1B": { x: 54, yTop: 42, yBottom: 45 },
-  "2B": { x: 132, yTop: 80, yBottom: 80 },
-  "3B": { x: 54, yTop: 42, yBottom: 45 },
-  SS: { x: 184, yTop: 80, yBottom: 80 },
-  // A gap hit can legitimately pull an outfielder much farther laterally than
-  // a routine catch. These limits still reject a corner outfielder crossing
-  // most of the field because the engine selected the wrong spray-side actor.
-  LF: { x: 240, yTop: 90, yBottom: 180 },
-  CF: { x: 190, yTop: 90, yBottom: 120 },
-  RF: { x: 240, yTop: 90, yBottom: 180 }
-});
-
 export function verifyGamecastTenGames() {
   verifyGroundBallAssignmentFunction();
+  verifyTimelineAIMovementRegressions();
   const state = createInitialState();
   state.selectedTeamId = "kiwoom";
   advanceToRegularSeason(state);
@@ -84,6 +72,13 @@ export function verifyGamecastTenGames() {
     safeHitMisses: 0,
     safeHitGates: 0,
     safeHitReactionChecks: 0,
+    singleTimingByTrajectory: {
+      flybloop: 0,
+      flygapdrop: 0,
+      linedrop: 0,
+      linethrough: 0,
+      groundthrough: 0
+    },
     groundThrough: 0,
     infieldChoppers: 0,
     lineThroughSingles: 0,
@@ -94,6 +89,20 @@ export function verifyGamecastTenGames() {
     minimumHomeRunWallClearancePx: Number.POSITIVE_INFINITY,
     baseBackups: 0,
     behindBaseBackups: 0,
+    throwGatherChecks: 0,
+    longRelayChecks: 0,
+    homeRunOrderChecks: 0,
+    movementSpeedChecks: {
+      primary: 0,
+      recover: 0,
+      relay: 0,
+      baseCover: 0,
+      backup: 0,
+      receiver: 0,
+      flySettle: 0,
+      lineSettle: 0,
+      groundSettle: 0
+    },
     groundZones: Object.fromEntries(Object.keys(GROUND_ZONE_PRIMARY).map((zone) => [zone, 0])),
     fallback: 0,
     positionViolations: 0,
@@ -139,6 +148,12 @@ export function verifyGamecastTenGames() {
   for (const key of ["safeHits", "safeHitMisses", "safeHitGates", "safeHitReactionChecks", "groundThrough", "infieldChoppers", "lineThroughSingles"]) {
     assert(coverage[key] > 0, `10-game audit did not cover ${key}.`);
   }
+  for (const [trajectory, count] of Object.entries(coverage.singleTimingByTrajectory)) {
+    assert(count > 0, `10-game audit did not cover single timing for ${trajectory}.`);
+  }
+  for (const [role, count] of Object.entries(coverage.movementSpeedChecks)) {
+    assert(count > 0, `10-game audit did not cover ${role} movement speed.`);
+  }
   for (const key of ["safeWallEvents", "safeWallPoints", "homeRunWallExits"]) {
     assert(coverage[key] > 0, `10-game audit did not cover ${key}.`);
   }
@@ -163,6 +178,110 @@ function advanceToRegularSeason(state) {
   }
   assert.equal(state.phase, "regular", `Could not reach the regular season (phase=${state.phase}).`);
   assert.equal(state.gamesPlayed, 0, `Preseason advancement unexpectedly played ${state.gamesPlayed} games.`);
+}
+
+function verifyTimelineAIMovementRegressions() {
+  const base = {
+    type: "plateAppearance",
+    gameId: "ten-game-synthetic",
+    sequence: 1,
+    hitterId: "batter",
+    outsBefore: 0,
+    outsAfter: 0,
+    basesBefore: [false, false, false],
+    basesAfter: [false, false, false],
+    baseRunnerIdsBefore: ["", "", ""],
+    baseRunnerIdsAfter: ["", "", ""],
+    scoredRunners: [],
+    runs: 0
+  };
+  const homeRun = compilePlayTimeline({
+    ...base,
+    outcome: "homeRun",
+    runs: 4,
+    basesBefore: [true, true, true],
+    baseRunnerIdsBefore: ["r1", "r2", "r3"],
+    scoredRunners: [{ id: "r3" }, { id: "r2" }, { id: "r1" }, { id: "batter" }]
+  }, JAMSIL_DAY_ANCHORS);
+  const batter = homeRun.tracks.batter.find((cue) => cue.phase === "home-run-trot");
+  const runnerEnd = (id) => Math.max(
+    0,
+    ...homeRun.tracks.runners
+      .filter((cue) => cue.runnerId === id)
+      .map((cue) => Number(cue.endT ?? cue.t))
+  );
+  const scoringOrder = [runnerEnd("r3"), runnerEnd("r2"), runnerEnd("r1"), Number(batter?.endT)];
+  assert(batter, "Synthetic bases-loaded home run has no batter trot.");
+  assert(
+    scoringOrder.every((value, index) => index === 0 || value > scoringOrder[index - 1]),
+    `Synthetic home-run scoring order is wrong (${scoringOrder.join(" < ")}).`
+  );
+  assert(
+    Math.abs(((Number(batter.endT) - Number(batter.t)) * homeRun.durationMs) / 4 - 3000) <= 12,
+    "Synthetic home-run batter does not use the 3000ms/base pace."
+  );
+
+  const relayEvents = [
+    {
+      label: "RF-home",
+      target: "home",
+      event: {
+        outcome: "double",
+        battedBallType: "lineDrive",
+        hitTrajectory: "line-gap",
+        fieldingPosition: "RF",
+        defensiveThrowTarget: "home",
+        runs: 1,
+        basesBefore: [false, true, false],
+        baseRunnerIdsBefore: ["", "r2", ""],
+        basesAfter: [false, true, false],
+        baseRunnerIdsAfter: ["", "batter", ""],
+        scoredRunners: [{ id: "r2" }]
+      }
+    },
+    {
+      label: "CF-third",
+      target: "third",
+      event: {
+        outcome: "triple",
+        battedBallType: "flyBall",
+        hitTrajectory: "fly-gap",
+        sprayLane: 0.4,
+        fieldingPosition: "CF",
+        defensiveThrowTarget: "third",
+        basesAfter: [false, false, true],
+        baseRunnerIdsAfter: ["", "", "batter"]
+      }
+    }
+  ];
+  for (const [index, item] of relayEvents.entries()) {
+    const timeline = compilePlayTimeline({
+      ...base,
+      sequence: index + 2,
+      defenderProfile: { arm: 180 },
+      defenseProfilesByPosition: { "2B": { arm: 55 }, SS: { arm: 55 } },
+      ...item.event
+    }, JAMSIL_DAY_ANCHORS);
+    const throws = timeline.tracks.ball.filter((cue) => ["fielding-throw", "relay-throw"].includes(cue.phase));
+    const [firstLeg, finalLeg] = throws;
+    const relay = timeline.meta.fielding?.relay;
+    assert.equal(throws.length, 2, `${item.label}: long throw is not two-hop.`);
+    assert.equal(firstLeg?.path?.at(-1), relay?.point, `${item.label}: first leg bypasses cutoff.`);
+    assert.equal(finalLeg?.path?.[0], relay?.point, `${item.label}: relay does not leave cutoff.`);
+    assert.equal(finalLeg?.path?.at(-1), item.target, `${item.label}: relay misses final target.`);
+    assert.equal(firstLeg?.armScore, 180, `${item.label}: outfielder arm is not used.`);
+    assert.equal(finalLeg?.armScore, 55, `${item.label}: cutoff arm is not used.`);
+    assert(Number(firstLeg?.arc) < Number(finalLeg?.arc), `${item.label}: arm does not affect each leg's arc.`);
+    for (const throwCue of throws) {
+      assert(Number(throwCue.gatherMs) <= 300.5, `${item.label}: ${throwCue.phase} gather exceeds 300ms.`);
+    }
+    const support = timeline.tracks.fielders.filter((cue) => (
+      cue.phase === "support-relay" && cue.who === relay?.fielder && cue.path?.at(-1) === relay?.point
+    ));
+    assert.equal(support.length, 1, `${item.label}: cutoff support cue is missing or duplicated.`);
+    assert(Number(support[0].endT) <= Number(firstLeg.endT), `${item.label}: cutoff arrives after first leg.`);
+    assert.equal(finalLeg.ordering, "runner-safe-first", `${item.label}: safe/out ordering changed.`);
+  }
 }
 
 function verifyGroundBallAssignmentFunction() {
@@ -218,6 +337,15 @@ function auditHitTrajectorySemantics(label, event, coverage, problems) {
   const attemptedFielder = normalizePosition(event.attemptedFieldingPosition);
   const trajectory = normalizedToken(event.hitTrajectory);
   const sprayLane = Number(event.sprayLane);
+
+  if (outcome === "single") {
+    const runnerFromFirst = String(event.baseRunnerIdsBefore?.[0] ?? "");
+    const runnerAtThird = String(event.baseRunnerIdsAfter?.[2] ?? "");
+    const deepGapSingle = ["flygap", "flygapdrop", "linegap", "linegapdrop"].includes(trajectory);
+    if (runnerFromFirst && runnerAtThird === runnerFromFirst && !deepGapSingle) {
+      problems.push(`${label}: routine ${trajectory || type} single sends the runner from first to third.`);
+    }
+  }
 
   if (!Number.isFinite(sprayLane) || sprayLane < -1 || sprayLane > 1) {
     problems.push(`${label}: safe hit has invalid sprayLane ${String(event.sprayLane)}.`);
@@ -322,7 +450,7 @@ function auditOutfieldWallSemantics(label, event, timeline, coverage, problems) 
 function auditSprayLaneBand(label, event, pointName, home, boundary, problems) {
   const lane = Number(event.sprayLane);
   if (!Number.isFinite(lane)) return;
-  const center = JAMSIL_DAY_ANCHORS.anchors?.CF;
+  const center = JAMSIL_DAY_ANCHORS.anchors?.centerWall;
   const pole = lane < 0
     ? JAMSIL_DAY_ANCHORS.anchors?.leftPole
     : JAMSIL_DAY_ANCHORS.anchors?.rightPole;
@@ -393,7 +521,9 @@ function auditTimeline(label, event, timeline, coverage, problems) {
 
   auditThrowTarget(label, event, timeline, problems);
   auditReceiverArrivals(label, timeline, problems);
+  auditThrowAndRunnerTiming(label, timeline, coverage, problems);
   auditDefensiveSupport(label, timeline, coverage, problems);
+  auditMovementSpeeds(label, timeline, coverage, problems);
   auditTagUpOrdering(label, event, timeline, batted, problems);
   if (event.type === "stolenBase") auditStealOrdering(label, event, timeline, problems);
 
@@ -451,6 +581,50 @@ function auditSafeHitTrajectory(label, event, timeline, batted, coverage, proble
     problems.push(`${label}: safe hit has no batted-ball cue.`);
     return;
   }
+
+  const trajectory = normalizedToken(event.hitTrajectory);
+  const type = normalizedToken(event.battedBallType);
+  const batterRun = timeline.tracks.batter.find((cue) => cue.phase === "batter-run");
+  const maximumSingleTravelMs = {
+    flybloop: 1450,
+    flygapdrop: 1450,
+    linedrop: 1200,
+    linethrough: 1200,
+    groundthrough: 1100
+  }[trajectory];
+  if (canonicalOutcome(event) === "single" && Number.isFinite(maximumSingleTravelMs)) {
+    coverage.singleTimingByTrajectory[trajectory] += 1;
+    const travelMs = (Number(batted.endT) - Number(batted.t)) * Number(timeline.durationMs);
+    if (!Number.isFinite(travelMs) || travelMs > maximumSingleTravelMs + 0.5) {
+      problems.push(`${label}: ${trajectory} single takes ${Number.isFinite(travelMs) ? travelMs.toFixed(1) : "NaN"}ms to land (maximum ${maximumSingleTravelMs}ms).`);
+    }
+    if (!batterRun || batterRun.basesAdvanced !== 1 || batterRun.toBase !== "first" || batterRun.path?.join(",") !== "home,first") {
+      problems.push(`${label}: ${trajectory} single batter does not stop at first.`);
+    }
+    if (Number(batted.endT) > Number(batterRun?.endT) + 0.0005) {
+      problems.push(`${label}: ${trajectory} single remains in flight after the batter reaches first.`);
+    }
+    const maximumControlMs = {
+      flybloop: 1800,
+      flygapdrop: 1900,
+      linedrop: 1650,
+      linethrough: 1650,
+      groundthrough: 1550
+    }[trajectory];
+    const controlMs = (Number(fielding.fielderArrivalT) - Number(batted.t)) * Number(timeline.durationMs);
+    if (!Number.isFinite(controlMs) || controlMs > maximumControlMs + 0.5) {
+      problems.push(
+        `${label}: ${trajectory} single takes ${Number.isFinite(controlMs) ? controlMs.toFixed(1) : "NaN"}ms `
+          + `from contact to control (maximum ${maximumControlMs}ms).`
+      );
+    }
+  }
+  if (canonicalOutcome(event) === "single" && (type.includes("fly") || type.includes("line"))) {
+    const landingLeadMs = (Number(batterRun?.endT) - Number(batted.endT)) * Number(timeline.durationMs);
+    if (!Number.isFinite(landingLeadMs) || landingLeadMs < 149.5) {
+      problems.push(`${label}: safe-air single lands only ${Number.isFinite(landingLeadMs) ? landingLeadMs.toFixed(1) : "NaN"}ms before the batter reaches first (minimum 150ms).`);
+    }
+  }
   if (!landing || !miss || !pickup) {
     problems.push(`${label}: safe hit lacks landing/miss/pickup geometry.`);
     return;
@@ -507,8 +681,6 @@ function auditSafeHitTrajectory(label, event, timeline, batted, coverage, proble
     coverage.safeHitReactionChecks += 1;
   }
 
-  const trajectory = normalizedToken(event.hitTrajectory);
-  const type = normalizedToken(event.battedBallType);
   const needsGate = trajectory === "groundthrough" || type.includes("line") || type.includes("fly");
   if (needsGate) {
     const gateIndex = batted.path?.indexOf("infieldGate") ?? -1;
@@ -607,7 +779,11 @@ function auditDefensiveSupport(label, timeline, coverage, problems) {
     coverage.baseBackups += 1;
     const target = timeline.points?.[cue.supportTarget];
     const targetDistance = pointDistance(destination, target);
-    if (!Number.isFinite(targetDistance) || targetDistance > 42.01) {
+    const cornerBackup = ["first", "third"].includes(cue.supportTarget);
+    const invalidTargetDistance = cornerBackup
+      ? !Number.isFinite(targetDistance) || targetDistance < 68.9 || targetDistance > 84.01
+      : !Number.isFinite(targetDistance) || targetDistance > 42.01;
+    if (invalidTargetDistance) {
       problems.push(`${label}: ${cue.who} backs up ${cue.supportTarget} from ${targetDistance.toFixed(2)}px away.`);
     }
     const incoming = timeline.points?.[cue.toward];
@@ -711,11 +887,153 @@ function auditGroundBallResponsibility(label, event, timeline, coverage, problem
   }
 }
 
+function fieldingDecisionThrow(timeline) {
+  const target = timeline.meta?.fielding?.throwTarget;
+  const throws = timeline.tracks.ball.filter((cue) => ["fielding-throw", "relay-throw"].includes(cue.phase));
+  return throws.find((cue) => target && cue.path?.at(-1) === target)
+    ?? throws.find((cue) => cue.phase === "fielding-throw")
+    ?? null;
+}
+
+function auditMovementSpeeds(label, timeline, coverage, problems) {
+  const counters = coverage.movementSpeedChecks;
+  const primary = timeline.meta?.fielding?.fielder;
+  const supportLimits = {
+    relay: [55, 210, "relay"],
+    "base-cover": [55, 230, "baseCover"],
+    backup: [45, 220, "backup"]
+  };
+  const settleKinds = {
+    "safe-settle": ["fly", 28, 100, "flySettle"],
+    "line-settle": ["line", 35, 130, "lineSettle"],
+    "ground-through": ["ground", 45, 150, "groundSettle"]
+  };
+
+  for (const cue of timeline.tracks.fielders.filter((entry) => entry.path?.length > 1)) {
+    const distance = cueRouteDistance(timeline, cue);
+    if (cue.anim === "run" && (!Number.isFinite(distance) || distance < 7.99)) {
+      problems.push(`${label}: ${cue.who} ${cue.phase} runs only ${Number.isFinite(distance) ? distance.toFixed(2) : "NaN"}px.`);
+    }
+    if (cue.who === primary && cue.phase === "approach" && distance >= 14) {
+      auditCueSpeed(label, timeline, cue, 45, 240, "primary approach", problems);
+      counters.primary += 1;
+    }
+    if (cue.phase === "recover" && distance >= 8) {
+      auditCueSpeed(label, timeline, cue, 25, 180, "fielder recovery", problems);
+      counters.recover += 1;
+    }
+    const support = supportLimits[cue.assignment];
+    if (support && distance >= 14) {
+      const [minimum, maximum, counter] = support;
+      auditCueSpeed(label, timeline, cue, minimum, maximum, `support ${cue.assignment}`, problems);
+      counters[counter] += 1;
+    }
+    if (cue.assignment === "receiver" && distance >= 14) {
+      const maximum = cue.who === "P" && cue.path?.at(-1) === "first" ? 250.5 : 220;
+      auditCueSpeed(label, timeline, cue, 50, maximum, "throw receiver", problems);
+      counters.receiver += 1;
+    }
+  }
+
+  for (const cue of timeline.tracks.ball) {
+    const settle = settleKinds[cue.phase];
+    if (!settle || cue.path?.length < 2) continue;
+    const [kind, minimum, maximum, counter] = settle;
+    const distance = cueRouteDistance(timeline, cue);
+    if (distance < 10) continue;
+    const durationMs = (Number(cue.endT) - Number(cue.t)) * Number(timeline.durationMs);
+    if (!Number.isFinite(durationMs) || durationMs > 1200.5) {
+      problems.push(`${label}: ${kind} settle lasts ${Number.isFinite(durationMs) ? durationMs.toFixed(1) : "NaN"}ms (limit 1200ms).`);
+    }
+    auditCueSpeed(label, timeline, cue, minimum, maximum, `${kind} ball settle`, problems);
+    counters[counter] += 1;
+  }
+}
+
+function auditCueSpeed(label, timeline, cue, minimum, maximum, role, problems) {
+  const distance = cueRouteDistance(timeline, cue);
+  const seconds = (Number(cue.endT) - Number(cue.t)) * Number(timeline.durationMs) / 1000;
+  const speed = distance / Math.max(0.001, seconds);
+  if (!Number.isFinite(speed) || speed < minimum - 0.01 || speed > maximum + 0.01) {
+    problems.push(`${label}: ${role} ${cue.who ?? cue.phase} moves at ${Number.isFinite(speed) ? speed.toFixed(1) : "NaN"}px/s (${minimum}-${maximum}).`);
+  }
+}
+
+function auditThrowAndRunnerTiming(label, timeline, coverage, problems) {
+  const throws = timeline.tracks.ball.filter((cue) => ["fielding-throw", "relay-throw"].includes(cue.phase));
+  const simpleOutfieldSingle = timeline.template === "single"
+    && OUTFIELD_POSITIONS.has(normalizePosition(timeline.meta?.fielding?.fielder));
+  for (const throwCue of throws) {
+    coverage.throwGatherChecks += 1;
+    const gatherMs = Number(throwCue.gatherMs);
+    if (!Number.isFinite(gatherMs) || gatherMs < -0.5 || gatherMs > 300.5) {
+      problems.push(`${label}: ${throwCue.phase} gather is ${Number.isFinite(gatherMs) ? gatherMs.toFixed(1) : "NaN"}ms (limit 300ms).`);
+    }
+    const flightMs = (Number(throwCue.endT) - Number(throwCue.t)) * Number(timeline.durationMs);
+    if (simpleOutfieldSingle && (!Number.isFinite(flightMs) || flightMs > 620.5)) {
+      problems.push(`${label}: ${throwCue.phase} flight is ${Number.isFinite(flightMs) ? flightMs.toFixed(1) : "NaN"}ms (limit 620ms).`);
+    }
+    const throwDistance = cueRouteDistance(timeline, throwCue);
+    const throwSpeed = throwDistance / Math.max(0.001, flightMs / 1000);
+    if (simpleOutfieldSingle && throwDistance >= 140 && (!Number.isFinite(throwSpeed) || throwSpeed < 750)) {
+      problems.push(`${label}: ${throwCue.phase} crawls at ${Number.isFinite(throwSpeed) ? throwSpeed.toFixed(1) : "NaN"}px/s.`);
+    }
+  }
+
+  if (timeline.template === "homeRun") {
+    const batter = timeline.tracks.batter.find((cue) => cue.phase === "home-run-trot");
+    const runnerEnds = [...new Set(timeline.tracks.runners.map((cue) => cue.runnerId).filter(Boolean))]
+      .map((runnerId) => Math.max(
+        ...timeline.tracks.runners
+          .filter((cue) => cue.runnerId === runnerId)
+          .map((cue) => Number(cue.endT ?? cue.t))
+      ));
+    if (runnerEnds.length > 0) {
+      coverage.homeRunOrderChecks += 1;
+      if (!batter || Math.max(...runnerEnds) >= Number(batter.endT)) {
+        problems.push(`${label}: home-run batter scores before an existing runner.`);
+      }
+    }
+  }
+
+  const relay = timeline.meta?.fielding?.relay;
+  if (!relay) return;
+  coverage.longRelayChecks += 1;
+  const firstLeg = throws.find((cue) => cue.phase === "fielding-throw" && cue.path?.at(-1) === relay.point);
+  const finalLeg = throws.find((cue) => cue.phase === "relay-throw" && cue.path?.[0] === relay.point);
+  if (!firstLeg || !finalLeg) {
+    problems.push(`${label}: long outfield relay does not contain both hops.`);
+    return;
+  }
+  const support = timeline.tracks.fielders.filter((cue) => (
+    cue.phase === "support-relay" && cue.who === relay.fielder && cue.path?.at(-1) === relay.point
+  ));
+  if (support.length !== 1) problems.push(`${label}: cutoff support cue count is ${support.length}, expected 1.`);
+  if (support[0] && Number(support[0].endT) > Number(firstLeg.endT) + 0.000001) {
+    problems.push(`${label}: cutoff reaches relay point after the first throw.`);
+  }
+  const cutoffCatch = timeline.tracks.fielders.find((cue) => (
+    cue.phase === "relay-receive"
+    && cue.who === relay.fielder
+    && cue.at === relay.point
+    && Number(cue.t) <= Number(firstLeg.endT) + 0.000001
+    && Number(cue.endT) >= Number(firstLeg.endT) - 0.000001
+  ));
+  if (!cutoffCatch) problems.push(`${label}: cutoff catch does not cover first-leg arrival.`);
+}
+
 function auditThrowTarget(label, event, timeline, problems) {
-  const expected = event.defensiveThrowTarget ?? null;
+  const fielder = normalizePosition(timeline.meta?.fielding?.fielder ?? event.fieldingPosition);
+  const outfieldSingle = timeline.template === "single" && OUTFIELD_POSITIONS.has(fielder);
+  const runnerMoves = timeline.tracks.runners.filter((cue) => cue.phase === "runner-advance");
+  const hasExtraBaseAdvance = runnerMoves.some((cue) => Number(cue.basesAdvanced) >= 2);
+  const secondRemainsOccupied = runnerMoves.some((cue) => cue.toBase === "second");
+  const expected = outfieldSingle
+    ? (hasExtraBaseAdvance && !secondRemainsOccupied ? "second" : null)
+    : (event.defensiveThrowTarget ?? null);
   const actual = timeline.meta?.fielding?.throwTarget ?? null;
-  if (actual !== expected) problems.push(`${label}: throw target ${actual}, event target ${expected}.`);
-  const competitiveThrow = timeline.tracks.ball.find((cue) => cue.phase === "fielding-throw");
+  if (actual !== expected) problems.push(`${label}: throw target ${actual}, expected ${expected}.`);
+  const competitiveThrow = fieldingDecisionThrow(timeline);
   if (expected && competitiveThrow?.path?.at(-1) !== expected) {
     problems.push(`${label}: fielding throw ends at ${competitiveThrow?.path?.at(-1)}, expected ${expected}.`);
   }
@@ -805,17 +1123,18 @@ function countPositionViolations(label, timeline, problems) {
     const destinationName = cue.at ?? cue.path?.at(-1);
     const destination = timeline.points?.[destinationName];
     const origin = JAMSIL_DAY_ANCHORS.anchors?.[cue.who];
-    const zone = DEFENDER_MOVE_ZONES[cue.who];
+    const zone = GAMECAST2_DEFENDER_MOVE_ZONES[cue.who];
     if (!destination || !origin || !zone) continue;
-    const dx = Number(destination.x) - Number(origin.x);
-    const dy = Number(destination.y) - Number(origin.y);
-    const within = dx >= -zone.x - 0.000001
-      && dx <= zone.x + 0.000001
-      && dy >= -zone.yTop - 0.000001
-      && dy <= zone.yBottom + 0.000001;
-    if (!within) {
+    const clamped = clampGamecast2DefenderDesignPoint(
+      destination,
+      JAMSIL_DAY_ANCHORS.anchors,
+      cue.who
+    );
+    const dx = Number(clamped.x) - Number(destination.x);
+    const dy = Number(clamped.y) - Number(destination.y);
+    if (Math.abs(dx) > 0.000001 || Math.abs(dy) > 0.000001) {
       count += 1;
-      problems.push(`${label}: ${cue.who} ${cue.phase} endpoint exceeds bounds (dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}).`);
+      problems.push(`${label}: ${cue.who} ${cue.phase} endpoint is changed by the production scene clamp (dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}).`);
     }
   }
   return count;
@@ -919,6 +1238,16 @@ function pointDistance(left, right) {
   return Math.hypot(Number(left.x) - Number(right.x), Number(left.y) - Number(right.y));
 }
 
+function cueRouteDistance(timeline, cue) {
+  let distance = 0;
+  for (let index = 1; index < (cue.path?.length ?? 0); index += 1) {
+    const segment = pointDistance(timeline.points?.[cue.path[index - 1]], timeline.points?.[cue.path[index]]);
+    if (!Number.isFinite(segment)) return Number.NaN;
+    distance += segment;
+  }
+  return distance;
+}
+
 function safeWallBoundary(home, point, sprayLane) {
   const directBoundary = wallBoundaryAlongRay(home, point);
   if (directBoundary) return directBoundary;
@@ -928,7 +1257,7 @@ function safeWallBoundary(home, point, sprayLane) {
   // the fence. Fall back to that event's broad spray sector instead of copying
   // the production landing formula or treating the missing ray hit as outside.
   const lane = Number(sprayLane);
-  const center = JAMSIL_DAY_ANCHORS.anchors?.CF;
+  const center = JAMSIL_DAY_ANCHORS.anchors?.centerWall;
   const pole = lane < 0
     ? JAMSIL_DAY_ANCHORS.anchors?.leftPole
     : JAMSIL_DAY_ANCHORS.anchors?.rightPole;
@@ -950,7 +1279,7 @@ function wallBoundaryAlongRay(home, point) {
   const rayLength = Math.hypot(ray.x, ray.y);
   if (rayLength < 0.001) return null;
   const direction = { x: ray.x / rayLength, y: ray.y / rayLength };
-  const center = JAMSIL_DAY_ANCHORS.anchors?.CF;
+  const center = JAMSIL_DAY_ANCHORS.anchors?.centerWall;
   const left = JAMSIL_DAY_ANCHORS.anchors?.leftPole;
   const right = JAMSIL_DAY_ANCHORS.anchors?.rightPole;
   if (![center, left, right].every(isFinitePoint)) return null;

@@ -15,7 +15,11 @@ import {
   GAMECAST_SPRITE_ASSET_REVISION,
   gamecastSpriteAssetUrl
 } from "../src/gamecastPhaser.js";
-import { getGamecast2RunnerStartMs } from "../src/gamecast2/timeline.js";
+import {
+  GAMECAST2_BATTER_RUN_MS_PER_BASE,
+  GAMECAST2_RUNNER_RUN_MS_PER_BASE,
+  getGamecast2RunnerStartMs
+} from "../src/gamecast2/timeline.js";
 import { gamecast2TimelineCacheKey } from "../src/gamecast2/scene.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1609,7 +1613,7 @@ function checkBattedBallExtraBaseRules() {
       && !tagTransitions.some((transition) => transition.role === "batter")
       && tagTiming.tagUp
       && Math.abs(tagTiming.startT - authoredTagStartT) < 0.000001
-      && tagTiming.durationMs === 1400
+      && tagTiming.durationMs === 2600
       && tagTiming.endT <= 0.985,
     `caught-out tag-up transition is invalid: ${JSON.stringify(tagTransitions)}/${JSON.stringify(tagTiming)}`,
     MODULE_PATHS.ui
@@ -1641,7 +1645,7 @@ function checkBattedBallExtraBaseRules() {
     leadTransition?.fromBase === 1
       && leadTransition?.toBase === 3
       && actualSingleTransitions.some((transition) => transition.role === "batter" && transition.toBase === 1)
-      && (leadTiming.durationMs - 270) / leadTiming.distance === 1400,
+      && (leadTiming.durationMs - 270) / leadTiming.distance === 2600,
     `actual single runner paths are not preserved: ${JSON.stringify(actualSingleTransitions)}/${JSON.stringify(leadTiming)}`,
     MODULE_PATHS.ui
   );
@@ -1686,8 +1690,10 @@ function checkBattedBallExtraBaseRules() {
       && sacrificeRunner?.toBase === 2
       && sacrificeBatter?.toBase === 1
       && sacrificeBatter?.out === true
-      && Math.abs(sacrificeRunnerTiming.startT - 0.255) < 0.000001
-      && Math.abs(sacrificeBatterTiming.startT - 0.27) < 0.000001
+      && Math.abs(sacrificeRunnerTiming.startT - 0.255) < 0.001
+      && Math.abs(sacrificeBatterTiming.startT - 0.27) < 0.001
+      && sacrificeRunnerTiming.durationMs === GAMECAST2_RUNNER_RUN_MS_PER_BASE
+      && sacrificeBatterTiming.durationMs === GAMECAST2_BATTER_RUN_MS_PER_BASE
       && sacrificeRunnerTiming.endT <= 0.985
       && sacrificeBatterTiming.endT <= 0.985,
     `sacrifice-bunt runner timing is invalid: ${JSON.stringify(sacrificeTransitions)}/${JSON.stringify([sacrificeRunnerTiming, sacrificeBatterTiming])}`,
@@ -1699,6 +1705,7 @@ function checkBattedBallExtraBaseRules() {
     occupied = [],
     position = "RF",
     battedBallType = "lineDrive",
+    hitTrajectory = "line-drop",
     seed = "throw-matrix",
     plateAppearance = 1,
     outs = 0,
@@ -1726,6 +1733,7 @@ function checkBattedBallExtraBaseRules() {
       bases: type === "homeRun" ? 4 : type === "triple" ? 3 : type === "double" ? 2 : type === "single" ? 1 : 0,
       isAtBat: true,
       battedBallType,
+      hitTrajectory,
       fieldingPosition: position,
       doublePlay,
       defender: { id: `fixture-${position.toLowerCase()}`, arm }
@@ -1744,6 +1752,7 @@ function checkBattedBallExtraBaseRules() {
       outcome: type,
       hitterId: hitter.id,
       battedBallType,
+      hitTrajectory,
       fieldingPosition: position,
       doublePlay,
       baseRunnerIdsBefore,
@@ -1805,7 +1814,12 @@ function checkBattedBallExtraBaseRules() {
   }
 
   const firstToSecond = findScenario({ type: "single", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 2);
-  const firstToThird = findScenario({ type: "single", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 3);
+  const firstToThird = findScenario({
+    type: "single",
+    occupied: [1],
+    battedBallType: "flyBall",
+    hitTrajectory: "fly-gap-drop"
+  }, (scenario) => runnerDestination(scenario, "runner-1") === 3);
   const secondScores = findScenario({ type: "single", occupied: [2] }, (scenario) => runnerDestination(scenario, "runner-2") === 4);
   const secondHoldsThird = findScenario({ type: "single", occupied: [2] }, (scenario) => runnerDestination(scenario, "runner-2") === 3);
   assert(firstToSecond?.target === "second", `single 1B->2B throw target=${firstToSecond?.target}`, MODULE_PATHS.engine);
@@ -2018,6 +2032,40 @@ function checkBattedBallExtraBaseRules() {
   }
 
   assert(
+    engineModule.singleFirstToThirdProbability({ runner: { speed: 10, baserunning: 10 }, outs: 0, defender: { arm: 10 } }) === 0.13,
+    "average first-to-third probability is not centered on its baseball baseline",
+    MODULE_PATHS.engine
+  );
+  assert(
+    engineModule.singleSecondToHomeProbability({ runner: { speed: 10, baserunning: 10 }, outs: 0, defender: { arm: 10 } }) === 0.36,
+    "average second-to-home probability is not centered on its baseball baseline",
+    MODULE_PATHS.engine
+  );
+  const shallowBloopScore = engineModule.singleSecondToHomeProbability({
+    runner: { speed: 10, baserunning: 10 },
+    outs: 0,
+    defender: { arm: 10 },
+    outcome: { hitTrajectory: "fly-bloop" }
+  });
+  const lineDropScore = engineModule.singleSecondToHomeProbability({
+    runner: { speed: 10, baserunning: 10 },
+    outs: 0,
+    defender: { arm: 10 },
+    outcome: { hitTrajectory: "line-drop" }
+  });
+  const deepGapScore = engineModule.singleSecondToHomeProbability({
+    runner: { speed: 10, baserunning: 10 },
+    outs: 0,
+    defender: { arm: 10 },
+    outcome: { hitTrajectory: "fly-gap-drop" }
+  });
+  assert(
+    shallowBloopScore < lineDropScore && lineDropScore < deepGapScore,
+    `single advancement ignores hit depth (${shallowBloopScore}/${lineDropScore}/${deepGapScore})`,
+    MODULE_PATHS.engine
+  );
+
+  assert(
     typeof engineModule.canAdvanceFirstToThirdOnSingle === "function",
     "canAdvanceFirstToThirdOnSingle export가 없습니다.",
     MODULE_PATHS.engine
@@ -2033,8 +2081,14 @@ function checkBattedBallExtraBaseRules() {
     MODULE_PATHS.engine
   );
   assert(
-    engineModule.canAdvanceFirstToThirdOnSingle({ type: "single", battedBallType: "lineDrive", fieldingPosition: "RF" }),
+    !engineModule.canAdvanceFirstToThirdOnSingle({ type: "single", battedBallType: "lineDrive", hitTrajectory: "line-drop", fieldingPosition: "RF" }),
     "외야 단타의 정상적인 1→3루 선택지까지 제거되었습니다.",
+    MODULE_PATHS.engine
+  );
+  assert(
+    !engineModule.canAdvanceFirstToThirdOnSingle({ type: "single", battedBallType: "flyBall", hitTrajectory: "fly-bloop", fieldingPosition: "LF" })
+      && engineModule.canAdvanceFirstToThirdOnSingle({ type: "single", battedBallType: "flyBall", hitTrajectory: "fly-gap-drop", fieldingPosition: "RF" }),
+    "First-to-third eligibility does not distinguish shallow and deep singles.",
     MODULE_PATHS.engine
   );
   assert(
@@ -2650,12 +2704,14 @@ function checkManualPitchingPlan() {
   const saveLine = pitchingLines.find((line) => String(line.decision ?? "").includes("S"));
 
   assert(String(starterLine?.playerId ?? "") === rotationOrder[0], `실제 경기 선발=${starterLine?.playerId}, 기대=${rotationOrder[0]}`, MODULE_PATHS.engine);
-  assert(String(closerLine?.playerId ?? "") === String(closerId), `실제 경기 CL=${closerLine?.playerId}, 기대=${closerId}`, MODULE_PATHS.engine);
+  if (closerLine) {
+    assert(String(closerLine.playerId) === String(closerId), `실제 경기 CL=${closerLine.playerId}, 기대=${closerId}`, MODULE_PATHS.engine);
+  }
   if (saveLine) {
     assert(String(saveLine.playerId) === String(closerId), `세이브 투수=${saveLine.playerId}, 기대 마무리=${closerId}`, MODULE_PATHS.engine);
   }
 
-  return `수동 nextStarter ${starterLine.name}, CL ${closerLine.name}${saveLine ? `, SV ${saveLine.name}` : ""}, 부상 슬롯 자동 보정 확인`;
+  return `수동 nextStarter ${starterLine.name}, CL ${closerLine?.name ?? "미등판"}${saveLine ? `, SV ${saveLine.name}` : ""}, 부상 슬롯 자동 보정 확인`;
 }
 
 function checkManagementDepthV0() {

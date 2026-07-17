@@ -9,8 +9,8 @@
 //   ?speed=0.5|1|1.5|2|4   시작 배속 선택
 //   ?holds=0               자동 홀드 끄기
 import { createInitialState } from "./data.js";
-import { simulateDay, resolveMailDecision } from "./engine.js?v=gamecast-short-result-roll-20260716-r26";
-import { mountApp } from "./ui.js?v=gamecast-short-result-roll-20260716-r26";
+import { simulateDay, resolveMailDecision } from "./engine.js?v=gamecast-ai-kinematics-20260717-r29";
+import { mountApp } from "./ui.js?v=gamecast-ai-kinematics-20260717-r29";
 
 const params = new URLSearchParams(window.location.search);
 const state = createInitialState();

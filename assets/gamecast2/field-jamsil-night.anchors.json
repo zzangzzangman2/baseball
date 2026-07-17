@@ -6,7 +6,7 @@
     "width": 960,
     "height": 720
   },
-  "markerCount": 153,
+  "markerCount": 162,
   "anchors": {
     "home": {
       "x": 480.0,
@@ -78,6 +78,11 @@
       "y": 280.0,
       "scale": 0.76
     },
+    "centerWall": {
+      "x": 480.0,
+      "y": 224.0,
+      "scale": 0.72
+    },
     "leftPole": {
       "x": 18.0,
       "y": 254.0,
@@ -111,6 +116,11 @@
       "LF",
       "CF",
       "RF"
+    ],
+    "wall": [
+      "leftPole",
+      "centerWall",
+      "rightPole"
     ],
     "poles": [
       "leftPole",
