@@ -7,13 +7,13 @@ import {
   getGamecast2UrlOptions,
   normalizeGamecast2Anchors,
   selectGamecast2Field
-} from "./assets.js?v=gamecast-ai-kinematics-20260717-r31";
+} from "./assets.js?v=gamecast-ai-realism-20260719-r32";
 import {
   compilePlayTimeline,
   GAMECAST2_DEFENDER_MOVE_ZONES,
   gamecast2OutfieldPlayableMinY
-} from "./timeline.js?v=gamecast-ai-kinematics-20260717-r31";
-import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-ai-kinematics-20260717-r31";
+} from "./timeline.js?v=gamecast-ai-realism-20260719-r32";
+import { ensureTeamSpriteAtlas } from "../gamecastPhaser.js?v=gamecast-ai-realism-20260719-r32";
 
 const DEFENSE_ANCHORS = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
 const OUTFIELD_ANCHORS = new Set(["LF", "CF", "RF"]);
@@ -1193,7 +1193,7 @@ function updateBallFlight(runtime, frame = null) {
     scene.shadowGraphics
     && Number.isFinite(Number(ball.groundX))
     && Number.isFinite(Number(ball.groundY))
-    && !["pitch", "fielding-throw", "relay-throw", "steal-throw"].includes(String(ball.phase ?? ""))
+    && !["pitch", "fielding-throw", "relay-throw", "steal-throw", "fielding-carry", "fielding-hold", "catch-hold"].includes(String(ball.phase ?? ""))
   ) {
     const height = Math.max(0, Number(ball.height ?? 0));
     const shadowScale = Math.max(0.45, 1 - height / 180);
@@ -1208,7 +1208,9 @@ function updateBallFlight(runtime, frame = null) {
   }
   if (ball.trail?.length > 1) {
     const battedFlight = ["batted", "home-run-flight"].includes(String(ball.phase ?? ""));
-    const groundedSettle = ["safe-settle", "line-settle", "ground-settle", "ground-through"].includes(String(ball.phase ?? ""));
+    // A carried ball moves at running speed; a streaking throw trail behind it
+    // reads as a wild toss, so it shares the settle rendering (no stroke).
+    const groundedSettle = ["safe-settle", "line-settle", "ground-settle", "ground-through", "fielding-carry"].includes(String(ball.phase ?? ""));
     const drawTrailPath = () => {
       scene.ballTrail.beginPath();
       scene.ballTrail.moveTo(Math.round(ball.trail[0].x * sx), Math.round(ball.trail[0].y * sy));
@@ -1702,8 +1704,9 @@ export function buildTimelineBallState(timeline, progress, event) {
   if (!point) return null;
   const phase = String(sample.cue.phase ?? "");
   const battedFlight = ["batted", "home-run-flight"].includes(phase);
-  const groundedSettle = ["safe-settle", "line-settle", "ground-settle", "ground-through"].includes(phase);
-  const sampleCount = battedFlight ? 7 : groundedSettle ? 2 : 5;
+  const groundedSettle = ["safe-settle", "line-settle", "ground-settle", "ground-through", "fielding-carry"].includes(phase);
+  const stationary = ["fielding-hold", "catch-hold", "error-loose", "pickup-wait"].includes(phase);
+  const sampleCount = stationary ? 0 : battedFlight ? 7 : groundedSettle ? 2 : 5;
   const cueDurationMs = Math.max(
     1,
     (Number(sample.cue.endT ?? sample.cue.t ?? 0) - Number(sample.cue.t ?? 0)) * Number(timeline.durationMs ?? 1)
@@ -1728,14 +1731,17 @@ export function buildTimelineBallState(timeline, progress, event) {
 
 export function timelineBallPoint(cue, points, localT) {
   const route = (cue.path ?? []).map((key) => points?.[key]).filter(Boolean);
-  if (route.length === 0) return cue.at && points?.[cue.at] ? { ...points[cue.at] } : null;
+  const fixedPoint = cue.at && points?.[cue.at] ? points[cue.at] : null;
+  if (route.length === 0 && !fixedPoint) return null;
   const routeT = battedBallTravelProgress(cue.flightProfile, localT);
   // Safe-hit routes use the middle anchor as a control point around the
   // reacting infielder. Interpolating the three anchors as two straight lines
   // created a visible mid-flight corner; a quadratic path keeps the same
   // clearance while reading as one continuous slice/hop off the bat.
-  const point = route.length === 1
-    ? { ...route[0] }
+  const point = route.length === 0
+    ? { ...fixedPoint }
+    : route.length === 1
+      ? { ...route[0] }
     : cue.routeCurve === "quadratic" && route.length === 3
       ? quadraticPoint(route[0], route[1], route[2], routeT)
       : pointAlongTimelineRoute(route, routeT);
@@ -1759,9 +1765,10 @@ export function timelineBallPoint(cue, points, localT) {
     height += Math.sin(clamp01(localT) * Math.PI) * Math.min(190, 8 + arc * 132);
   }
   const phase = String(cue.phase ?? "");
-  if (["fielding-hold", "fielding-throw", "relay-throw"].includes(phase)) {
-    // Timeline anchors are feet/base coordinates. Lift throws into the hand and
-    // receiving-glove plane so a hard throw never appears to roll base-to-base.
+  if (["fielding-hold", "fielding-throw", "relay-throw", "fielding-carry"].includes(phase)) {
+    // Timeline anchors are feet/base coordinates. Lift throws (and a ball
+    // carried to the bag on an unassisted putout) into the hand/glove plane so
+    // the ball never appears to roll base-to-base.
     height += GAMECAST2_THROW_GLOVE_LIFT;
   } else if (phase === "steal-throw") {
     // `home` already sits above the catcher's feet; blend only the receiving

@@ -33,9 +33,16 @@ const MINIMUM_EVENT_COUNT = GAME_COUNT * 60;
 const SAFE_WALL_MARGIN_PX = 4;
 const HOME_RUN_WALL_CLEARANCE_PX = 8;
 const GROUND_RESPONSIBILITY_ROUTE_LIMIT_PX = 55;
+const NEAR_TARGET_SUPPRESSION_MAX_PX = 44;
+const THROW_MAX_GATHER_MS = 300;
+const THROW_ARRIVAL_LATEST_T = 0.985;
+const THROW_ARM_MIN = 20;
+const THROW_ARM_MAX = 200;
+const TIMELINE_EPSILON = 0.000001;
 const DEFENSE_POSITIONS = new Set(["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"]);
 const INFIELD_POSITIONS = new Set(["P", "C", "1B", "2B", "3B", "SS"]);
 const OUTFIELD_POSITIONS = new Set(["LF", "CF", "RF"]);
+const TERMINAL_DEFENSIVE_ACTION_PHASES = new Set(["fielding-throw", "relay-throw", "fielding-carry", "steal-throw"]);
 const GROUND_ZONE_PRIMARY = Object.freeze({
   "third-line": "3B",
   "third-corner": "3B",
@@ -117,6 +124,20 @@ export function verifyGamecastTenGames() {
     behindBaseBackups: 0,
     throwGatherChecks: 0,
     longRelayChecks: 0,
+    suppressedTerminalPossessionChecks: 0,
+    cutoffTerminalPossessionChecks: 0,
+    caughtTerminalPossessionChecks: 0,
+    errorLooseTerminalChecks: 0,
+    completedActionTerminalChecks: 0,
+    fieldingThrowTerminalChecks: 0,
+    relayThrowTerminalChecks: 0,
+    fieldingCarryTerminalChecks: 0,
+    stealThrowTerminalChecks: 0,
+    homeStealTerminalChecks: 0,
+    nearTargetSuppressionChecks: 0,
+    physicalFirstSuppressionChecks: 0,
+    secondBaseReceiverChecks: 0,
+    intermediateBasePassageChecks: 0,
     homeRunOrderChecks: 0,
     movementSpeedChecks: {
       primary: 0,
@@ -186,6 +207,23 @@ export function verifyGamecastTenGames() {
   }
   assert(coverage.baseBackups > 0, "10-game audit did not exercise a base-backup route.");
   assert(coverage.behindBaseBackups > 0, "10-game audit did not exercise a behind-base backup route.");
+  if (GAME_COUNT >= 1000) {
+    for (const key of [
+      "suppressedTerminalPossessionChecks",
+      "cutoffTerminalPossessionChecks",
+      "nearTargetSuppressionChecks",
+      "physicalFirstSuppressionChecks",
+      "secondBaseReceiverChecks",
+      "intermediateBasePassageChecks",
+      "completedActionTerminalChecks",
+      "fieldingThrowTerminalChecks",
+      "relayThrowTerminalChecks",
+      "fieldingCarryTerminalChecks",
+      "stealThrowTerminalChecks"
+    ]) {
+      assert(coverage[key] > 0, `${GAME_COUNT}-game audit did not cover ${key}.`);
+    }
+  }
   for (const [zone, count] of Object.entries(coverage.groundZones)) {
     assert(count > 0, `10-game audit did not cover ground-ball zone ${zone}.`);
   }
@@ -258,10 +296,13 @@ function verifyTimelineAIMovementRegressions() {
     "Synthetic home-run batter does not use the 3000ms/base pace."
   );
 
+  // A contested-base containment throw is gone: hits now walk the ball back in
+  // through the cutoff man. A return that would beat the recorded-safe runner
+  // dies at the cutoff; an uncontested return completes the two-hop to the bag.
   const relayEvents = [
     {
-      label: "RF-third-containment",
-      target: "third",
+      label: "RF-double-cutoff-return",
+      cutoffOnly: true,
       event: {
         outcome: "double",
         battedBallType: "lineDrive",
@@ -277,8 +318,8 @@ function verifyTimelineAIMovementRegressions() {
       }
     },
     {
-      label: "CF-home-containment",
-      target: "home",
+      label: "CF-triple-cutoff-return",
+      cutoffOnly: true,
       event: {
         outcome: "triple",
         battedBallType: "flyBall",
@@ -288,6 +329,21 @@ function verifyTimelineAIMovementRegressions() {
         defensiveThrowTarget: "third",
         basesAfter: [false, false, true],
         baseRunnerIdsAfter: ["", "", "batter"]
+      }
+    },
+    {
+      label: "RF-deep-single-return",
+      cutoffOnly: false,
+      target: "second",
+      event: {
+        outcome: "single",
+        battedBallType: "flyBall",
+        hitTrajectory: "fly-gap-drop",
+        sprayLane: 0.9,
+        fieldingPosition: "RF",
+        defensiveThrowTarget: "second",
+        basesAfter: [true, false, false],
+        baseRunnerIdsAfter: ["batter", "", ""]
       }
     }
   ];
@@ -302,13 +358,21 @@ function verifyTimelineAIMovementRegressions() {
     const throws = timeline.tracks.ball.filter((cue) => ["fielding-throw", "relay-throw"].includes(cue.phase));
     const [firstLeg, finalLeg] = throws;
     const relay = timeline.meta.fielding?.relay;
-    assert.equal(throws.length, 2, `${item.label}: long throw is not two-hop.`);
+    assert(relay, `${item.label}: hit return does not run through a cutoff man.`);
     assert.equal(firstLeg?.path?.at(-1), relay?.point, `${item.label}: first leg bypasses cutoff.`);
-    assert.equal(finalLeg?.path?.[0], relay?.point, `${item.label}: relay does not leave cutoff.`);
-    assert.equal(finalLeg?.path?.at(-1), item.target, `${item.label}: relay misses final target.`);
     assert.equal(firstLeg?.armScore, 180, `${item.label}: outfielder arm is not used.`);
-    assert.equal(finalLeg?.armScore, 55, `${item.label}: cutoff arm is not used.`);
-    assert(Number(firstLeg?.arc) < Number(finalLeg?.arc), `${item.label}: arm does not affect each leg's arc.`);
+    if (item.cutoffOnly) {
+      assert.equal(relay?.cutoffOnly, true, `${item.label}: contested return did not stop at the cutoff.`);
+      assert.equal(throws.length, 1, `${item.label}: cutoff-only return still throws on to the base.`);
+      assert.equal(timeline.meta.fielding?.throwTarget, null, `${item.label}: cutoff-only return advertises a contested base.`);
+    } else {
+      assert.equal(relay?.cutoffOnly ?? false, false, `${item.label}: uncontested return collapsed to cutoff-only.`);
+      assert.equal(throws.length, 2, `${item.label}: uncontested return is not two-hop.`);
+      assert.equal(finalLeg?.path?.[0], relay?.point, `${item.label}: relay does not leave cutoff.`);
+      assert.equal(finalLeg?.path?.at(-1), item.target, `${item.label}: relay misses final target.`);
+      assert.equal(finalLeg?.armScore, 55, `${item.label}: cutoff arm is not used.`);
+      assert(Number(firstLeg?.arc) < Number(finalLeg?.arc), `${item.label}: arm does not affect each leg's arc.`);
+    }
     for (const throwCue of throws) {
       assert(Number(throwCue.gatherMs) <= 300.5, `${item.label}: ${throwCue.phase} gather exceeds 300ms.`);
       assert(Number(throwCue.flightMs) <= 620, `${item.label}: ${throwCue.phase} is stretched to ${throwCue.flightMs}ms.`);
@@ -318,6 +382,60 @@ function verifyTimelineAIMovementRegressions() {
     ));
     assert.equal(support.length, 1, `${item.label}: cutoff support cue is missing or duplicated.`);
     assert(Number(support[0].endT) <= Number(firstLeg.endT), `${item.label}: cutoff arrives after first leg.`);
+  }
+
+  const unassisted = compilePlayTimeline({
+    ...base,
+    sequence: 9,
+    outcome: "out",
+    battedBallType: "groundBall",
+    fieldingPosition: "1B",
+    fieldingZone: "first-line",
+    fieldingLane: 0.9,
+    defensiveThrowTarget: "first",
+    outsAfter: 1
+  }, JAMSIL_DAY_ANCHORS);
+  assert.equal(unassisted.meta.fielding?.unassisted, true, "Near-bag 1B grounder is not played unassisted.");
+  assert(
+    !unassisted.tracks.fielders.some((cue) => cue.who === "P" && cue.assignment === "receiver"),
+    "Pitcher still covers first on an unassisted 3U putout."
+  );
+  assert(
+    unassisted.tracks.ball.some((cue) => cue.phase === "fielding-carry" && cue.path?.at(-1) === "first"),
+    "Unassisted 3U putout does not carry the ball to the bag."
+  );
+
+  for (const success of [true, false]) {
+    const homeSteal = compilePlayTimeline({
+      ...base,
+      type: "stolenBase",
+      sequence: success ? 10 : 11,
+      outcome: "steal",
+      success,
+      runnerId: "r3",
+      basesBefore: [false, false, true],
+      baseRunnerIdsBefore: ["", "", "r3"],
+      basesAfter: [false, false, false],
+      baseRunnerIdsAfter: ["", "", ""],
+      scoredRunners: success ? [{ id: "r3" }] : [],
+      outsAfter: success ? 0 : 1
+    }, JAMSIL_DAY_ANCHORS);
+    const pitchArrivalT = Math.max(
+      0,
+      ...homeSteal.tracks.ball
+        .filter((cue) => cue.phase === "pitch" && cue.path?.at(-1) === "home")
+        .map((cue) => Number(cue.endT ?? cue.t ?? 0))
+    );
+    const hold = homeSteal.tracks.ball.find((cue) => cue.terminal === true);
+    assert(
+      homeSteal.tracks.catcher.some((cue) => ["tag-home", "late-tag-home"].includes(cue.phase)),
+      `Synthetic ${success ? "safe" : "caught"} home steal has no plate tag.`
+    );
+    assert.equal(hold?.phase, "fielding-hold", "Synthetic home steal has no terminal catcher hold.");
+    assert.equal(hold?.at, "C", "Synthetic home-steal terminal ball is not at catcher anchor C.");
+    assert.equal(hold?.possessedBy, "C", "Synthetic home-steal terminal ball is not possessed by C.");
+    assert.equal(Number(hold?.t), pitchArrivalT, "Synthetic home-steal catcher hold does not begin at pitch arrival.");
+    assert.equal(Number(hold?.endT), Number(homeSteal.resultAt), "Synthetic home-steal catcher hold ends before resultAt.");
   }
 }
 
@@ -557,7 +675,8 @@ function auditTimeline(label, event, timeline, coverage, problems) {
   if (isBunt) auditSacrificeBunt(label, event, timeline, batted, problems);
 
   auditThrowTarget(label, event, timeline, problems);
-  auditReceiverArrivals(label, timeline, problems);
+  auditTerminalPossessionAndSuppression(label, event, timeline, coverage, problems);
+  auditReceiverArrivals(label, timeline, coverage, problems);
   auditThrowAndRunnerTiming(label, event, timeline, coverage, problems);
   auditDefensiveSupport(label, timeline, coverage, problems);
   auditMovementSpeeds(label, timeline, coverage, problems);
@@ -818,8 +937,10 @@ function auditDefensiveSupport(label, timeline, coverage, problems) {
     const targetDistance = pointDistance(destination, target);
     const cornerBackup = ["first", "third"].includes(cue.supportTarget);
     const invalidTargetDistance = cornerBackup
-      ? !Number.isFinite(targetDistance) || targetDistance < 68.9 || targetDistance > 84.01
-      : !Number.isFinite(targetDistance) || targetDistance > 42.01;
+      ? !Number.isFinite(targetDistance) || targetDistance < 88 || targetDistance > 132.01
+      : cue.supportTarget === "second"
+        ? !Number.isFinite(targetDistance) || targetDistance < 40 || targetDistance > 78.01
+        : !Number.isFinite(targetDistance) || targetDistance > 42.01;
     if (invalidTargetDistance) {
       problems.push(`${label}: ${cue.who} backs up ${cue.supportTarget} from ${targetDistance.toFixed(2)}px away.`);
     }
@@ -832,7 +953,7 @@ function auditDefensiveSupport(label, timeline, coverage, problems) {
       x: Number(destination?.x) - Number(target?.x),
       y: Number(destination?.y) - Number(target?.y)
     };
-    if (targetDistance <= 14.1 && incomingVector.x * backupVector.x + incomingVector.y * backupVector.y > 0) {
+    if (incomingVector.x * backupVector.x + incomingVector.y * backupVector.y > 0) {
       coverage.behindBaseBackups += 1;
     }
   }
@@ -939,6 +1060,311 @@ function fieldingDecisionThrow(timeline) {
   return throws.find((cue) => target && cue.path?.at(-1) === target)
     ?? throws.find((cue) => cue.phase === "fielding-throw")
     ?? null;
+}
+
+function completedActionReceiver(timeline, target, actionEndT) {
+  return [...timeline.tracks.fielders]
+    .filter((cue) => (
+      cue.who
+      && (cue.at === target || cue.path?.at(-1) === target)
+      && Number(cue.t ?? 0) <= actionEndT + TIMELINE_EPSILON
+      && Number(cue.endT ?? cue.t ?? 0) >= actionEndT - TIMELINE_EPSILON
+    ))
+    .sort((left, right) => (
+      Number(right.assignment === "receiver") - Number(left.assignment === "receiver")
+      || Number(right.at === target) - Number(left.at === target)
+    ))[0]
+    ?? null;
+}
+
+function auditTerminalPossessionAndSuppression(label, event, timeline, coverage, problems) {
+  const fielding = timeline.meta?.fielding ?? null;
+  const suppressed = fielding?.throwSuppressed === true;
+  const cutoffOnly = fielding?.relay?.cutoffOnly === true;
+  const reason = fielding?.throwSuppressionReason ?? null;
+  const terminalHolds = timeline.tracks.ball.filter((cue) => cue.terminal === true);
+  const finalAction = [...timeline.tracks.ball]
+    .filter((cue) => TERMINAL_DEFENSIVE_ACTION_PHASES.has(String(cue.phase ?? "")))
+    .sort((left, right) => Number(right.endT ?? right.t ?? 0) - Number(left.endT ?? left.t ?? 0))[0]
+    ?? null;
+  const finalActionTarget = finalAction?.path?.at(-1) ?? finalAction?.arrivesAt ?? null;
+  const finalActionEndT = Number(finalAction?.endT ?? finalAction?.t);
+  const finalActionReceiver = finalAction && finalActionTarget && Number.isFinite(finalActionEndT)
+    ? completedActionReceiver(timeline, finalActionTarget, finalActionEndT)
+    : null;
+  const homeStealTag = timeline.template === "steal" && !finalAction
+    ? timeline.tracks.catcher.find((cue) => ["tag-home", "late-tag-home"].includes(String(cue.phase ?? "")))
+    : null;
+  const homeStealPitchArrivalT = homeStealTag
+    ? Math.max(
+        0,
+        ...timeline.tracks.ball
+          .filter((cue) => cue.phase === "pitch" && cue.path?.at(-1) === "home")
+          .map((cue) => Number(cue.endT ?? cue.t ?? 0))
+      )
+    : null;
+
+  if (suppressed && cutoffOnly) {
+    problems.push(`${label}: throw is both suppressed and marked cutoff-only.`);
+  }
+  if (!suppressed && reason !== null) {
+    problems.push(`${label}: unsuppressed throw exposes suppression reason ${String(reason)}.`);
+  }
+  const expected = timeline.template === "error" && fielding
+    ? {
+        point: fielding.ballPoint ?? fielding.fieldingPoint,
+        who: null,
+        startT: Number(fielding.ballArrivalT),
+        phase: "error-loose",
+        kind: "error-loose"
+      }
+    : finalAction && finalActionTarget && Number.isFinite(finalActionEndT)
+      ? {
+          point: finalActionTarget,
+          who: finalAction.phase === "fielding-carry" ? fielding?.fielder : finalActionReceiver?.who,
+          startT: finalActionEndT,
+          phase: "fielding-hold",
+          kind: `completed-${finalAction.phase}`
+        }
+      : homeStealTag
+        ? {
+            point: "C",
+            who: "C",
+            startT: Number(homeStealPitchArrivalT),
+            phase: "fielding-hold",
+            kind: "home-steal"
+          }
+        : fielding?.throwTarget === null && !fielding?.unassisted
+          ? {
+              point: fielding.catchPoint ?? fielding.fieldingPoint,
+              who: fielding.fielder,
+              startT: Number(fielding.fielderArrivalT),
+              phase: fielding.catchPoint ? "catch-hold" : "fielding-hold",
+              kind: suppressed ? "suppressed" : fielding.catchPoint ? "caught" : "held-fielding"
+            }
+          : null;
+  if (!expected) {
+    if (terminalHolds.length > 0) {
+      problems.push(`${label}: play without a terminal-ball state exposes ${terminalHolds.length} terminal cue(s).`);
+    }
+    return;
+  }
+  if (cutoffOnly) coverage.cutoffTerminalPossessionChecks += 1;
+  if (suppressed) coverage.suppressedTerminalPossessionChecks += 1;
+  if (expected.kind === "caught") coverage.caughtTerminalPossessionChecks += 1;
+  if (expected.kind === "error-loose") coverage.errorLooseTerminalChecks += 1;
+  if (expected.kind.startsWith("completed-")) {
+    coverage.completedActionTerminalChecks += 1;
+    const counter = {
+      "fielding-throw": "fieldingThrowTerminalChecks",
+      "relay-throw": "relayThrowTerminalChecks",
+      "fielding-carry": "fieldingCarryTerminalChecks",
+      "steal-throw": "stealThrowTerminalChecks"
+    }[finalAction.phase];
+    if (counter) coverage[counter] += 1;
+    if (!expected.who) {
+      problems.push(`${label}: completed ${finalAction.phase} at ${finalActionTarget} has no resolved receiver.`);
+    }
+  }
+  if (expected.kind === "home-steal") coverage.homeStealTerminalChecks += 1;
+
+  if (terminalHolds.length !== 1) {
+    problems.push(`${label}: ${expected.kind} play has ${terminalHolds.length} terminal possession hold(s), expected 1.`);
+    return;
+  }
+  const hold = terminalHolds[0];
+  if (hold.phase !== expected.phase) {
+    problems.push(`${label}: ${expected.kind} terminal ball uses phase ${String(hold.phase)}, expected ${expected.phase}.`);
+  }
+  if (!expected.point || !timeline.points?.[expected.point] || hold.at !== expected.point) {
+    problems.push(`${label}: ${expected.kind} terminal possession is at ${String(hold.at)}, expected ${String(expected.point)}.`);
+  }
+  if (expected.who && hold.possessedBy !== expected.who) {
+    problems.push(`${label}: ${expected.kind} terminal possession belongs to ${String(hold.possessedBy)}, expected ${String(expected.who)}.`);
+  }
+  if (!expected.who && hold.possessedBy) {
+    problems.push(`${label}: ${expected.kind} terminal ball is incorrectly possessed by ${String(hold.possessedBy)}.`);
+  }
+  if (!Number.isFinite(expected.startT) || Math.abs(Number(hold.t) - expected.startT) > TIMELINE_EPSILON) {
+    problems.push(
+      `${label}: ${expected.kind} terminal possession starts at ${String(hold.t)}, expected ${String(expected.startT)}.`
+    );
+  }
+  if (Math.abs(Number(hold.endT) - Number(timeline.resultAt)) > TIMELINE_EPSILON) {
+    problems.push(
+      `${label}: ${expected.kind} terminal possession ends at ${String(hold.endT)}, resultAt is ${String(timeline.resultAt)}.`
+    );
+  }
+  if (hold.path?.length) {
+    problems.push(`${label}: terminal possession moves after control instead of holding at ${String(expected.point)}.`);
+  }
+
+  if (!suppressed) return;
+  if (fielding.throwTarget !== null) {
+    problems.push(`${label}: suppressed throw still advertises target ${String(fielding.throwTarget)}.`);
+  }
+  const defensiveThrows = timeline.tracks.ball.filter((cue) => ["fielding-throw", "relay-throw"].includes(cue.phase));
+  if (defensiveThrows.length > 0) {
+    problems.push(`${label}: suppressed throw still contains ${defensiveThrows.length} defensive throw cue(s).`);
+  }
+
+  const intendedTarget = intendedTimelineThrowTarget(event, timeline);
+  const fieldingPoint = fielding.pickupPoint ?? fielding.fieldingPoint;
+  const targetDistance = pointDistance(timeline.points?.[fieldingPoint], timeline.points?.[intendedTarget]);
+  if (reason === "near-target") {
+    coverage.nearTargetSuppressionChecks += 1;
+    if (!String(fielding.resolution ?? "").startsWith("safe-") || fielding.pickupPoint !== "pickup") {
+      problems.push(`${label}: near-target suppression is not a safely retrieved hit.`);
+    }
+    if (!intendedTarget || !Number.isFinite(targetDistance) || targetDistance > NEAR_TARGET_SUPPRESSION_MAX_PX + 0.01) {
+      problems.push(
+        `${label}: near-target suppression distance is ${Number.isFinite(targetDistance) ? targetDistance.toFixed(2) : "NaN"}px `
+          + `to ${String(intendedTarget)} (limit ${NEAR_TARGET_SUPPRESSION_MAX_PX}px).`
+      );
+    }
+    return;
+  }
+
+  if (reason === "physical-first") {
+    coverage.physicalFirstSuppressionChecks += 1;
+    if (fielding.relay) {
+      problems.push(`${label}: physical-first suppression still exposes a relay plan.`);
+    }
+    if (
+      String(fielding.resolution ?? "").startsWith("safe-")
+      && Number.isFinite(targetDistance)
+      && targetDistance <= NEAR_TARGET_SUPPRESSION_MAX_PX + 0.01
+    ) {
+      problems.push(`${label}: physical-first suppression should be near-target at ${targetDistance.toFixed(2)}px.`);
+    }
+    const movement = auditedThrowTargetMovement(timeline, intendedTarget);
+    if (!intendedTarget || !movement || movement.out) {
+      problems.push(`${label}: physical-first suppression has no recorded-safe runner at ${String(intendedTarget)}.`);
+      return;
+    }
+    const latestArrivalT = latestNaturalThrowArrivalT(event, timeline, intendedTarget);
+    if (!Number.isFinite(latestArrivalT) || latestArrivalT + TIMELINE_EPSILON >= Number(movement.endT)) {
+      problems.push(
+        `${label}: physical-first suppression is unjustified; latest legal arrival ${String(latestArrivalT)} `
+          + `does not beat safe runner ${String(movement.endT)} at ${intendedTarget}.`
+      );
+    }
+    return;
+  }
+
+  problems.push(`${label}: suppressed throw has invalid reason ${String(reason)}.`);
+}
+
+function intendedTimelineThrowTarget(event, timeline) {
+  const template = timeline.template;
+  const fielding = timeline.meta?.fielding ?? {};
+  const type = normalizedToken(event?.battedBallType);
+  const runnerAdvances = timeline.tracks.runners.filter((cue) => cue.phase === "runner-advance");
+  if (template !== "doublePlay" && timeline.outcome === "out" && (type.includes("fly") || type.includes("line"))) {
+    return runnerAdvances
+      .map((cue) => cue.path?.at(-1) ?? cue.toBase)
+      .filter((target) => ["first", "second", "third", "home"].includes(target))
+      .sort((left, right) => baseIndex(right) - baseIndex(left))[0]
+      ?? null;
+  }
+  if (template === "single") {
+    const outfieldSingle = OUTFIELD_POSITIONS.has(normalizePosition(fielding.fielder ?? event?.fieldingPosition));
+    const secondOccupied = runnerAdvances.some((cue) => !cue.out && (cue.path?.at(-1) ?? cue.toBase) === "second")
+      || Boolean(event?.basesAfter?.[1] || event?.baseRunnerIdsAfter?.[1]);
+    return outfieldSingle && !secondOccupied ? "second" : null;
+  }
+  if (template === "double") {
+    const thirdOccupied = runnerAdvances.some((cue) => !cue.out && (cue.path?.at(-1) ?? cue.toBase) === "third")
+      || Boolean(event?.basesAfter?.[2] || event?.baseRunnerIdsAfter?.[2]);
+    return thirdOccupied ? "third" : "second";
+  }
+  if (template === "triple") return "third";
+  const canonical = resolveDefensiveThrowTarget(event);
+  if (canonical) return canonical;
+  if (["infieldOut", "outfieldOut"].includes(template)) return "first";
+  if (template === "doublePlay") return "second";
+  return null;
+}
+
+function auditedThrowTargetMovement(timeline, target) {
+  if (!target) return null;
+  const phases = new Set(["batter-run", "runner-advance", "slide", "tag-play"]);
+  const grouped = new Map();
+  for (const entry of [...timeline.tracks.batter, ...timeline.tracks.runners]) {
+    if (!phases.has(String(entry.phase ?? ""))) continue;
+    const path = Array.isArray(entry.path) ? entry.path : [];
+    const targetIndex = path.findIndex((point, index) => index > 0 && point === target);
+    const intermediate = targetIndex > 0 && targetIndex < path.length - 1;
+    const cueTarget = entry.at ?? entry.toBase ?? path.at(-1);
+    if (cueTarget !== target && targetIndex < 1) continue;
+    const movementEndT = intermediateBasePassageT(timeline, entry, target) ?? Number(entry.endT ?? entry.t ?? 0);
+    const who = String(entry.who ?? entry.runnerId ?? "runner");
+    const current = grouped.get(who) ?? { out: false, endT: 0 };
+    current.out ||= !intermediate && Boolean(entry.out);
+    current.endT = Math.max(current.endT, movementEndT);
+    grouped.set(who, current);
+  }
+  const movements = [...grouped.values()];
+  return movements.find((entry) => entry.out)
+    ?? movements.sort((left, right) => right.endT - left.endT)[0]
+    ?? null;
+}
+
+function latestNaturalThrowArrivalT(event, timeline, target) {
+  const fielding = timeline.meta?.fielding ?? {};
+  const durationMs = Math.max(1, Number(timeline.durationMs) || 1);
+  const distance = pointDistance(timeline.points?.[fielding.fieldingPoint], timeline.points?.[target]);
+  const controlledAtT = Number(fielding.fielderArrivalT);
+  if (!Number.isFinite(distance) || !Number.isFinite(controlledAtT)) return Number.NaN;
+  const armScore = auditedThrowerArmScore(event, fielding.fielder);
+  const armT = Math.max(0, Math.min(1, (armScore - THROW_ARM_MIN) / (THROW_ARM_MAX - THROW_ARM_MIN)));
+  const pixelsPerSecond = 900 + armT * 700;
+  const flightMs = Math.max(170, Math.min(620, distance / pixelsPerSecond * 1000));
+  const flightT = flightMs / durationMs;
+  const releaseCeilingT = Math.floor(
+    (controlledAtT + THROW_MAX_GATHER_MS / durationMs + Number.EPSILON) * 1000
+  ) / 1000;
+  const latestReleaseT = Math.min(releaseCeilingT, THROW_ARRIVAL_LATEST_T - flightT);
+  return roundTimelineTime(roundTimelineTime(latestReleaseT) + flightT);
+}
+
+function auditedThrowerArmScore(event, who) {
+  const key = normalizePosition(who);
+  const activeKey = normalizePosition(event?.fieldingPosition ?? event?.defenderPosition);
+  const profile = key === "P"
+    ? event?.pitcherProfile
+    : key === activeKey && event?.defenderProfile
+      ? event.defenderProfile
+      : event?.defenseProfilesByPosition?.[key];
+  let score = Number(profile?.arm);
+  if (Number.isFinite(score) && score > 0 && score <= 20) score *= 10;
+  if (!Number.isFinite(score) || score <= 0) score = Number(profile?.fielding ?? profile?.ovr ?? 100);
+  return Math.max(THROW_ARM_MIN, Math.min(THROW_ARM_MAX, Math.round(Number(score) || 100)));
+}
+
+function roundTimelineTime(value) {
+  return Math.round(Number(value) * 1000) / 1000;
+}
+
+function baseIndex(value) {
+  return { first: 1, second: 2, third: 3, home: 4 }[String(value ?? "")] ?? 0;
+}
+
+function intermediateBasePassageT(timeline, entry, target) {
+  const path = Array.isArray(entry?.path) ? entry.path : [];
+  const targetIndex = path.findIndex((point, index) => index > 0 && point === target);
+  if (targetIndex <= 0 || targetIndex >= path.length - 1) return null;
+  const route = path.map((point) => timeline.points?.[point]);
+  let progress = targetIndex / Math.max(1, path.length - 1);
+  if (route.every(Boolean)) {
+    const segmentLengths = route.slice(1).map((point, index) => pointDistance(route[index], point));
+    const totalDistance = segmentLengths.reduce((total, distance) => total + distance, 0);
+    const passageDistance = segmentLengths
+      .slice(0, targetIndex)
+      .reduce((total, distance) => total + distance, 0);
+    if (totalDistance > 0) progress = passageDistance / totalDistance;
+  }
+  return Number(entry.t ?? 0) + (Number(entry.endT ?? entry.t ?? 0) - Number(entry.t ?? 0)) * progress;
 }
 
 function auditMovementSpeeds(label, timeline, coverage, problems) {
@@ -1051,7 +1477,34 @@ function auditThrowAndRunnerTiming(label, event, timeline, coverage, problems) {
     if (!holdCue) problems.push(`${label}: ${throwCue.phase} begins without a visible possession/hold cue.`);
   }
 
+  const baseThrows = throws.filter((cue) => ["first", "second", "third", "home"].includes(cue.path?.at(-1)));
+  const runnerCues = [...timeline.tracks.batter, ...timeline.tracks.runners]
+    .filter((cue) => ["batter-run", "runner-advance", "slide", "tag-play"].includes(String(cue.phase ?? "")));
+  for (const throwCue of baseThrows) {
+    const target = throwCue.path.at(-1);
+    for (const runnerCue of runnerCues) {
+      const passageT = intermediateBasePassageT(timeline, runnerCue, target);
+      if (!Number.isFinite(passageT)) continue;
+      coverage.intermediateBasePassageChecks += 1;
+      if (Number(throwCue.endT) + TIMELINE_EPSILON < passageT) {
+        problems.push(
+          `${label}: ${throwCue.phase} reaches ${target} at ${Number(throwCue.endT).toFixed(3)} `
+            + `before ${String(runnerCue.who ?? runnerCue.runnerId ?? "runner")} passes at ${passageT.toFixed(3)}.`
+        );
+      }
+    }
+  }
   const fielding = timeline.meta?.fielding;
+  const protectedTarget = fielding?.throwSuppressed === true || fielding?.relay?.cutoffOnly === true
+    ? intendedTimelineThrowTarget(event, timeline)
+    : null;
+  if (protectedTarget && !baseThrows.some((cue) => cue.path?.at(-1) === protectedTarget)) {
+    for (const runnerCue of runnerCues) {
+      const passageT = intermediateBasePassageT(timeline, runnerCue, protectedTarget);
+      if (Number.isFinite(passageT)) coverage.intermediateBasePassageChecks += 1;
+    }
+  }
+
   if (
     Number(fielding?.ballPickupArrivalT) + 0.000001 < Number(fielding?.fielderRouteArrivalT)
     && !timeline.tracks.ball.some((cue) => (
@@ -1121,25 +1574,66 @@ function auditThrowTarget(label, event, timeline, problems) {
     }
     return;
   }
+  if (timeline.meta?.fielding?.unassisted === true) {
+    // A 3U putout has no throw at all: the first baseman carries the ball to
+    // the bag and records the out himself, ahead of the batter-runner.
+    const primary = timeline.meta?.fielding?.fielder;
+    const step = timeline.tracks.fielders.find((cue) => (
+      cue.who === primary && cue.phase === "unassisted-first" && cue.path?.at(-1) === "first"
+    ));
+    const batterRun = timeline.tracks.batter.find((cue) => cue.phase === "batter-run");
+    if (timeline.meta?.fielding?.throwTarget !== "first" || primary !== "1B") {
+      problems.push(`${label}: unassisted putout is not a 1B play at first.`);
+    }
+    if (fieldingDecisionThrow(timeline)) {
+      problems.push(`${label}: unassisted putout still contains a throw cue.`);
+    }
+    if (!step || !batterRun || Number(step.endT) > Number(batterRun.endT)) {
+      problems.push(`${label}: 1B does not step on first ahead of the retired batter-runner.`);
+    }
+    if (!timeline.tracks.ball.some((cue) => cue.phase === "fielding-carry" && cue.path?.at(-1) === "first")) {
+      problems.push(`${label}: unassisted putout does not carry the ball to the bag.`);
+    }
+    if (timeline.tracks.fielders.some((cue) => cue.who === "P" && cue.assignment === "receiver")) {
+      problems.push(`${label}: pitcher still covers first on an unassisted 1B putout.`);
+    }
+    return;
+  }
   const fielder = normalizePosition(timeline.meta?.fielding?.fielder ?? event.fieldingPosition);
   const outfieldSingle = timeline.template === "single" && OUTFIELD_POSITIONS.has(fielder);
   const runnerMoves = timeline.tracks.runners.filter((cue) => cue.phase === "runner-advance");
-  const hasExtraBaseAdvance = runnerMoves.some((cue) => Number(cue.basesAdvanced) >= 2);
-  const secondRemainsOccupied = runnerMoves.some((cue) => cue.toBase === "second");
+  const secondRemainsOccupied = runnerMoves.some((cue) => cue.toBase === "second" && !cue.out)
+    || Boolean(event.basesAfter?.[1] || event.baseRunnerIdsAfter?.[1]);
   const expected = timeline.template === "single"
-    ? outfieldSingle && hasExtraBaseAdvance && !secondRemainsOccupied ? "second" : null
+    ? outfieldSingle && !secondRemainsOccupied ? "second" : null
     : resolveDefensiveThrowTarget(event);
   const actual = timeline.meta?.fielding?.throwTarget ?? null;
-  if (actual !== expected) problems.push(`${label}: throw target ${actual}, expected ${expected}.`);
+  // A hit return that could only beat the recorded-safe runner (and had no
+  // room for a cutoff man) is honestly held instead of thrown.
+  const suppressedHit = ["single", "double", "triple"].includes(timeline.template)
+    && actual === null
+    && timeline.meta?.fielding?.throwSuppressed === true;
+  if (actual !== expected && !suppressedHit) problems.push(`${label}: throw target ${actual}, expected ${expected}.`);
   const competitiveThrow = fieldingDecisionThrow(timeline);
-  if (expected && competitiveThrow?.path?.at(-1) !== expected) {
+  if (expected && !suppressedHit && competitiveThrow?.path?.at(-1) !== expected) {
     problems.push(`${label}: fielding throw ends at ${competitiveThrow?.path?.at(-1)}, expected ${expected}.`);
   }
   if (!expected && competitiveThrow) problems.push(`${label}: event has no defensive target but timeline creates a fielding throw.`);
 }
 
-function auditReceiverArrivals(label, timeline, problems) {
+function auditReceiverArrivals(label, timeline, coverage, problems) {
   const throws = timeline.tracks.ball.filter((cue) => ["fielding-throw", "relay-throw", "steal-throw"].includes(cue.phase));
+  const secondReceiverCues = timeline.tracks.fielders.filter((cue) => (
+    cue.assignment === "receiver"
+    && (cue.path?.at(-1) === "second" || cue.at === "second")
+  ));
+  if (secondReceiverCues.length > 0) coverage.secondBaseReceiverChecks += 1;
+  if (secondReceiverCues.some((cue) => cue.who === "CF")) {
+    problems.push(`${label}: CF is assigned as the second-base throw receiver.`);
+  }
+  if (timeline.meta?.fielding?.throwTarget === "second" && timeline.meta?.fielding?.receiver === "CF") {
+    problems.push(`${label}: fielding metadata assigns CF as the second-base throw receiver.`);
+  }
   for (const ball of throws) {
     const target = ball.path?.at(-1);
     const receiverRoutes = timeline.tracks.fielders.filter((cue) => (
@@ -1479,6 +1973,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
       + `ground ${coverage.groundThrough}/${coverage.infieldChoppers} through/chopper, line-through ${coverage.lineThroughSingles}, `
       + `singles ${coverage.singles} (3B/home target ${coverage.singleThirdHomeTargets}, batter>1B ${coverage.singleBatterBeyondFirst}, routine 1B->3B ${coverage.routineFirstToThird}, ground 2B->home ${coverage.groundSecondToHome}), `
       + `hit throws ${coverage.hitThrows} (max ${coverage.maximumHitThrowFlightMs.toFixed(1)}ms, min long ${coverage.minimumLongHitThrowSpeed.toFixed(1)}px/s), possession ${coverage.visiblePossessionChecks}, `
+      + `terminal ${coverage.suppressedTerminalPossessionChecks}/${coverage.cutoffTerminalPossessionChecks}/${coverage.caughtTerminalPossessionChecks}/${coverage.errorLooseTerminalChecks} suppressed/cutoff/caught/error, `
+      + `completed holds ${coverage.completedActionTerminalChecks} (${coverage.fieldingThrowTerminalChecks}/${coverage.relayThrowTerminalChecks}/${coverage.fieldingCarryTerminalChecks}/${coverage.stealThrowTerminalChecks} field/relay/carry/steal, home-steal ${coverage.homeStealTerminalChecks}), `
+      + `suppression ${coverage.nearTargetSuppressionChecks}/${coverage.physicalFirstSuppressionChecks} near/physical, `
+      + `second receivers ${coverage.secondBaseReceiverChecks}, intermediate passages ${coverage.intermediateBasePassageChecks}, `
       + `wall ${coverage.safeWallEvents} safe events/${coverage.safeWallPoints} points (min ${coverage.minimumSafeWallMarginPx.toFixed(1)}px inside), `
       + `HR ${coverage.homeRunWallExits} exits (min ${coverage.minimumHomeRunWallClearancePx.toFixed(1)}px outside), `
       + `base backups ${coverage.baseBackups} (${coverage.behindBaseBackups} behind), `

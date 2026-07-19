@@ -7577,25 +7577,23 @@ export function resolveDefensiveThrowTarget(event) {
 
   const fieldingPosition = String(event?.fieldingPosition ?? "").trim().toUpperCase();
   if (outcome === "single") {
-    // A hit has no force play on an already-safe lead runner. The previous
-    // resolver threw to that runner's final base (including third/home), then
-    // playback slowed the ball down to preserve the recorded safe result.
-    // Infield hits are a bobble/deep-hole hold. A genuinely deep outfield
-    // single is returned to an empty second-base cutoff only when a runner took
-    // two bases; every routine single is simply secured.
+    // A hit has no force play on an already-safe lead runner. Infield hits are
+    // a bobble/deep-hole hold. An outfield single is walked back in toward
+    // second base the way a real defense returns the ball — unless a runner
+    // ends the play standing on second, where any return throw would visually
+    // contradict the recorded safe call.
     if (!new Set(["LF", "CF", "RF", "OF"]).has(fieldingPosition)) return null;
-    const advances = existingRunnerAdvances(event);
-    const hasTwoBaseAdvance = advances.some(({ fromBase, toBase }) => toBase - fromBase >= 2);
-    const secondOccupiedAfter = Boolean(normalizedBaseRunnerIds(event?.baseRunnerIdsAfter)[1]);
-    return hasTwoBaseAdvance && !secondOccupiedAfter ? "second" : null;
+    const secondOccupiedAfter = Boolean(normalizedBaseRunnerIds(event?.baseRunnerIdsAfter)[1])
+      || Boolean(Array.isArray(event?.basesAfter) && event.basesAfter[1]);
+    return secondOccupiedAfter ? null : "second";
   }
 
   if (["double", "triple"].includes(outcome)) {
-    // Extra-base hits are already recorded safe. Throwing at the lead runner's
-    // final base made a normal 900-1600px/s throw arrive several seconds before
-    // that runner, while slowing the throw enough to preserve the call looked
-    // even worse. Return the ball to the nearest unoccupied containment base
-    // instead. If every useful base has a live arrival, the fielder holds.
+    // Extra-base hits are already recorded safe. The return throw goes in
+    // behind the lead runner — third on a triple or a first-to-third advance,
+    // otherwise second behind the batter — never to home or an empty far base.
+    // Playback turns a throw that would beat the safe runner into a cutoff
+    // return, which is exactly how a real outfield does it.
     return extraBaseHitContainmentTarget(event, outcome);
   }
 
@@ -7611,11 +7609,11 @@ function leadExistingRunnerThrowTarget(event) {
 }
 
 function extraBaseHitContainmentTarget(event, outcome) {
-  const liveDestinations = new Set(existingRunnerAdvances(event).map(({ toBase }) => toBase));
-  liveDestinations.add(outcome === "double" ? 2 : 3);
-  const preferences = outcome === "double" ? [3, 4] : [4, 2];
-  const targetIndex = preferences.find((index) => !liveDestinations.has(index));
-  return targetIndex ? DEFENSIVE_THROW_BASE_BY_INDEX[targetIndex] : null;
+  if (outcome === "triple") return "third";
+  const runnerHeldAtThird = existingRunnerAdvances(event).some(({ toBase }) => toBase === 3)
+    || Boolean(normalizedBaseRunnerIds(event?.baseRunnerIdsAfter)[2])
+    || Boolean(Array.isArray(event?.basesAfter) && event.basesAfter[2]);
+  return runnerHeldAtThird ? "third" : "second";
 }
 
 function existingRunnerAdvances(event) {

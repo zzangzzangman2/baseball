@@ -55,6 +55,11 @@ const THROW_ARRIVAL_LATEST_T = 0.985;
 const THROW_MAX_GATHER_MS = 300;
 const FIELDING_SECURE_MS = 180;
 const LONG_OUTFIELD_RELAY_DISTANCE_PX = 280;
+const SECOND_BASE_RELAY_DISTANCE_PX = 230;
+// A grounder gloved this close to the bag is a 3-unassisted putout. Playing it
+// as a 21px toss to a covering pitcher parked two defenders on one spot for the
+// rest of the play.
+const UNASSISTED_FIRST_MAX_PX = 64;
 const MIN_VISIBLE_RUN_ROUTE_PX = 8;
 const FIELDER_ROUTE_SPEED_PX_PER_SECOND = Object.freeze({
   approach: 110,
@@ -117,19 +122,33 @@ const GROUND_BALL_ZONE_PRIMARY = Object.freeze({
 const BASE_SUPPORT_TARGETS = new Set(["home", "first", "second", "third"]);
 // Corner outfielders back up throws beyond first/third, but must remain a
 // visibly separate defender. The atlas' widest catch/run poses need roughly
-// 69 design pixels of center-to-center clearance; 14px made RF/LF sit inside
-// the receiver for the remainder of every play.
+// 69 design pixels of center-to-center clearance, and the receiver, the
+// batter-runner, and the backup all converge on the same bag; 72px put the
+// backup shoulder-to-shoulder with the receiver. Corner backups now stand a
+// full body deeper and drift to the foul side so the trio never reads as one
+// clump on the base line.
 const BASE_BACKUP_OFFSET_PX = Object.freeze({
   home: 14,
-  first: 72,
-  second: 14,
-  third: 72
+  first: 96,
+  // The second-base backup (CF) shares the bag area with the covering middle
+  // infielder and often an arriving runner; a body-width 14px put him inside
+  // the receiver's sprite for the rest of the play.
+  second: 64,
+  third: 96
+});
+// Foul-side lateral drift for corner-base backups (design px). Zero keeps the
+// old straight-line behaviour for home/second.
+const BASE_BACKUP_FOUL_DRIFT_PX = Object.freeze({
+  home: 0,
+  first: 24,
+  second: 0,
+  third: 24
 });
 const BASE_BACKUP_MAX_DISTANCE_PX = Object.freeze({
   home: 42,
-  first: 84,
-  second: 42,
-  third: 84
+  first: 132,
+  second: 78,
+  third: 132
 });
 const MIN_SUPPORT_ROUTE_PX = 14;
 const MIN_PURPOSEFUL_SUPPORT_ROUTE_PX = 18;
@@ -562,7 +581,31 @@ function buildFieldedBall(context, spec) {
     }
   }
   let throwTarget = fieldedBallThrowTarget(context, spec);
+  if (
+    throwTarget
+    && (safeFlyHit || safeLineHit || safeGroundHit)
+    && context.points.pickup
+    && context.points[throwTarget]
+    && pointDistance(context.points.pickup, context.points[throwTarget]) <= 44
+  ) {
+    // The hit already died at the containment base (a bloop dropping behind
+    // the bag). The retriever gathers it right there; a 1px "throw" to a
+    // second defender standing on the same base is nonsense.
+    context.throwSuppressed = true;
+    context.throwSuppressionReason = "near-target";
+    throwTarget = null;
+  }
   const possessionT = safeFlyHit || safeLineHit || safeGroundHit ? pickupArrivalT : spec.landingT;
+  // A grounder controlled next to the bag is recorded 3U: the first baseman
+  // steps on first himself. Keeping the 3-1 toss here parked the pitcher and
+  // the first baseman on the same pixel for the rest of the play.
+  const unassistedFirst = throwTarget === "first"
+    && context.template === "infieldOut"
+    && fielderKey === "1B"
+    && !isBuntPlay(context)
+    && Boolean(context.points[fieldingPoint])
+    && Boolean(context.points.first)
+    && pointDistance(context.points[fieldingPoint], context.points.first) <= UNASSISTED_FIRST_MAX_PX;
   if (throwTarget && spec.throwEndT) {
     // The fielding/catch pose is only the secure transfer into the throwing
     // motion. Count the 300ms release budget from actual possession, not from
@@ -841,7 +884,58 @@ function buildFieldedBall(context, spec) {
   let throwPlan = null;
   let primaryThrowPlan = null;
   let relayThrow = null;
-  if (throwTarget && spec.throwEndT) {
+  let unassistedStepEndT = null;
+  if (unassistedFirst) {
+    const batterMovement = throwTargetMovement(context, "first");
+    const outDeadlineT = Number.isFinite(Number(batterMovement?.endT))
+      ? Number(batterMovement.endT) - THROW_OUT_LEAD_T
+      : Math.min(0.9, Number(spec.throwEndT) || spec.fieldEndT + 0.12);
+    const stepWindow = routeWindow(context, {
+      from: fieldingPoint,
+      to: "first",
+      earliestT: spec.fieldEndT,
+      deadlineT: Math.max(spec.fieldEndT + 0.02, outDeadlineT),
+      speed: FIELDER_ROUTE_SPEED_PX_PER_SECOND.receiver,
+      minMs: 140,
+      maxMs: 700
+    });
+    unassistedStepEndT = stepWindow.endT;
+    context.tracks.fielders.push(cue(stepWindow.startT, stepWindow.endT, {
+      who: fielderKey,
+      anim: stepWindow.distancePx >= MIN_VISIBLE_RUN_ROUTE_PX ? ANIM.run : ANIM.catch,
+      path: [fieldingPoint, "first"],
+      arrivesAt: "first",
+      phase: "unassisted-first"
+    }));
+    context.tracks.fielders.push(cue(stepWindow.endT, Math.min(0.99, stepWindow.endT + scaleActionTime(context, 0.08)), {
+      who: fielderKey,
+      anim: ANIM.catch,
+      at: "first",
+      toward: "home",
+      phase: "unassisted-putout"
+    }));
+    if (stepWindow.startT > possessionT + 0.000001) {
+      context.tracks.ball.push(cue(possessionT, stepWindow.startT, {
+        at: fieldingPoint,
+        phase: "fielding-hold"
+      }));
+    }
+    context.tracks.ball.push(cue(stepWindow.startT, stepWindow.endT, {
+      path: [fieldingPoint, "first"],
+      carried: true,
+      phase: "fielding-carry",
+      arrivesAt: "first"
+    }));
+    addDefensiveSupport(context, {
+      primary: fielderKey,
+      receiver: "",
+      landing: fieldingPoint,
+      landingT: spec.landingT,
+      fieldEndT: spec.fieldEndT,
+      throwTarget: "first",
+      throwEndT: stepWindow.endT
+    });
+  } else if (throwTarget && spec.throwEndT) {
     relayThrow = prepareLongOutfieldRelay(context, {
       primary: fielderKey,
       landing: fieldingPoint,
@@ -928,6 +1022,8 @@ function buildFieldedBall(context, spec) {
         // A direct throw that cannot be made competitive within the 300ms
         // gather budget is held; showing it arrive before a safe runner is a
         // stronger visual contradiction than omitting the futile throw.
+        context.throwSuppressed = true;
+        context.throwSuppressionReason = "physical-first";
         throwTarget = null;
         throwPlan = null;
         addDefensiveSupport(context, {
@@ -1036,10 +1132,13 @@ function buildFieldedBall(context, spec) {
     ballPickupArrivalT: roundTime(safeFlyHit || safeLineHit || safeGroundHit ? ballPickupArrivalT : spec.landingT),
     fielderRouteArrivalT: roundTime(safeFlyHit || safeLineHit || safeGroundHit ? fielderRouteArrivalT : spec.landingT),
     throwTarget: throwTarget || null,
+    unassisted: unassistedFirst,
+    throwSuppressed: context.throwSuppressed === true,
+    throwSuppressionReason: context.throwSuppressionReason ?? null,
     throwArmScore: primaryThrowPlan?.armScore ?? null,
     throwArc: primaryThrowPlan?.arc ?? null,
-    throwArrivalT: throwPlan?.endT ?? null,
-    throwOrdering: throwPlan?.ordering ?? null,
+    throwArrivalT: throwPlan?.endT ?? unassistedStepEndT ?? null,
+    throwOrdering: throwPlan?.ordering ?? (unassistedFirst ? "unassisted" : null),
     relay: relayThrow
       ? {
           fielder: relayThrow.fielder,
@@ -1063,7 +1162,7 @@ function buildFieldedBall(context, spec) {
   context.suggestedResultT = Math.max(
     spec.fieldEndT,
     caughtBattedOut ? 0 : spec.batterEndT,
-    throwTarget ? Number(throwPlan?.endT ?? spec.throwEndT ?? 0) : 0,
+    throwTarget ? Number(throwPlan?.endT ?? unassistedStepEndT ?? spec.throwEndT ?? 0) : 0,
     actualRunnerEndT
   ) + 0.05;
 }
@@ -1079,19 +1178,21 @@ function fieldedBallThrowTarget(context, spec) {
     return baseAnchorForIndex(leadTransition?.toBase);
   }
 
-  // On a hit, throw behind the lead advancing runner. With the bases empty the
-  // batter is already safe before fielding completes, so there is no fake throw
-  // to second (or a visually tempting but impossible throw to first).
+  // On a hit, the ball always comes back to the infield the way a real defense
+  // returns it: toward second on a single, behind the lead runner on an
+  // extra-base hit. The runner-ordering planner below decides whether that
+  // read reaches the bag after the safe runner or dies at the cutoff man.
   if (context.template === "single") {
     const primary = selectFielderKey(context.event, context.points);
     if (OUTFIELDERS.includes(primary)) {
-      const extraBaseAdvance = runnerTransitions.some((transition) => transitionDistance(transition) >= 2);
-      const secondBaseIsLive = runnerTransitions.some((transition) => Number(transition.toBase) === 2);
-      // A clean outfield single is returned to the cutoff, not floated behind
-      // a runner who is already recorded safe. When second is empty after a
-      // rare two-base advance, the normal-speed return there keeps the batter
-      // at first without inventing a tag play. Otherwise the fielder holds.
-      return extraBaseAdvance && !secondBaseIsLive ? "second" : null;
+      // A runner ending the play on second (forced up or holding) means the
+      // return throw could only contradict the recorded safe call, so the
+      // fielder secures the ball. Every other outfield single is walked back
+      // in toward second base like a real defense returning the ball.
+      const secondBaseIsLive = runnerTransitions.some((transition) => (
+        !transition.out && Number(transition.toBase) === 2
+      )) || baseOccupants(context.event, "After").some((occupant) => occupant.base === 2);
+      return secondBaseIsLive ? null : "second";
     }
     // Never chase an already-safe runner at third/home on an infield hit. A
     // chopper single means the fielder had no viable force play after the
@@ -1100,10 +1201,12 @@ function fieldedBallThrowTarget(context, spec) {
   }
 
   if (["double", "triple"].includes(context.template)) {
-    // Recompute old/saved events as well as newly simulated ones. The target is
-    // an empty containment base, never the final safe base of a runner whose
-    // arrival would contradict a normal-speed throw.
-    return extraBaseHitContainmentTarget(context.template, runnerTransitions);
+    // Recompute old/saved events as well as newly simulated ones. The return
+    // throw goes in behind the lead runner (third on a triple or a first-to-
+    // third advance, otherwise second behind the batter). It never targets
+    // home or an empty far base: the planner turns any throw that would beat
+    // the recorded-safe runner into a cutoff return instead.
+    return extraBaseHitContainmentTarget(context.template, runnerTransitions, context.event);
   }
 
   if (canonicalTarget) return canonicalTarget;
@@ -1115,15 +1218,12 @@ function fieldedBallThrowTarget(context, spec) {
   return spec.throwTarget ?? null;
 }
 
-function extraBaseHitContainmentTarget(template, runnerTransitions) {
-  const liveDestinations = new Set(
-    (runnerTransitions ?? [])
-      .filter((transition) => !transition?.out)
-      .map((transition) => Number(transition?.toBase))
-  );
-  liveDestinations.add(template === "double" ? 2 : 3);
-  const preferences = template === "double" ? [3, 4] : [4, 2];
-  return baseAnchorForIndex(preferences.find((index) => !liveDestinations.has(index)));
+function extraBaseHitContainmentTarget(template, runnerTransitions, event = null) {
+  if (template === "triple") return "third";
+  const runnerHeldAtThird = (runnerTransitions ?? []).some((transition) => (
+    !transition?.out && Number(transition?.toBase) === 3
+  )) || baseOccupants(event, "After").some((occupant) => occupant.base === 3);
+  return runnerHeldAtThird ? "third" : "second";
 }
 
 function defensiveThrowTarget(event) {
@@ -1181,14 +1281,22 @@ function buildDoublePlay(context) {
     actorPhase: "relay-throw",
     ballPhase: "relay-throw"
   });
+  // A first baseman who started the double play right next to the bag takes
+  // the return throw himself (3-6-3). The pitcher covers only when 1B was
+  // pulled well off the bag (3-6-1).
+  const primaryFieldingPointName = context.fielding?.fieldingPoint ?? "landing";
+  const firstBasemanReturns = primary === "1B"
+    && Boolean(context.points[primaryFieldingPointName])
+    && pointDistance(context.points[primaryFieldingPointName], context.points.first) <= UNASSISTED_FIRST_MAX_PX;
   addThrowReceiver(context, {
     primary: relay,
-    receiver: primary === "1B" ? "P" : "",
+    receiver: primary === "1B" ? (firstBasemanReturns ? "1B" : "P") : "",
     to: "first",
     throwFrom: "second",
-    moveStartT: 0.46,
+    moveStartT: firstBasemanReturns ? relayStartT : 0.46,
     throwEndT: relayPlan.endT,
-    phasePrefix: "relay-"
+    phasePrefix: "relay-",
+    fromPoint: firstBasemanReturns ? primaryFieldingPointName : ""
   });
   context.durationMs = Math.max(context.durationMs, spec.durationMs);
   context.suggestedResultT = 0.8;
@@ -1544,13 +1652,37 @@ function prepareLongOutfieldRelay(context, {
   fieldEndT,
   throwTarget
 }) {
-  if (!OUTFIELDERS.includes(primary) || !["home", "third"].includes(throwTarget)) return null;
-  if (pointDistance(context.points[landing], context.points[throwTarget]) < LONG_OUTFIELD_RELAY_DISTANCE_PX) return null;
+  if (!OUTFIELDERS.includes(primary) || !["home", "third", "second"].includes(throwTarget)) return null;
+  // A hit return throw always runs through the cutoff man — that two-hop (or
+  // cutoff-stop) is how a real outfield walks the ball back in. Contested out
+  // throws keep the long-distance gate so a direct dart behind a tag-up runner
+  // stays a single competitive throw.
+  const hitPlay = ["single", "double", "triple"].includes(context.template);
+  const relayDistancePx = hitPlay
+    ? 120
+    : throwTarget === "second"
+      ? SECOND_BASE_RELAY_DISTANCE_PX
+      : LONG_OUTFIELD_RELAY_DISTANCE_PX;
+  if (pointDistance(context.points[landing], context.points[throwTarget]) < relayDistancePx) return null;
 
   const attempted = safeHitAttemptedFielderKey(context.event, context.points, primary);
   const excluded = new Set([attempted].filter(Boolean));
-  const receiver = selectThrowReceiver(context.points, primary, throwTarget, excluded);
-  const fielder = selectCutoffFielder(context.points, primary, receiver, context.points[landing], excluded);
+  // The cutoff man is picked before the base receiver. When one middle
+  // infielder is consumed by the recorded infield attempt, the other must
+  // still go out as the cutoff; the bag is then covered by the next receiver
+  // in line (CF behind second, 3B at third), exactly like a live defense.
+  const fielder = selectCutoffFielder(context.points, primary, "", context.points[landing], excluded);
+  // The attempted middle infielder has recovered to his lineup anchor by the
+  // time the outfielder secures the ball. Keep him out of the cutoff lane, but
+  // let him cover second while the other middle infielder relays the return.
+  // Otherwise CF was selected as the actual base receiver and overlapped the
+  // infield alignment the viewer expects to see.
+  const receiver = selectThrowReceiver(
+    context.points,
+    primary,
+    throwTarget,
+    new Set([fielder].filter(Boolean))
+  );
   if (!receiver || !fielder) return null;
 
   addDefensiveSupport(context, {
@@ -1601,12 +1733,38 @@ function throwTargetMovement(context, target) {
   const grouped = new Map();
   for (const cueEntry of [...context.tracks.batter, ...context.tracks.runners]) {
     if (!phases.has(String(cueEntry.phase ?? ""))) continue;
-    const cueTarget = cueEntry.at ?? cueEntry.toBase ?? cueEntry.path?.at(-1);
-    if (cueTarget !== target) continue;
+    const path = Array.isArray(cueEntry.path) ? cueEntry.path : [];
+    const targetIndex = path.findIndex((point, index) => index > 0 && point === target);
+    const intermediate = targetIndex > 0 && targetIndex < path.length - 1;
+    const cueTarget = cueEntry.at ?? cueEntry.toBase ?? path.at(-1);
+    if (cueTarget !== target && targetIndex < 1) continue;
+
+    let movementEndT = Number(cueEntry.endT ?? cueEntry.t ?? 0);
+    if (intermediate) {
+      // A runner going first-to-third still creates a live ordering constraint
+      // at second. Match the scene's distance-paced route interpolation so the
+      // return throw cannot visibly beat him to the bag and then let him run
+      // through it as though the ball were not there.
+      const route = path.map((point) => context.points?.[point]).filter(Boolean);
+      if (route.length === path.length) {
+        const segmentLengths = route.slice(1).map((point, index) => pointDistance(route[index], point));
+        const totalDistance = segmentLengths.reduce((total, distance) => total + distance, 0);
+        const passageDistance = segmentLengths
+          .slice(0, targetIndex)
+          .reduce((total, distance) => total + distance, 0);
+        const progress = totalDistance > 0 ? passageDistance / totalDistance : targetIndex / (path.length - 1);
+        movementEndT = Number(cueEntry.t ?? 0)
+          + (Number(cueEntry.endT ?? cueEntry.t ?? 0) - Number(cueEntry.t ?? 0)) * progress;
+      } else {
+        const progress = targetIndex / Math.max(1, path.length - 1);
+        movementEndT = Number(cueEntry.t ?? 0)
+          + (Number(cueEntry.endT ?? cueEntry.t ?? 0) - Number(cueEntry.t ?? 0)) * progress;
+      }
+    }
     const who = String(cueEntry.who ?? cueEntry.runnerId ?? "runner");
     const current = grouped.get(who) ?? { out: false, endT: 0 };
-    current.out ||= Boolean(cueEntry.out);
-    current.endT = Math.max(current.endT, Number(cueEntry.endT ?? cueEntry.t ?? 0));
+    current.out ||= !intermediate && Boolean(cueEntry.out);
+    current.endT = Math.max(current.endT, movementEndT);
     grouped.set(who, current);
   }
   const movements = [...grouped.values()];
@@ -1691,10 +1849,11 @@ function addDefensiveSupport(context, {
 
     const roleDelay = role === "relay" ? 0 : role === "base-cover" ? 0.016 : 0.032;
     const baseBackup = role === "backup" && BASE_SUPPORT_TARGETS.has(targetKey);
-    // The pitcher reads a thrown ball from contact and starts drifting behind
-    // the bag immediately. Waiting for the generic backup delay can compress a
-    // long P route into an implausible last-second sprint.
-    const moveStartT = roundTime(key === "P" && role === "backup"
+    // Base backups read the play off the bat and start immediately: the
+    // pitcher drifting behind home/first, and the corner outfielders covering
+    // the long foul-side routes behind first/third. Waiting for the generic
+    // backup delay compressed those routes into implausible sprints.
+    const moveStartT = roundTime((key === "P" || baseBackup) && role === "backup"
       ? scaleActionTime(context, 0.22)
       : baseStartT + scaleActionTime(context, roleDelay + index * 0.006));
     const resolvedThrowEndT = throwEndT !== null && throwEndT !== "" && Number.isFinite(Number(throwEndT))
@@ -1739,7 +1898,8 @@ function defensiveSupportAssignments(context, { primary, receiver, landing, thro
   const attempted = safeHitAttemptedFielderKey(context.event, context.points, primary);
   const occupied = new Set([primary, receiver, attempted].filter(Boolean));
   if (context.template === "doublePlay" && primary === "1B") occupied.add("P");
-  const supportLimit = Math.max(0, (receiver ? 2 : 3) - (attempted ? 1 : 0));
+  const attemptedConsumesExtraRole = Boolean(attempted && attempted !== receiver);
+  const supportLimit = Math.max(0, (receiver ? 2 : 3) - (attemptedConsumesExtraRole ? 1 : 0));
   const add = (key, role, targetKey, amount, toward = landing) => {
     if (!key || occupied.has(key) || !context.points[key] || !context.points[targetKey]) return;
     occupied.add(key);
@@ -1763,7 +1923,7 @@ function defensiveSupportAssignments(context, { primary, receiver, landing, thro
       add("C", "backup", "home", 0.5, landing);
     }
     if (runnerOnFirst) {
-      add(selectMiddleCoverFielder(primary, receiver), "base-cover", "second", 0.72, landing);
+      add(selectMiddleCoverFielder(primary, receiver), "base-cover", "second", 0.94, landing);
     }
     add(selectBaseBackupFielder(context.points, "first", primary, receiver, occupied, landing), "backup", "first", 0.18, landing);
   } else if (outfieldPrimary) {
@@ -1776,11 +1936,10 @@ function defensiveSupportAssignments(context, { primary, receiver, landing, thro
       new Set([attempted].filter(Boolean))
     );
     if (throwTarget) {
-      if (throwTarget === "second") {
-        add(selectMiddleCoverFielder(primary, receiver), "base-cover", "second", 0.66, landing);
-      } else {
-        add(cutoff, "relay", landing, 0.28, throwTarget);
-      }
+      // Every outfield return throw runs through a middle-infield cutoff man,
+      // including the routine return toward second. The receiver covers the
+      // bag; the cutoff lines up between the landing point and that bag.
+      add(cutoff, "relay", landing, 0.28, throwTarget);
       add(selectBaseBackupFielder(context.points, throwTarget, primary, receiver, occupied, landing), "backup", throwTarget, 0.18, landing);
       add(adjacentOutfielder, "backup", landing, 0.18);
     } else {
@@ -1792,7 +1951,7 @@ function defensiveSupportAssignments(context, { primary, receiver, landing, thro
     const backupTarget = context.template === "doublePlay" ? "first" : throwTarget;
     add(selectBaseBackupFielder(context.points, backupTarget, primary, receiver, occupied, landing), "backup", backupTarget, 0.18, landing);
     if (runnerOnFirst && throwTarget === "first") {
-      add(selectMiddleCoverFielder(primary, receiver), "base-cover", "second", 0.72, landing);
+      add(selectMiddleCoverFielder(primary, receiver), "base-cover", "second", 0.94, landing);
     } else {
       add(selectInfieldBackupOutfielder(primary), "backup", landing, 0.12);
     }
@@ -1868,14 +2027,25 @@ function addThrowReceiver(context, {
   moveStartT,
   throwEndT,
   phasePrefix = "",
-  handoff = false
+  handoff = false,
+  fromPoint = ""
 }) {
   const selected = receiver || selectThrowReceiver(context.points, primary, to);
   if (!selected || !context.points[selected] || !context.points[to]) return null;
-  const from = selected;
-  const resolvedMoveStartT = selected === "P" && to === "first"
+  // A receiver normally breaks from his lineup anchor, but a fielder who has
+  // already moved during the play (a 3-6-3 first baseman) must depart from the
+  // point where he is actually standing.
+  const from = fromPoint && context.points[fromPoint] ? fromPoint : selected;
+  const requestedMoveStartT = selected === "P" && to === "first"
     ? Math.min(moveStartT, scaleActionTime(context, 0.2))
     : moveStartT;
+  const selectedAvailableT = Math.max(
+    0,
+    ...context.tracks.fielders
+      .filter((cueEntry) => cueEntry.who === selected)
+      .map((cueEntry) => Number(cueEntry.endT ?? cueEntry.t ?? 0))
+  );
+  const resolvedMoveStartT = Math.max(requestedMoveStartT, selectedAvailableT);
   // A force at first must read as the covering fielder planting a foot on the
   // bag, not as a runner who is still drifting toward it while the ball lands.
   // Give first-base coverage a visible set interval before the catch motion;
@@ -1952,10 +2122,17 @@ function baseBackupDestination(points, key, targetKey, towardKey) {
   const deltaY = Number(target.y) - Number(incoming?.y ?? start.y);
   const length = Math.hypot(deltaX, deltaY) || 1;
   const offset = BASE_BACKUP_OFFSET_PX[targetKey] ?? 14;
+  // Corner backups drift toward foul ground (directly away from second base)
+  // so they never line up with the receiver and the arriving batter-runner.
+  const foulDrift = BASE_BACKUP_FOUL_DRIFT_PX[targetKey] ?? 0;
+  const second = points.second;
+  const foulX = second ? Number(target.x) - Number(second.x) : 0;
+  const foulY = second ? Number(target.y) - Number(second.y) : 0;
+  const foulLength = Math.hypot(foulX, foulY) || 1;
   const desired = {
     ...target,
-    x: roundCoordinate(Number(target.x) + deltaX / length * offset),
-    y: roundCoordinate(Number(target.y) + deltaY / length * offset)
+    x: roundCoordinate(Number(target.x) + deltaX / length * offset + foulX / foulLength * foulDrift),
+    y: roundCoordinate(Number(target.y) + deltaY / length * offset + foulY / foulLength * foulDrift)
   };
   return clampDefensiveSupportPoint(start, desired, key, points);
 }
@@ -2257,7 +2434,9 @@ function selectHomeRunFielderKey(points, wallPoint) {
 function selectThrowReceiver(points, primary, target, excluded = new Set()) {
   const candidates = {
     first: ["1B", "P", "2B"],
-    second: primary === "LF" ? ["SS", "2B", "CF"] : ["2B", "SS", "CF"],
+    // CF backs up second from the outfield; he never becomes the infielder
+    // standing on the bag to receive a routine return throw.
+    second: primary === "LF" ? ["SS", "2B"] : ["2B", "SS"],
     third: ["3B", "SS", "LF"],
     home: ["C", "P", "1B"]
   }[target] ?? ["1B", "2B", "SS", "3B", "P", "C"];
@@ -2863,6 +3042,99 @@ function finalizeTimeline(context) {
     actionEndT + 0.025
   )));
 
+  // A completed defensive action leaves somebody in possession. Resolve that
+  // player from the final ball cue instead of the first-leg fielding metadata:
+  // a double play, for example, finishes at first even though its initial
+  // fielding record still describes the force throw to second.
+  const terminalActionPhases = new Set(["fielding-throw", "relay-throw", "fielding-carry", "steal-throw"]);
+  const finalDefensiveAction = [...context.tracks.ball]
+    .filter((entry) => terminalActionPhases.has(String(entry.phase ?? "")))
+    .sort((a, b) => Number(b.endT ?? b.t ?? 0) - Number(a.endT ?? a.t ?? 0))[0]
+    ?? null;
+  const finalActionTarget = finalDefensiveAction?.path?.at(-1) ?? finalDefensiveAction?.arrivesAt ?? null;
+  const finalActionEndT = Number(finalDefensiveAction?.endT ?? finalDefensiveAction?.t);
+  const finalActionReceiver = finalActionTarget && Number.isFinite(finalActionEndT)
+    ? [...context.tracks.fielders]
+        .filter((entry) => (
+          entry.who
+          && (entry.at === finalActionTarget || entry.path?.at(-1) === finalActionTarget)
+          && Number(entry.t ?? 0) <= finalActionEndT + 0.000001
+          && Number(entry.endT ?? entry.t ?? 0) >= finalActionEndT - 0.000001
+        ))
+        .sort((a, b) => (
+          Number(b.assignment === "receiver") - Number(a.assignment === "receiver")
+          || Number(b.at === finalActionTarget) - Number(a.at === finalActionTarget)
+        ))[0]
+      ?? null
+    : null;
+  const actionPossession = finalDefensiveAction && finalActionTarget && Number.isFinite(finalActionEndT)
+    ? {
+        at: finalActionTarget,
+        who: finalDefensiveAction.phase === "fielding-carry"
+          ? context.fielding?.fielder
+          : finalActionReceiver?.who
+            ?? (context.fielding?.relay?.cutoffOnly ? context.fielding.relay.fielder : context.fielding?.receiver),
+        startT: finalActionEndT,
+        phase: "fielding-hold"
+      }
+    : null;
+  const homeStealTag = context.template === "steal" && !finalDefensiveAction
+    ? context.tracks.catcher.find((entry) => ["tag-home", "late-tag-home"].includes(String(entry.phase ?? "")))
+    : null;
+  const homeStealPitchArrivalT = homeStealTag
+    ? Math.max(0, ...context.tracks.ball
+        .filter((entry) => entry.phase === "pitch" && entry.path?.at(-1) === "home")
+        .map((entry) => Number(entry.endT ?? entry.t ?? 0)))
+    : null;
+
+  // A completed catch or deliberately omitted throw also leaves the defense
+  // in possession. Keep it visible in the controlling glove until the ruling.
+  // catchPoint is already authored in the raised glove plane, so catch-hold
+  // intentionally skips the generic 24px feet-anchor lift.
+  const terminalPossession = context.template === "error"
+    ? null
+    : actionPossession
+      ?? (homeStealTag
+        ? {
+            at: "C",
+            who: "C",
+            startT: Number(homeStealPitchArrivalT),
+            phase: "fielding-hold"
+          }
+        : context.fielding
+            && context.fielding.throwTarget === null
+            && !context.fielding.unassisted
+          ? {
+              at: context.fielding.catchPoint ?? context.fielding.fieldingPoint,
+              who: context.fielding.fielder,
+              startT: Number(context.fielding.fielderArrivalT),
+              phase: context.fielding.catchPoint ? "catch-hold" : "fielding-hold"
+            }
+          : null);
+  // An error is different: keep the loose ball on the turf without assigning
+  // possession to the fielder who just misplayed it.
+  const terminalLooseBall = context.template === "error" && context.fielding
+    ? {
+        at: context.fielding.ballPoint ?? context.fielding.fieldingPoint,
+        startT: Number(context.fielding.ballArrivalT),
+        phase: "error-loose"
+      }
+    : null;
+  const terminalBall = terminalPossession ?? terminalLooseBall;
+  if (
+    terminalBall?.at
+    && Number.isFinite(terminalBall.startT)
+    && terminalBall.startT < resultT
+  ) {
+    context.tracks.ball.push(cue(terminalBall.startT, resultT, {
+      at: terminalBall.at,
+      ...(terminalPossession?.who ? { possessedBy: terminalPossession.who } : {}),
+      terminal: true,
+      phase: terminalBall.phase
+    }));
+    context.tracks.ball.sort((a, b) => a.t - b.t || Number(a.endT ?? a.t) - Number(b.endT ?? b.t));
+  }
+
   context.tracks.captions.push(cue(resultT, null, {
     badge: resultBadge(context),
     outcome: context.outcome,
@@ -2889,6 +3161,31 @@ function finalizeTimeline(context) {
     || (context.template === "homeRun"
       ? context.wall.clearsWall === true && Number(context.wall.clearancePx) > 0
       : context.wall.clearsWall === false && Number(context.wall.clearancePx) >= SAFE_HIT_PICKUP_WALL_MARGIN_PX - 0.5);
+  const terminalPossessionVisible = !terminalPossession
+    || (
+      Boolean(terminalPossession.who)
+      && context.tracks.ball.some((entry) => (
+        entry.phase === terminalPossession.phase
+        && entry.at === terminalPossession.at
+        && entry.possessedBy === terminalPossession.who
+        && Number(entry.t) <= terminalPossession.startT + 0.000001
+        && Number(entry.endT ?? entry.t) >= resultT - 0.000001
+      ))
+    );
+  const terminalBallVisible = !terminalBall
+    || context.tracks.ball.some((entry) => (
+      entry.terminal === true
+      && entry.phase === terminalBall.phase
+      && entry.at === terminalBall.at
+      && Number(entry.t) <= terminalBall.startT + 0.000001
+      && Number(entry.endT ?? entry.t) >= resultT - 0.000001
+    ));
+  const errorBallRemainsLoose = context.template !== "error"
+    || context.tracks.ball.some((entry) => (
+      entry.terminal === true
+      && entry.phase === "error-loose"
+      && !entry.possessedBy
+    ));
 
   return {
     version: 1,
@@ -2908,7 +3205,10 @@ function finalizeTimeline(context) {
         fieldingArrivalMatchesBall,
         possessionAfterBallAndFielder,
         resultAfterRunning: runningEndT === 0 || resultT > runningEndT,
-        wallOutcomeMatches
+        wallOutcomeMatches,
+        terminalPossessionVisible,
+        terminalBallVisible,
+        errorBallRemainsLoose
       }
     }
   };

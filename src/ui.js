@@ -41,7 +41,7 @@ import {
   simulateSecondaryDraft,
   setSecondaryDraftProtection,
   runAutonomousOffseason
-} from "./engine.js?v=gamecast-ai-kinematics-20260717-r31";
+} from "./engine.js?v=gamecast-ai-realism-20260719-r32";
 
 import {
   getContractSummary,
@@ -68,7 +68,7 @@ import {
 import {
   canUseGamecastPhaser,
   mountGamecastPhaser
-} from "./gamecastPhaser.js?v=gamecast-ai-kinematics-20260717-r31";
+} from "./gamecastPhaser.js?v=gamecast-ai-realism-20260719-r32";
 
 import {
   canUseGamecast2,
@@ -77,7 +77,7 @@ import {
   getGamecast2PlayDurationMs,
   getGamecast2RunnerStartMs,
   mountGamecast2
-} from "./gamecast2/index.js?v=gamecast-ai-kinematics-20260717-r31";
+} from "./gamecast2/index.js?v=gamecast-ai-realism-20260719-r32";
 
 const TEAM_META = {
   lg: { shortName: "LG", city: "서울", color: "#c30452" },

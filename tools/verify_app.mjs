@@ -1788,13 +1788,15 @@ function checkBattedBallExtraBaseRules() {
   };
 
   for (const position of ["LF", "CF", "RF"]) {
+    // A bases-empty single keeps the batter at first while the outfielder
+    // walks the ball back in toward second, like a real defense.
     const emptySingle = makeHitScenario({ type: "single", position, occupied: [] });
     assert(
       emptySingle.event.baseRunnerIdsAfter[0] === "fixture-batter"
         && !emptySingle.event.baseRunnerIdsAfter[1]
         && !emptySingle.event.baseRunnerIdsAfter[2]
-        && emptySingle.target === null,
-      `${position} bases-empty single advanced beyond first or invented a throw: ${JSON.stringify(emptySingle.event)}/${emptySingle.target}`,
+        && emptySingle.target === "second",
+      `${position} bases-empty single advanced beyond first or skipped the return throw: ${JSON.stringify(emptySingle.event)}/${emptySingle.target}`,
       MODULE_PATHS.engine
     );
   }
@@ -1832,24 +1834,27 @@ function checkBattedBallExtraBaseRules() {
   assert(firstToSecond?.target === null, `routine single chased forced runner at second: ${firstToSecond?.target}`, MODULE_PATHS.engine);
   assert(firstToThird?.target === "second", `deep single 1B->3B did not return to empty second-base cutoff: ${firstToThird?.target}`, MODULE_PATHS.engine);
   assert(secondScores?.target === "second", `single 2B->home did not return to empty second-base cutoff: ${secondScores?.target}`, MODULE_PATHS.engine);
-  assert(secondHoldsThird?.target === null, `single 2B->3B chased a non-force runner: ${secondHoldsThird?.target}`, MODULE_PATHS.engine);
-  assert(makeHitScenario({ type: "single", occupied: [3] }).target === null, "single chased an already-scoring third-base runner", MODULE_PATHS.engine);
+  assert(secondHoldsThird?.target === "second", `single 2B->3B did not return toward second behind the runner: ${secondHoldsThird?.target}`, MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "single", occupied: [3] }).target === "second", "single with the third-base runner scoring skipped the return to second", MODULE_PATHS.engine);
   assert(
     makeHitScenario({ type: "single", occupied: [2], position: "3B", battedBallType: "groundBall", hitTrajectory: "infield-chopper" }).target === null,
     "infield chopper incorrectly throws to third/home instead of holding",
     MODULE_PATHS.engine
   );
 
+  // Extra-base hits return the ball in behind the lead runner: third when a
+  // runner ends the play there (or on any triple), otherwise second behind
+  // the batter — never home or an empty far base.
   const emptyDouble = makeHitScenario({ type: "double", occupied: [] });
   const firstStopsThird = findScenario({ type: "double", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 3);
   const firstScoresOnDouble = findScenario({ type: "double", occupied: [1] }, (scenario) => runnerDestination(scenario, "runner-1") === 4);
-  assert(emptyDouble.target === "third", `empty-base double containment target=${emptyDouble.target}`, MODULE_PATHS.engine);
-  assert(firstStopsThird?.target === "home", `double 1B->3B containment target=${firstStopsThird?.target}`, MODULE_PATHS.engine);
-  assert(firstScoresOnDouble?.target === "third", `double 1B->home containment target=${firstScoresOnDouble?.target}`, MODULE_PATHS.engine);
-  assert(makeHitScenario({ type: "double", occupied: [2] }).target === "third", "double with a runner scoring did not contain the batter at third", MODULE_PATHS.engine);
+  assert(emptyDouble.target === "second", `empty-base double containment target=${emptyDouble.target}`, MODULE_PATHS.engine);
+  assert(firstStopsThird?.target === "third", `double 1B->3B containment target=${firstStopsThird?.target}`, MODULE_PATHS.engine);
+  assert(firstScoresOnDouble?.target === "second", `double 1B->home containment target=${firstScoresOnDouble?.target}`, MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "double", occupied: [2] }).target === "second", "double with a runner scoring did not return toward second behind the batter", MODULE_PATHS.engine);
 
-  assert(makeHitScenario({ type: "triple", occupied: [] }).target === "home", "empty-base triple did not contain the batter at home", MODULE_PATHS.engine);
-  assert(makeHitScenario({ type: "triple", occupied: [1] }).target === "second", "triple with a scoring runner did not return through the empty cutoff", MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "triple", occupied: [] }).target === "third", "empty-base triple did not return toward third behind the batter", MODULE_PATHS.engine);
+  assert(makeHitScenario({ type: "triple", occupied: [1] }).target === "third", "triple with a scoring runner did not return toward third behind the batter", MODULE_PATHS.engine);
   assert(makeHitScenario({ type: "out", occupied: [], battedBallType: "groundBall", position: "SS" }).target === "first", "ground out did not target first", MODULE_PATHS.engine);
 
   for (const hitterSpeed of [6, 19]) {
@@ -2348,7 +2353,9 @@ function checkBattedBallExtraBaseRules() {
         const position = String(event.fieldingPosition ?? "").toUpperCase();
         if (beforeIds.every((id) => !id) && Object.prototype.hasOwnProperty.call(emptyOutfieldSingles, position)) {
           emptyOutfieldSingles[position] += 1;
-          if (event.defensiveThrowTarget !== null || afterIds[0] !== String(event.hitterId ?? "") || afterIds[1] || afterIds[2]) {
+          // The batter stays at first while the outfielder returns the ball
+          // toward second — the standard live-ball return, not a contest.
+          if (event.defensiveThrowTarget !== "second" || afterIds[0] !== String(event.hitterId ?? "") || afterIds[1] || afterIds[2]) {
             auditProblems.push(`${game.id}/${event.sequence}: empty ${position} single target/base mismatch`);
           }
         }
